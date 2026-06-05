@@ -67,3 +67,11 @@ coverage/
 .nyc_output/
 tmp/
 *.tmp
+
+# --- Internal / not for the public repo ------------------------------------
+# Dev + agent instructions, debug profiler, internal task briefs, Syncthing
+# rules. Kept local-only; removed from the public repo after the first release.
+CLAUDE.md
+_ctxmem.cjs
+.stignore
+tasks/
