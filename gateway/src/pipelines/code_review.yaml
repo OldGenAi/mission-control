@@ -1,0 +1,17 @@
+id: code_review
+name: Code Review
+description: Read a file in the workspace and write a review artifact with concrete findings. Pass the file path and review focus in context.task (e.g. "review src/foo.ts for race conditions").
+version: "1.0"
+
+budget:
+  maxTokens: 60000
+  maxCostUsd: 0.50
+  timeoutSeconds: 600
+  onExceed: abort
+
+steps:
+  - id: orchestrate
+    type: spawn_agent
+    name: Orchestrate code review
+    agentRole: orchestrator
+    outputKey: orchestrator_result

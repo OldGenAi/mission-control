@@ -1,0 +1,17 @@
+id: daily_digest
+name: Daily Digest
+description: Research a topic across multiple sources and produce a structured digest with key developments and citations. Pass the topic in context.task.
+version: "1.0"
+
+budget:
+  maxTokens: 250000
+  maxCostUsd: 2.00
+  timeoutSeconds: 1200
+  onExceed: abort
+
+steps:
+  - id: orchestrate
+    type: spawn_agent
+    name: Orchestrate multi-source digest
+    agentRole: orchestrator
+    outputKey: orchestrator_result

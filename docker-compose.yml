@@ -1,0 +1,46 @@
+# Mission Control — Mac staging
+#
+# Usage:
+#   docker compose up --build   # first run or after code changes
+#   docker compose up -d        # background
+#   docker compose logs -f      # stream logs
+#   docker compose down         # stop + remove container
+#
+# The frontend (Vite) runs natively alongside this — cd app && npm run dev
+#
+# network_mode: host — container shares WSL's network namespace.
+# In WSL2 mirrored mode, WSL's 127.0.0.1 reaches Windows services,
+# so LOCAL_PROVIDER_URL=http://127.0.0.1:1234/v1 reaches LM Studio directly.
+# Port 4747 binds on the WSL host and is auto-forwarded to Windows by mirrored mode.
+# No Windows Firewall rules or LAN exposure needed.
+
+services:
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    network_mode: host
+    environment:
+      # Bind to all interfaces so the port is reachable from Windows via WSL2 mirrored mode.
+      # SECURITY: 0.0.0.0 is only acceptable here because (a) WSL2 mirrored networking keeps
+      # this on the local host (not the LAN), and (b) every connection is gated by Origin
+      # validation + a required token (see gateway/src/auth.ts). On a non-WSL host, or any
+      # machine on an untrusted network, set this to 127.0.0.1 so the port never binds to a
+      # routable interface.
+      GATEWAY_HOST: "0.0.0.0"
+      # 127.0.0.1 reaches Windows LM Studio via WSL2 mirrored networking.
+      LOCAL_PROVIDER_URL: "http://127.0.0.1:1234/v1"
+    # Run as the host user so volume-mounted files are writable.
+    # UID 1000 is the first user on Ubuntu — matches oldge.
+    user: "1000:1000"
+    env_file:
+      # Loads APPROVAL_SECRET, OPENROUTER_API_KEY, DEFAULT_MODEL, etc.
+      # GATEWAY_HOST above overrides any GATEWAY_HOST entry in this file.
+      - ./gateway/.env
+    volumes:
+      # Persistent data: SQLite DB, auth token, config.
+      # node:22-alpine ships with a 'node' user at UID 1000 — homedir() resolves to /home/node.
+      - "${HOME}/.missioncontrol:/home/node/.missioncontrol"
+      # Agent workspace — needed for file_read/write/edit tools.
+      - "${HOME}/mission-control:/home/node/mission-control"
+    restart: unless-stopped

@@ -1,0 +1,69 @@
+# --- Secrets ---------------------------------------------------------------
+# Never commit env files — they hold provider API keys, gateway tokens, etc.
+.env
+.env.*
+!.env.example
+# Settings store lives outside the repo at ~/.missioncontrol/, but block it
+# defensively in case someone symlinks or copies it into the workspace.
+settings.json
+
+# --- Build output ----------------------------------------------------------
+node_modules/
+dist/
+dist-ssr/
+build/
+*.tsbuildinfo
+
+# --- Runtime data ----------------------------------------------------------
+# SQLite databases (gateway.sqlite, WAL/SHM sidecars) should never be tracked.
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- OS / editor cruft -----------------------------------------------------
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+
+# --- Syncthing -------------------------------------------------------------
+.stfolder/
+.stversions/
+
+# --- Project-local scratch -------------------------------------------------
+# Ad-hoc test files that accumulate at the root during development.
+/dup.txt
+/hello.txt
+/test-notes.md
+
+# --- Local archive ---------------------------------------------------------
+# Retired/superseded files kept locally for reference only (pre-pivot docs,
+# old test scripts, .env.bak). Never shipped — contains stale secrets + dead
+# code. See _archive/README.md.
+_archive/
+
+# --- Docker ----------------------------------------------------------------
+# Compose overrides for local-only experiments (not the shared docker-compose.yml).
+docker-compose.override.yml
+docker-compose.override.yaml
+
+# --- Coverage / temp -------------------------------------------------------
+coverage/
+.nyc_output/
+tmp/
+*.tmp

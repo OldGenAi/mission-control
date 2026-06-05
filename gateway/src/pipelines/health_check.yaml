@@ -1,0 +1,40 @@
+id: health_check
+name: Health Check
+description: Smoke test pipeline — verifies the runtime can execute an llm step and enforce a budget.
+version: "1.0"
+
+budget:
+  maxTokens: 10000
+  maxCostUsd: 0.05
+  timeoutSeconds: 120
+  onExceed: abort
+
+steps:
+  - id: step_greet
+    type: llm
+    name: Greet
+    systemPrompt: You are a health check assistant. Respond concisely.
+    userPrompt: Say "Mission Control online." and nothing else.
+    outputKey: greeting
+    requiresEvidence: true
+
+  - id: step_verify
+    type: llm
+    name: Verify
+    systemPrompt: You are a verification assistant.
+    userPrompt: "The greeting was: {{context.greeting}}. Confirm it contains 'Mission Control'."
+    outputKey: verification
+    requiresEvidence: true
+
+  - id: step_approve
+    type: approval_gate
+    name: Human sign-off
+    expiresInSeconds: 3600
+
+  - id: step_done
+    type: llm
+    name: Complete
+    systemPrompt: You are a completion assistant.
+    userPrompt: Health check complete. Output a short summary.
+    outputKey: summary
+    requiresEvidence: true

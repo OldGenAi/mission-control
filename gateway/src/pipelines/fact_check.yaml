@@ -1,0 +1,17 @@
+id: fact_check
+name: Fact Check
+description: Verify a claim against primary sources and write a verdict artifact with citations and confidence level. Pass the claim in context.task.
+version: "1.0"
+
+budget:
+  maxTokens: 50000
+  maxCostUsd: 0.40
+  timeoutSeconds: 600
+  onExceed: abort
+
+steps:
+  - id: orchestrate
+    type: spawn_agent
+    name: Orchestrate verification
+    agentRole: orchestrator
+    outputKey: orchestrator_result

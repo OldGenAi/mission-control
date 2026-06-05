@@ -1,0 +1,23 @@
+id: summarise_url
+name: Summarise URL
+description: Fetch a URL and write a concise report artifact with key points and source. Pass the URL in context.task.
+version: "1.0"
+
+budget:
+  maxTokens: 40000
+  maxCostUsd: 0.30
+  timeoutSeconds: 300
+  onExceed: abort
+
+steps:
+  - id: orchestrate
+    type: spawn_agent
+    name: Orchestrate fetch + summary
+    agentRole: orchestrator
+    task: >
+      Fetch the URL {{context.task}} and write a concise report artifact
+      summarising its contents. The report must include: a one-sentence
+      summary, 3-5 key points, and the source URL. Spawn a worker-researcher
+      to do the fetch + analysis, then call artifact_write yourself with
+      type=report to record the final deliverable.
+    outputKey: orchestrator_result

@@ -1,0 +1,12 @@
+// Never sync secrets or platform-specific files
+**/.env
+.env
+
+// Never sync node_modules — platform-specific binaries break across Mac/WSL
+**/node_modules
+node_modules
+
+// Build outputs — rebuilt per platform
+**/dist
+gateway/dist
+app/dist

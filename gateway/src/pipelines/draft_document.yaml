@@ -1,0 +1,17 @@
+id: draft_document
+name: Draft Document
+description: Research a topic, then draft a structured document with sources. Pass the brief in context.task. Longer budget than summarise_url to allow multi-source synthesis.
+version: "1.0"
+
+budget:
+  maxTokens: 120000
+  maxCostUsd: 1.50
+  timeoutSeconds: 900
+  onExceed: abort
+
+steps:
+  - id: orchestrate
+    type: spawn_agent
+    name: Orchestrate research + draft
+    agentRole: orchestrator
+    outputKey: orchestrator_result

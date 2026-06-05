@@ -1,0 +1,17 @@
+id: research_task
+name: Research Task
+description: Hands the task to the Orchestrator, which decomposes it and delegates to specialist workers.
+version: "1.0"
+
+budget:
+  maxTokens: 100000
+  maxCostUsd: 1.00
+  timeoutSeconds: 600
+  onExceed: abort
+
+steps:
+  - id: orchestrate
+    type: spawn_agent
+    name: Orchestrate
+    agentRole: orchestrator
+    outputKey: orchestrator_result

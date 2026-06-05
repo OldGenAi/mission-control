@@ -1,0 +1,32 @@
+id: approval_test
+name: Approval Gate Test
+description: Minimal pipeline that pauses at a human approval gate so the pause/resume flow can be verified end-to-end.
+version: "1.0"
+
+budget:
+  maxTokens: 5000
+  maxCostUsd: 0.10
+  timeoutSeconds: 86400
+  onExceed: warn
+
+steps:
+  - id: propose
+    type: llm
+    name: Propose decision
+    systemPrompt: "You are concise. Reply with exactly one short sentence."
+    userPrompt: "Suggest a tiny harmless test decision to approve."
+    outputKey: proposal
+    requiresEvidence: false
+
+  - id: gate
+    type: approval_gate
+    name: Human approval
+    expiresInSeconds: 3600
+
+  - id: finish
+    type: llm
+    name: Confirm completion
+    systemPrompt: "You are concise. Reply with exactly one short sentence."
+    userPrompt: "The proposal was: {{context.proposal}}. Confirm approval briefly."
+    outputKey: confirmation
+    requiresEvidence: false

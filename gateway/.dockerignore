@@ -1,0 +1,8 @@
+node_modules
+dist
+.env
+*.log
+app
+scripts
+start.sh
+seed-dave.mjs

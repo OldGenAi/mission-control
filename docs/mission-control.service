@@ -1,0 +1,29 @@
+# Mission Control gateway — systemd user service (Beelink production)
+#
+# Install:
+#   mkdir -p ~/.config/systemd/user
+#   cp ~/mission-control/docs/mission-control.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now mission-control
+#
+# Useful commands:
+#   systemctl --user status mission-control
+#   systemctl --user restart mission-control
+#   journalctl --user -u mission-control -f   # stream logs
+
+[Unit]
+Description=Mission Control Gateway
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/oldge/mission-control/gateway
+ExecStart=/home/oldge/.nvm/versions/node/v22.22.2/bin/node dist/index.js
+EnvironmentFile=/home/oldge/mission-control/gateway/.env
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
