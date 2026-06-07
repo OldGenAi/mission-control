@@ -32,6 +32,7 @@ interface MonitorTick {
   agents: AgentState[]; pipelines: PipelineRow[]; timestamp: number
   totalTokens: number; totalCostUsd: number; totalToolCalls: number; totalSessions: number
   activePipelineTokens: number; activePipelineCostUsd: number
+  activePipelineToolCalls: number; activePipelineErrors: number
   watchdog?: WatchdogStats | null
 }
 interface FeedEvent {
@@ -444,6 +445,7 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
       const dave = ag.find(a => a.agentId === 'tier1_agent' || a.agentId.toLowerCase().includes('dave')) ?? { agentId: 'tier1_agent', status: 'idle' as const, lastUpdated: 0 }
       const orch = findAg('orchestrator')
       const workers = ag.filter(a => a.agentId.toLowerCase().includes('worker'))
+      const workerCount = workers.length  // real workers; the placeholder below is for drawing only, not counting
       if (workers.length === 0) workers.push({ agentId: 'worker-1', status: 'idle', lastUpdated: 0 })
 
       const davePos = { x: W * 0.5, y: H * 0.28 }
@@ -504,8 +506,8 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
       const liveError = ag.some(a => a.status === 'error')
       const durColor = !busy ? C.muted : ltMs > 0 && ltMs < 2000 ? C.success : ltMs > 5000 ? C.error : C.amber
       const toolsRows: [string, string, string][] = [
-        ['LAST CALL', lt ? lt.slice(0, 12) : '—', C.cyan],
-        ['DURATION', ltMs > 0 ? `${ltMs}ms` : '—', durColor],
+        ['LAST CALL', busy && lt ? lt.slice(0, 12) : '—', C.cyan],
+        ['DURATION', busy && ltMs > 0 ? `${ltMs}ms` : '—', durColor],
         ['TOTAL CALLS', String(tc), C.cyan],
         ['ERRORS', String(te), te > 0 ? C.amber : C.success],
         ['STATUS', liveError ? 'DEGRADED' : 'NOMINAL', liveError ? C.error : C.success],
@@ -515,7 +517,7 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
         ['ACTIVE', String(activeCount), activeCount > 0 ? C.cyan : C.muted],
         ['IDLE', String(idleCount), C.muted],
         ['TOTAL', String(ag.length || 1), C.text],
-        ['WORKERS', String(workers.length), C.cyan],
+        ['WORKERS', String(workerCount), C.cyan],
         ['PIPELINES', String(activePipeCount), activePipeCount > 0 ? C.amber : C.muted],
       ])
 
@@ -528,7 +530,7 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
       ])
       hudPanel(ctx, W - 154, H - 124, 140, 110, 'SYSTEM', [
         ['PROVIDER', providerLabel, C.cyan],
-        ['WORKERS', String(workers.length), C.cyan],
+        ['WORKERS', String(workerCount), C.cyan],
         ['TOOL CALLS', String(tc), C.text],
         ['ERRORS', String(te), te > 0 ? C.error : C.success],
       ])
@@ -549,9 +551,9 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
         { id: 'session',  x: 14,          y: 14,    title: 'SESSION',  rows: [['AGENTS',String(ag.length||1),C.cyan],['ACTIVE',String(ag.filter(a=>a.status!=='idle').length),C.cyan],['PIPELINES',String(activePipeCount),C.text],['STATUS','CONNECTED',C.success]] as [string,string,string][] },
         { id: 'memory',   x: W-154,       y: 14,    title: 'MEMORY',   rows: [['ENTRIES',String(mst.currentEntries),mst.currentEntries>0?C.cyan:C.muted],['SIZE',fmtBytes(mst.totalBytes),mst.totalBytes>0?C.text:C.muted],['LAST',fmtAgo(mst.lastWriteAt),mst.lastWriteAt?C.cyan:C.muted],['AGENTS',String(mst.agentsWithMemory),mst.agentsWithMemory>0?C.cyan:C.muted]] as [string,string,string][] },
         { id: 'tools',    x: 14,          y: vMidY, title: 'TOOLS',    rows: toolsRows },
-        { id: 'agentsp',  x: W-vPanW-14, y: vMidY, title: 'AGENTS',   rows: [['ACTIVE',String(activeCount),activeCount>0?C.cyan:C.muted],['IDLE',String(idleCount),C.muted],['TOTAL',String(ag.length||1),C.text],['WORKERS',String(workers.length),C.cyan],['PIPELINES',String(activePipeCount),activePipeCount>0?C.amber:C.muted]] as [string,string,string][] },
+        { id: 'agentsp',  x: W-vPanW-14, y: vMidY, title: 'AGENTS',   rows: [['ACTIVE',String(activeCount),activeCount>0?C.cyan:C.muted],['IDLE',String(idleCount),C.muted],['TOTAL',String(ag.length||1),C.text],['WORKERS',String(workerCount),C.cyan],['PIPELINES',String(activePipeCount),activePipeCount>0?C.amber:C.muted]] as [string,string,string][] },
         { id: 'pipeline', x: 14,          y: H-124, title: 'PIPELINE', rows: [['STATUS',activePipe?activePipe.status.toUpperCase():'IDLE',activePipe?C.amber:C.muted],['TOKENS',fmtTok(tTok),C.cyan],['COST',`$${tCost.toFixed(4)}`,C.text],['RUNS',String(activePipeCount),C.text]] as [string,string,string][] },
-        { id: 'system',   x: W-154,       y: H-124, title: 'SYSTEM',   rows: [['PROVIDER',providerLabel,C.cyan],['WORKERS',String(workers.length),C.cyan],['TOOL CALLS',String(tc),C.text],['ERRORS',String(te),te>0?C.error:C.success]] as [string,string,string][] },
+        { id: 'system',   x: W-154,       y: H-124, title: 'SYSTEM',   rows: [['PROVIDER',providerLabel,C.cyan],['WORKERS',String(workerCount),C.cyan],['TOOL CALLS',String(tc),C.text],['ERRORS',String(te),te>0?C.error:C.success]] as [string,string,string][] },
       ]
       // Circle node specs — tooltip positioned using canvas px coords (= CSS px at 1x)
       const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
@@ -744,12 +746,13 @@ export const MonitorPage: FC = () => {
       }
       if (x.tick) setTick(x.tick)
       if (x.toolStats) {
-        setToolCount(x.toolStats.totalCalls)
         if (x.toolStats.lastToolName) setLastToolName(x.toolStats.lastToolName)
         if (x.toolStats.lastDurationMs != null) setLastMs(x.toolStats.lastDurationMs)
-        setToolErrors(x.toolStats.errorCount)
       }
-      // Live usage for the active run (gateway-computed); resets between runs.
+      // Tool calls/errors + tokens/cost are all scoped to the active run
+      // (gateway-computed): they climb during a pipeline and reset to 0 between runs.
+      setToolCount(x.tick?.activePipelineToolCalls ?? 0)
+      setToolErrors(x.tick?.activePipelineErrors ?? 0)
       setTTok(x.tick?.activePipelineTokens ?? 0)
       setTCost(x.tick?.activePipelineCostUsd ?? 0)
     }).catch(() => {})
@@ -764,7 +767,8 @@ export const MonitorPage: FC = () => {
         // resets to 0 between runs.
         setTTok(t.activePipelineTokens ?? 0)
         setTCost(t.activePipelineCostUsd ?? 0)
-        if (t.totalToolCalls !== undefined) setToolCount(t.totalToolCalls)
+        setToolCount(t.activePipelineToolCalls ?? 0)
+        setToolErrors(t.activePipelineErrors ?? 0)
         if (t.memory) setMemStats(t.memory)
         const agentLabel = (id: string) => id === 'tier1_agent' ? 'Dave' : id
         for (const a of t.agents) push({ time: fmtHMS(a.lastUpdated), type: 'agent_status', agentId: agentLabel(a.agentId), detail: a.detail ?? a.status, correlationId: a.correlationId, raw: a })
@@ -773,9 +777,7 @@ export const MonitorPage: FC = () => {
         const p = ev.payload as { sessionId?: string; toolName?: string; correlationId?: string; durationMs?: number }
         push({ time: fmtHMS(Date.now()), type: 'tool_call', agentId: p.sessionId ?? '?', detail: p.toolName ?? 'tool', correlationId: p.correlationId, raw: p })
         if (p.durationMs) setLastMs(p.durationMs)
-        setToolCount(n => n + 1)
         if (p.toolName) setLastToolName(p.toolName)
-        if ((p as { status?: string }).status === 'error') setToolErrors(n => n + 1)
       }
       if (ev.event === 'pipeline.tick' && ev.payload) {
         const p = ev.payload as { name?: string; status?: string }

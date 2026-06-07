@@ -30,7 +30,8 @@ export function registerArtifactsMethods(db: Database.Database): void {
   const listArtifacts: MethodHandler = async (params) => {
     const { agentId, sessionId, type, pipelineRunId, limit: paramLimit } = params
     let query = `SELECT id, type, title, step_id AS stepId, agent_id AS agentId, session_id AS sessionId, created_at AS createdAt FROM artifacts`
-    const whereClauses: string[] = []
+    // Exclude soft-deleted artifacts from every listing (active list + run-detail view).
+    const whereClauses: string[] = ['deleted_at IS NULL']
     const values: unknown[] = []
 
     if (agentId) {
@@ -86,6 +87,19 @@ export function registerArtifactsMethods(db: Database.Database): void {
     return { artifact }
   }
 
+  // Soft-delete: set deleted_at so the artifact drops out of every listing while the
+  // row (and its pipeline-run linkage) is preserved and recoverable. Mirrors sessions.
+  const stmtSoftDelete = db.prepare<[number, string]>(
+    `UPDATE artifacts SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL`
+  )
+  const deleteArtifact: MethodHandler = async (params) => {
+    const id = params['id']
+    if (typeof id !== 'string' || !id.trim()) return { error: 'id is required' }
+    stmtSoftDelete.run(Date.now(), id)
+    return { ok: true }
+  }
+
   registerMethod('artifacts.list', listArtifacts)
   registerMethod('artifacts.get', getArtifact)
+  registerMethod('artifacts.delete', deleteArtifact)
 }

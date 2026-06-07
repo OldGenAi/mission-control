@@ -45,6 +45,7 @@ interface ChatHistoryResponse {
 interface Model {
   id: string
   label?: string
+  contextLength?: number
 }
 
 interface ModelsResponse {
@@ -806,13 +807,14 @@ export function ChatPage() {
   // session title — a session named "no, all good" would otherwise yield
   // "Message no, all good (Enter to send)" which reads as nonsense.
   const agentName = activeInstance?.name || "Dave"
-  const contextWindow = 32768
+  const contextWindow = models.find(m => m.id === selectedModel)?.contextLength ?? 32768
 
   // Real inputTokens from the model response — the only accurate source.
   // Only shown once a real response has been received. No estimates.
   const ctxTokens = streamStats?.inputTokens ?? null
   const ctxPct = ctxTokens !== null ? Math.min(100, Math.round(ctxTokens / contextWindow * 100)) : 0
   const ctxColor = ctxPct > 85 ? "var(--error, #f87171)" : ctxPct > 65 ? "#f59e0b" : "var(--accent)"
+  const ctxWinLabel = contextWindow >= 1024 ? `${Math.round(contextWindow / 1024)}k` : `${contextWindow}`
 
   const hasSR = typeof window !== "undefined" && !!(getSRCtor())
 
@@ -958,7 +960,7 @@ export function ChatPage() {
           <div className="chat-ctx-bar__fill" style={{ width: `${ctxPct}%`, background: ctxColor }} />
         </div>
         <span className="chat-ctx-bar__label" style={{ color: ctxColor }}>
-          {ctxTokens === null ? '— / 32k' : ctxTokens >= 1000 ? `${(ctxTokens / 1000).toFixed(1)}k / 32k` : `${ctxTokens} / 32k`}
+          {ctxTokens === null ? `— / ${ctxWinLabel}` : ctxTokens >= 1000 ? `${(ctxTokens / 1000).toFixed(1)}k / ${ctxWinLabel}` : `${ctxTokens} / ${ctxWinLabel}`}
         </span>
       </div>
 

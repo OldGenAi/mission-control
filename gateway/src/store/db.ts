@@ -255,6 +255,16 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_pipeline_runs_correlation ON pipeline_runs(correlation_id);
     `,
   },
+  {
+    version: 8,
+    sql: `
+      -- Soft-delete for artifacts (mirrors sessions v6). The Artifacts page deletes by
+      -- setting deleted_at instead of destroying rows, so an accidental delete is
+      -- recoverable and pipeline-run linkage stays intact. NULL = active.
+      ALTER TABLE artifacts ADD COLUMN deleted_at INTEGER;
+      CREATE INDEX IF NOT EXISTS idx_artifacts_deleted ON artifacts(deleted_at, created_at);
+    `,
+  },
 ]
 
 function runMigrations(db: Database.Database): void {

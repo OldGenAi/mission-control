@@ -34,8 +34,8 @@ const TypeBadge: React.FC<{ type: string }> = ({ type }) => {
   )
 }
 
-const ArtifactRow: React.FC<{ artifact: Artifact; expanded: boolean; onToggle: () => void }> = ({
-  artifact, expanded, onToggle,
+const ArtifactRow: React.FC<{ artifact: Artifact; expanded: boolean; onToggle: () => void; onDelete: () => void }> = ({
+  artifact, expanded, onToggle, onDelete,
 }) => (
   <div
     className="rounded-xl transition-all cursor-pointer"
@@ -56,7 +56,18 @@ const ArtifactRow: React.FC<{ artifact: Artifact; expanded: boolean; onToggle: (
           {artifact.agentId ?? 'unknown agent'} · {fmtDate(artifact.createdAt)}
         </p>
       </div>
-      <span className="text-gray-600 text-sm mt-0.5 shrink-0">{expanded ? '▲' : '▼'}</span>
+      <div className="flex items-center gap-3 shrink-0 mt-0.5">
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete() }}
+          title="Delete artifact"
+          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: '#6B7280', fontSize: 13, lineHeight: 1 }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = '#f87171')}
+          onMouseLeave={(e) => (e.currentTarget.style.color = '#6B7280')}
+        >
+          ✕
+        </button>
+        <span className="text-gray-600 text-sm">{expanded ? '▲' : '▼'}</span>
+      </div>
     </div>
     {expanded && artifact.content !== undefined && (
       <div className="px-4 pb-4 border-t border-white/5 pt-3">
@@ -105,6 +116,15 @@ export const ArtifactsPage: React.FC = () => {
     } catch { /* ignore */ }
   }
 
+  const handleDelete = async (artifact: Artifact) => {
+    if (!window.confirm(`Delete artifact "${artifact.title}"?`)) return
+    try {
+      await gateway.request('artifacts.delete', { id: artifact.id })
+      setArtifacts(prev => prev.filter(a => a.id !== artifact.id))
+      if (expandedId === artifact.id) setExpandedId(null)
+    } catch { /* ignore */ }
+  }
+
   return (
     <div className="p-6 h-full flex flex-col gap-4 overflow-hidden">
       <div className="flex items-center justify-between">
@@ -136,6 +156,7 @@ export const ArtifactsPage: React.FC = () => {
               artifact={a}
               expanded={expandedId === a.id}
               onToggle={() => handleToggle(a)}
+              onDelete={() => handleDelete(a)}
             />
           ))
         )}

@@ -43,6 +43,8 @@ export interface MonitorTick {
   totalSessions: number
   activePipelineTokens: number   // live tokens since the active run started (0 when idle)
   activePipelineCostUsd: number  // live cost since the active run started (0 when idle)
+  activePipelineToolCalls: number // live tool calls since the active run started (0 when idle)
+  activePipelineErrors: number    // live tool errors since the active run started (0 when idle)
   memory: MemoryStats
   watchdog: WatchdogStats | null // live watchdog heartbeat (null until wired)
 }
@@ -119,6 +121,10 @@ export class MonitorTracker {
     const activeStats = active
       ? this.querySessionStats(active.createdAt)
       : { totalTokens: 0, totalCostUsd: 0 }
+    // Tool calls + errors scoped to the active run, so the Monitor's counters
+    // climb during a pipeline and reset to 0 between runs — same treatment as
+    // TOKENS/COST above. The since-boot totals stay available via queryToolStats().
+    const activeTools = active ? this.queryToolStats(active.createdAt) : null
     return {
       agents: Array.from(this.agents.values()),
       pipelines,
@@ -129,6 +135,8 @@ export class MonitorTracker {
       totalSessions: ss.totalSessions,
       activePipelineTokens: activeStats.totalTokens,
       activePipelineCostUsd: activeStats.totalCostUsd,
+      activePipelineToolCalls: activeTools?.totalCalls ?? 0,
+      activePipelineErrors: activeTools?.errorCount ?? 0,
       memory: ms,
       watchdog: this.watchdogStats ? this.watchdogStats() : null,
     }
@@ -187,10 +195,9 @@ export class MonitorTracker {
     }
   }
 
-  queryToolStats(): { totalCalls: number; lastToolName: string; lastDurationMs: number; errorCount: number; startedAt: number } {
+  queryToolStats(since: number = this.startedAt): { totalCalls: number; lastToolName: string; lastDurationMs: number; errorCount: number; startedAt: number } {
     interface TotalRow { n: number }
     interface LastRow { tool_name: string; duration_ms: number }
-    const since = this.startedAt   // only count calls in this gateway session
     const total = this.db.prepare<[number], TotalRow>(
       'SELECT COUNT(*) as n FROM tool_call_log WHERE created_at >= ?'
     ).get(since) ?? { n: 0 }

@@ -119,15 +119,43 @@ export function parseToolArguments(
   const asObject = (v: unknown): Record<string, unknown> | null =>
     v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null
 
+  // 1. Strict parse — the common case.
   try {
     const obj = asObject(JSON.parse(raw))
     if (obj) return obj
   } catch {
-    /* malformed — fall through to the repair pass */
+    /* malformed — fall through to the repair passes */
   }
 
+  // 2. Tool-specific structural repair. On a fan-out, some models (Qwen does this)
+  //    collapse `"batch": [{"role": "X", ...}, ...]` into
+  //    `"batch": "X", "task": ..., "tools": [...]}, {...}, ...]` — they drop the
+  //    `[{"role":` wrapper on the FIRST entry only (later entries are well-formed),
+  //    which makes the whole blob invalid and is beyond jsonrepair. Restore the
+  //    wrapper, then let the normal parse/repair below handle the rest.
+  let candidate = raw
+  if (ctx.toolName === 'subagent_spawn') {
+    const restored = candidate.replace(
+      /"batch"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"(role|task|tools)"/,
+      '"batch": [{"role": "$1", "$2"',
+    )
+    if (restored !== candidate) {
+      candidate = restored
+      try {
+        const obj = asObject(JSON.parse(candidate))
+        if (obj) {
+          console.warn(`[${ctx.provider}] ${ctx.correlationId} repaired collapsed batch arguments for tool "${ctx.toolName}"`)
+          return obj
+        }
+      } catch {
+        /* still malformed — let jsonrepair try the restored string */
+      }
+    }
+  }
+
+  // 3. General jsonrepair pass (on the possibly batch-restored candidate).
   try {
-    const obj = asObject(JSON.parse(jsonrepair(raw)))
+    const obj = asObject(JSON.parse(jsonrepair(candidate)))
     if (obj) {
       console.warn(`[${ctx.provider}] ${ctx.correlationId} repaired malformed arguments for tool "${ctx.toolName}"`)
       return obj
@@ -136,6 +164,7 @@ export function parseToolArguments(
     /* unrepairable — fall through */
   }
 
+  // 4. Give up — the tool's own validation handles the empty-args case.
   console.error(`[${ctx.provider}] ${ctx.correlationId} tool "${ctx.toolName}" arguments unparseable even after repair:`, raw.slice(0, 200))
   return {}
 }

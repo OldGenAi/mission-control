@@ -20,7 +20,7 @@ export function registerModelsMethods(resolve: () => ModelsConfig): void {
   registerMethod('models.list', listModels)
 }
 
-async function listLocalModels(baseUrl: string): Promise<{ models: Array<{ id: string; label: string }> }> {
+async function listLocalModels(baseUrl: string): Promise<{ models: Array<{ id: string; label: string; contextLength?: number }> }> {
   try {
     const res = await fetch(`${baseUrl}/models`)
     if (!res.ok) {
@@ -37,7 +37,7 @@ async function listLocalModels(baseUrl: string): Promise<{ models: Array<{ id: s
   }
 }
 
-async function listOpenRouterModels(): Promise<{ models: Array<{ id: string; label: string }> }> {
+async function listOpenRouterModels(): Promise<{ models: Array<{ id: string; label: string; contextLength?: number }> }> {
   try {
     const res = await fetch('https://openrouter.ai/api/v1/models')
     if (!res.ok) {
@@ -45,16 +45,18 @@ async function listOpenRouterModels(): Promise<{ models: Array<{ id: string; lab
       return { models: [] }
     }
     const data = await res.json() as {
-      data?: Array<{ id: string; name?: string; supported_parameters?: string[] }>
+      data?: Array<{ id: string; name?: string; supported_parameters?: string[]; context_length?: number }>
     }
     // Mission Control drives an agentic tool loop, so only tool-capable models are
     // usable here. List both free and paid (paid was previously hidden by a
     // `:free`-only filter); the label flags free ones so paid is a clear choice.
+    // context_length feeds the chat's per-model context gauge.
     const models = (data.data ?? [])
       .filter(m => m.supported_parameters?.includes('tools'))
       .map(m => ({
         id:    m.id,
         label: m.id.endsWith(':free') ? `${m.name ?? m.id} (free)` : (m.name ?? m.id),
+        contextLength: m.context_length,
       }))
       .sort((a, b) => a.label.localeCompare(b.label))
     return { models }
