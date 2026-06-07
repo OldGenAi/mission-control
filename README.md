@@ -126,7 +126,7 @@ Under the hood:
 
 1. **Clone the repo**
    ```bash
-   git clone https://github.com/OldGenAI/mission-control.git
+   git clone https://github.com/OldGenAi/mission-control.git
    cd mission-control
    ```
 
