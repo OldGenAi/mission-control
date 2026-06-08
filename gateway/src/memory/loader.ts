@@ -73,13 +73,32 @@ export function loadSystemPrompt(db: Database.Database, agentId: string): string
   if (yesterday) parts.push(`## Yesterday (${yesterdayKey()})\n${yesterday}`)
   if (today)     parts.push(`## Today (${todayKey()})\n${today}`)
 
+  // The model has no internal clock. Inject the real current time, rebuilt every
+  // turn (this function runs once per turn), so date/time questions are answered
+  // from here instead of web_search — search returns stale indexed snippets and
+  // gets the current time wrong. Timezone comes from the TZ env var (gateway/.env);
+  // formatted via Intl with an explicit timeZone so it works on Alpine (no system
+  // tzdata; Node's bundled ICU still resolves named zones). Defaults to UTC.
+  const tzName = process.env.TZ || 'UTC'
+  const dtFmt: Intl.DateTimeFormatOptions = {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
+  }
+  let nowStr: string
+  try {
+    nowStr = new Date().toLocaleString('en-GB', { ...dtFmt, timeZone: tzName })
+  } catch {
+    nowStr = new Date().toLocaleString('en-GB', { ...dtFmt, timeZone: 'UTC' })
+  }
+  parts.push(`## Current date and time\nIt is currently **${nowStr}** (the live clock on the machine you run on). Treat this as the authoritative present moment — use it directly for the date, the time, the day of the week, or how recent something is. Never web_search to find the current date or time; you already have it here.`)
+
   // Always injected — tells the model to actually call tools instead of guessing
   parts.push(`## Tool Use — Mandatory
 
 You have tools available: web_search, web_fetch, file_read, file_write, file_edit, artifact_write, memory_write, memory_get, memory_search, memory_promote, pipeline_run, pipeline_status, and others.
 
 Rules you must follow without exception:
-1. NEVER answer from training data when a tool can get the real answer. Current events, live sports results, news, prices, today's date/time — always call a tool first.
+1. NEVER answer from training data when a tool can get the real answer. Current events, live sports results, news, prices — always call a tool first. The current date and time are already given above (see "## Current date and time") — use those directly; do NOT web_search for the date or time, as search results are stale snapshots and will be wrong.
 2. When the user says "search", "look up", "find", "check the web", or any similar phrasing — you MUST call web_search. No exceptions, no pretending. (Exception: if the user explicitly names a pipeline, follow the pipeline rules in the Operational Spec instead.)
 3. Do not say "I've scanned" or "I've checked" unless you actually called a tool. If you cannot call a tool, say so plainly.
 4. If a tool call fails, report the error. Never fabricate a result.
