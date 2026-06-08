@@ -75,6 +75,7 @@ The short version: **Dave is the chat; a pipeline is that same intelligence turn
 
 **Live Monitor**
 - A real-time HUD showing your agents, their context usage, tokens, cost, latency, and the background watchdog so you always see what's happening.
+- The pipeline flow panel shows your **most recent run**, so a finished run stays on screen. If a step is red, that means the last run failed there. It is history, not a live error, and it clears as soon as the next run starts.
 
 **Memory**
 - Short-term **daily notes** that fade after a week, and **milestones** that stick around Dave decides what's worth keeping.
