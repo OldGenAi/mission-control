@@ -247,7 +247,7 @@ export function setSearchApiKeySource(fn: () => string | undefined): void {
 export const webSearch: RegisteredTool = {
   schema: {
     name: 'web_search',
-    description: 'Search the web and return a list of results with titles, URLs, and snippets. Requires SEARCH_API_KEY environment variable.',
+    description: 'Search the web. Returns results with titles, URLs, snippets, and the recency of each result (age + page_age). For time-sensitive queries (news, current events, prices, "latest" or "today"), pass a freshness filter to restrict to recent results. Requires SEARCH_API_KEY.',
     parameters: {
       type: 'object',
       required: ['query'],
@@ -259,6 +259,10 @@ export const webSearch: RegisteredTool = {
         count: {
           type: 'number',
           description: 'Number of results to return. Defaults to 5, max 10.',
+        },
+        freshness: {
+          type: 'string',
+          description: 'Optional recency filter for time-sensitive queries: "pd" (past 24h), "pw" (past week), "pm" (past month), "py" (past year), or a date range "YYYY-MM-DDtoYYYY-MM-DD". Omit for general queries that do not depend on how recent the result is.',
         },
       },
     },
@@ -285,9 +289,17 @@ export const webSearch: RegisteredTool = {
 
     const count = Math.min(typeof args['count'] === 'number' ? args['count'] : 5, 10)
 
+    // Optional recency filter (Brave `freshness`). Validate so only well-formed
+    // values reach the API: pd/pw/pm/py or an explicit YYYY-MM-DDtoYYYY-MM-DD range.
+    const freshnessRaw = typeof args['freshness'] === 'string' ? args['freshness'].trim() : ''
+    const freshness = /^(pd|pw|pm|py|\d{4}-\d{2}-\d{2}to\d{4}-\d{2}-\d{2})$/.test(freshnessRaw) ? freshnessRaw : ''
+
     try {
-      // Brave Search API — swap for another provider by changing this block
-      const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}`
+      // Brave Search API — swap for another provider by changing this block.
+      // freshness (when set) restricts to recent pages; each result carries
+      // age + page_age so the agent can judge how current a source is.
+      let url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}`
+      if (freshness) url += `&freshness=${freshness}`
       const response = await fetch(url, {
         headers: {
           'Accept': 'application/json',
@@ -300,14 +312,17 @@ export const webSearch: RegisteredTool = {
         return makeResult(context.correlationId, 'web_search', start, '', `search API returned ${response.status}`)
       }
 
-      const data = await response.json() as { web?: { results?: Array<{ title: string; url: string; description: string }> } }
+      interface BraveResult { title: string; url: string; description: string; age?: string; page_age?: string }
+      const data = await response.json() as { web?: { results?: BraveResult[] } }
       const results = data.web?.results?.map((r) => ({
         title: r.title,
         url: r.url,
         snippet: r.description,
+        age: r.age,           // human-readable recency, e.g. "12 hours ago"
+        pageAge: r.page_age,  // ISO timestamp of the page, when present
       })) ?? []
 
-      return makeResult(context.correlationId, 'web_search', start, JSON.stringify({ results }))
+      return makeResult(context.correlationId, 'web_search', start, JSON.stringify({ freshness: freshness || 'any', results }))
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       return makeResult(context.correlationId, 'web_search', start, '', redact(msg))
