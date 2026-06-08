@@ -138,7 +138,11 @@ tools.set('pipeline_run',    makePipelineRunTool({
   // Mirrors the resolver pattern already used by chat.send and pipelines.run.
   resolveActive: () => {
     const s = settingsStore.get()
-    const inst = s.instances.find(i => i.id === s.activeInstanceId) ?? s.instances[0]
+    // Prefer the pipeline-type instance so "run a pipeline" uses the pipeline model
+    // even while chat is on another; fall back to the active (chat) instance.
+    const inst = s.instances.find(i => i.type === 'pipeline')
+              ?? s.instances.find(i => i.id === s.activeInstanceId)
+              ?? s.instances[0]
     const p = inst ? providerRegistry.get(inst.provider) : null
     return {
       provider: p ?? provider,
@@ -157,12 +161,14 @@ registerMethod('health', makeHealthHandler(settingsStore))
 registerSettingsMethods(settingsStore)
 registerInstancesMethods(settingsStore, providerRegistry)
 registerSessionMethods(db)
-registerModelsMethods(() => {
+registerModelsMethods((provider?: string) => {
   // Resolve the ACTIVE instance's provider at call time so the model list follows
-  // instance switches live (no restart). Falls back to the first instance.
+  // instance switches live (no restart). An explicit `provider` (e.g. from the
+  // pipeline model picker) overrides it so a caller can list any provider's models.
   const s = settingsStore.get()
   const active = s.instances.find(i => i.id === s.activeInstanceId) ?? s.instances[0]
-  return active?.provider === 'openrouter'
+  const p = provider ?? active?.provider
+  return p === 'openrouter'
     ? { mode: 'openrouter' }
     : { mode: 'local', baseUrl: s.localProviderUrl }
 })

@@ -69,6 +69,7 @@ export class AgentLoop {
         agentId: this.config.agentId,
         sessionId,
         status: 'thinking' as AgentStatus,
+        model: activeModel,
         correlationId,
       })
 

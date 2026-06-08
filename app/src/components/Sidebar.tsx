@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { NavLink } from "react-router-dom"
+import { NavLink, useNavigate, useLocation } from "react-router-dom"
 import { gateway } from "../lib/gateway-client"
 import { listInstances, createInstance, setActiveInstance, deleteInstance, type Instance, type ProviderName } from "../lib/settings"
 
@@ -186,6 +186,12 @@ function InstancesPanel() {
   const [activeId,  setActiveId]  = useState<string | null>(null)
   const [available, setAvailable] = useState<ProviderName[]>([])
   const [showAdd,   setShowAdd]   = useState(false)
+  const navigate = useNavigate()
+  const location = useLocation()
+  // The highlighted ("current") instance is sticky — it stays as you move through
+  // general pages (Overview, Settings, Monitor…) and only changes when you open a
+  // workspace that belongs to an instance: Chat (chat instance) or Runs (pipeline).
+  const [selectedId, setSelectedId] = useState<string | null>(null)
 
   const refresh = async () => {
     const r = await listInstances()
@@ -203,10 +209,27 @@ function InstancesPanel() {
     return unsub
   }, [])
 
-  const switchTo = async (id: string) => {
-    if (id === activeId) return
-    const ok = await setActiveInstance(id)
-    if (ok) setActiveId(id)
+  // Keep the sticky selection in step with the workspace you open: Chat → the chat
+  // instance, Runs → the pipeline instance. General pages leave it unchanged.
+  useEffect(() => {
+    if (location.pathname.startsWith('/chat')) {
+      const chat = instances.find(i => i.id === activeId) ?? instances.find(i => i.type !== 'pipeline')
+      if (chat) setSelectedId(chat.id)
+    } else if (location.pathname.startsWith('/pipelines')) {
+      const pipe = instances.find(i => i.type === 'pipeline')
+      if (pipe) setSelectedId(pipe.id)
+    }
+  }, [location.pathname, activeId, instances])
+
+  const switchTo = async (inst: Instance) => {
+    setSelectedId(inst.id)   // highlight the clicked instance immediately
+    // A pipeline instance is a doorway to the Runs section, not the chat — open it
+    // there and leave the chat's active instance untouched, so chat keeps its model.
+    if (inst.type === 'pipeline') { navigate('/pipelines/runs'); return }
+    navigate('/chat')
+    if (inst.id === activeId) return
+    const ok = await setActiveInstance(inst.id)
+    if (ok) setActiveId(inst.id)
   }
 
   const remove = async (id: string) => {
@@ -220,16 +243,16 @@ function InstancesPanel() {
       <p className="text-xs uppercase tracking-wider text-gray-600 px-2 mb-2">Instances</p>
       <div className="flex flex-col gap-1">
         {instances.map(inst => {
-          const isActive = inst.id === activeId
+          const isActive = inst.id === (selectedId ?? activeId)
           const initial  = inst.name.charAt(0).toUpperCase()
           return (
             <div key={inst.id}
               className={`group flex items-center gap-2 px-2 py-1.5 rounded-lg border transition-colors cursor-pointer ${isActive ? 'bg-cyan-500/10 border-cyan-500/30' : 'bg-white/5 border-white/10 hover:bg-white/10'}`}
-              onClick={() => switchTo(inst.id)}>
+              onClick={() => switchTo(inst)}>
               <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${isActive ? 'bg-cyan-500/30 border border-cyan-400/40 text-cyan-200' : 'bg-purple-600/40 border border-purple-500/30 text-purple-300'}`}>{initial}</span>
               <div className="flex flex-col leading-tight min-w-0">
                 <span className={`text-xs truncate ${isActive ? 'text-cyan-200' : 'text-gray-400'}`}>{inst.name}</span>
-                <span className="text-[10px] text-gray-600 truncate">{inst.provider} · {inst.model}</span>
+                <span className="text-[10px] text-gray-600 truncate">{inst.type === 'pipeline' ? '→ Runs' : `${inst.provider} · ${inst.model}`}</span>
               </div>
               {instances.length > 1 && (
                 <button
@@ -257,6 +280,7 @@ function AddInstanceModal({ available, onClose, onCreated }: { available: Provid
   const [name, setName]         = useState('')
   const [provider, setProvider] = useState<ProviderName>(available[0] ?? 'local')
   const [model, setModel]       = useState('')
+  const [type, setType]         = useState<'chat' | 'pipeline'>('chat')
   const [error, setError]       = useState<string | null>(null)
   const [busy, setBusy]         = useState(false)
 
@@ -264,7 +288,7 @@ function AddInstanceModal({ available, onClose, onCreated }: { available: Provid
     setError(null)
     if (!name.trim() || !model.trim()) { setError('Name and model are required.'); return }
     setBusy(true)
-    const created = await createInstance(name.trim(), provider, model.trim())
+    const created = await createInstance(name.trim(), provider, model.trim(), type)
     setBusy(false)
     if (!created) { setError('Create failed — gateway rejected the request. Check provider credentials.'); return }
     onCreated()
@@ -283,6 +307,12 @@ function AddInstanceModal({ available, onClose, onCreated }: { available: Provid
         <select value={provider} onChange={e => setProvider(e.target.value as ProviderName)}
           className="w-full mb-3 px-3 py-1.5 text-xs rounded bg-black/40 border border-white/10 text-gray-200 focus:outline-none focus:border-cyan-500/50">
           {available.map(p => <option key={p} value={p}>{p}</option>)}
+        </select>
+        <label className="block text-[11px] uppercase tracking-wider text-gray-500 mb-1">Workspace</label>
+        <select value={type} onChange={e => setType(e.target.value as 'chat' | 'pipeline')}
+          className="w-full mb-3 px-3 py-1.5 text-xs rounded bg-black/40 border border-white/10 text-gray-200 focus:outline-none focus:border-cyan-500/50">
+          <option value="chat">Chat (Dave)</option>
+          <option value="pipeline">Pipeline (Runs)</option>
         </select>
         <label className="block text-[11px] uppercase tracking-wider text-gray-500 mb-1">Model</label>
         <input value={model} onChange={e => setModel(e.target.value)}

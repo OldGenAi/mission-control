@@ -10,6 +10,7 @@ export interface AgentState {
   detail?: string
   correlationId?: string
   contextPct?: number // 0–100, model context fill at the last call
+  model?: string      // the model this agent is running on (preserved between status events)
   lastUpdated: number // Date.now()
 }
 
@@ -98,6 +99,11 @@ export class MonitorTracker {
     const ctx = typeof payload['contextPct'] === 'number'
       ? payload['contextPct'] as number
       : this.agents.get(agentId)?.contextPct
+    // Same preserve-last treatment for the model this agent is running on, so it
+    // holds steady across status events that don't carry it.
+    const model = typeof payload['model'] === 'string'
+      ? payload['model'] as string
+      : this.agents.get(agentId)?.model
     this.agents.set(agentId, {
       agentId,
       sessionId: payload['sessionId'] as string | undefined,
@@ -105,6 +111,7 @@ export class MonitorTracker {
       detail: payload['detail'] as string | undefined,
       correlationId: payload['correlationId'] as string | undefined,
       contextPct: ctx,
+      model,
       lastUpdated: Date.now(),
     })
   }

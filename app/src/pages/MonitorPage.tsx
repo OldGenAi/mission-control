@@ -13,7 +13,7 @@ const C = {
 interface AgentState {
   agentId: string; sessionId?: string
   status: 'idle' | 'thinking' | 'tool_running' | 'error' | 'context_warning'
-  detail?: string; correlationId?: string; contextPct?: number; lastUpdated: number
+  detail?: string; correlationId?: string; contextPct?: number; model?: string; lastUpdated: number
 }
 interface PipelineRow {
   id: string; name: string; status: string; currentStep?: string
@@ -681,9 +681,10 @@ const CostArc: FC<{ cost: number }> = ({ cost }) => {
     </svg>
   )
 }
-const CtxRing: FC<{ label: string; pct: number }> = ({ label, pct }) => {
+const CtxRing: FC<{ label: string; pct: number; model?: string }> = ({ label, pct, model }) => {
   const r = 14, circ = 2 * Math.PI * r
   const col = pct > 80 ? C.error : pct > 60 ? C.amber : C.cyan
+  const shortModel = model ? (model.includes('/') ? model.split('/').pop()! : model) : ''
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <svg width="36" height="36" viewBox="0 0 36 36" style={{ flexShrink: 0 }}>
@@ -694,7 +695,10 @@ const CtxRing: FC<{ label: string; pct: number }> = ({ label, pct }) => {
           style={{ filter: pct > 60 ? `drop-shadow(0 0 3px ${col})` : undefined }} />
         <text x="18" y="22" textAnchor="middle" fill={col} fontSize="7" fontFamily="monospace">{pct}%</text>
       </svg>
-      <span style={{ fontSize: 9, color: C.muted, fontFamily: 'monospace' }}>{(label === 'tier1_agent' ? 'Dave' : label).slice(0, 10).toUpperCase()}</span>
+      <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <span style={{ fontSize: 9, color: C.muted, fontFamily: 'monospace' }}>{(label === 'tier1_agent' ? 'Dave' : label).slice(0, 10).toUpperCase()}</span>
+        {shortModel && <span style={{ fontSize: 8, color: C.muted, opacity: 0.65, fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 116 }}>{shortModel}</span>}
+      </div>
     </div>
   )
 }
@@ -836,7 +840,7 @@ export const MonitorPage: FC = () => {
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}><CostArc cost={tCost} /></div>
       <div><div style={{ fontSize: 9, color: C.muted, fontFamily: 'monospace', letterSpacing: '0.1em', marginBottom: 6 }}>CONTEXT</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-          {(agents.length > 0 ? agents : [{ agentId: 'dave', status: 'idle' as const, lastUpdated: 0 }]).map(a => <CtxRing key={a.agentId} label={a.agentId} pct={a.contextPct ?? 0} />)}
+          {(agents.length > 0 ? agents : [{ agentId: 'dave', status: 'idle', lastUpdated: 0 } as AgentState]).map(a => <CtxRing key={a.agentId} label={a.agentId} pct={a.contextPct ?? 0} model={a.model} />)}
         </div></div>
       <div><div style={{ fontSize: 9, color: C.muted, fontFamily: 'monospace', letterSpacing: '0.1em', marginBottom: 5 }}>LATENCY</div>
         <div style={{ height: 3, background: 'rgba(255,255,255,0.05)', borderRadius: 2, overflow: 'hidden' }}>

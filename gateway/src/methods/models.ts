@@ -10,9 +10,12 @@ export type ModelsConfig =
  * at call time. Switching instance in the UI then re-lists the right catalogue
  * (LM Studio's loaded models vs OpenRouter's free models) without a gateway restart.
  */
-export function registerModelsMethods(resolve: () => ModelsConfig): void {
-  const listModels: MethodHandler = async () => {
-    const config = resolve()
+export function registerModelsMethods(resolve: (provider?: string) => ModelsConfig): void {
+  const listModels: MethodHandler = async (params) => {
+    // Optional `provider` lets a caller (e.g. the pipeline model picker) list a
+    // specific provider's catalogue instead of the active instance's.
+    const provider = typeof params['provider'] === 'string' ? params['provider'] : undefined
+    const config = resolve(provider)
     if (config.mode === 'openrouter') return listOpenRouterModels()
     return listLocalModels(config.baseUrl)
   }

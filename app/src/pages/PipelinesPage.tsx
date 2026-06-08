@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { gateway } from '../lib/gateway-client'
 import type { GatewayEvent } from '../lib/gateway-client'
+import { useSettings, updateInstance, listInstances, type ProviderName } from '../lib/settings'
 
 interface Pipeline {
   id: string
@@ -180,6 +181,54 @@ const RunDetailModal: React.FC<{ run: Pipeline; onClose: () => void }> = ({ run,
 
 interface AvailablePipeline { name: string; source: 'builtin' | 'user'; title?: string; description?: string }
 
+// Where pipelines run: the model/provider of the pipeline-type instance. Editing here
+// updates that instance, so both UI-launched and Dave-launched pipelines use it.
+const PipelineModelPicker: React.FC = () => {
+  const { settings } = useSettings()
+  const [providers, setProviders] = useState<ProviderName[]>([])
+  const [models, setModels] = useState<{ id: string; label?: string }[]>([])
+  const pipelineInst = settings?.instances.find(i => i.type === 'pipeline') ?? null
+
+  useEffect(() => { listInstances().then(r => { if (r) setProviders(r.availableProviders) }).catch(() => {}) }, [])
+  useEffect(() => {
+    if (!pipelineInst) return
+    gateway.request('models.list', { provider: pipelineInst.provider })
+      .then(r => setModels((r as { models?: { id: string; label?: string }[] }).models ?? []))
+      .catch(() => setModels([]))
+  }, [pipelineInst?.provider])
+
+  if (!settings) return null
+  if (!pipelineInst) {
+    return (
+      <div className="rounded-xl p-3 text-xs text-gray-500" style={{ background: 'rgba(6,10,16,0.88)', border: '1px solid rgba(255,255,255,0.07)' }}>
+        No pipeline instance yet — in the sidebar, add one with Workspace = Pipeline.
+      </div>
+    )
+  }
+
+  // Keep the current model selectable even if the catalogue hasn't loaded or omits it.
+  const options = models.some(m => m.id === pipelineInst.model)
+    ? models
+    : [{ id: pipelineInst.model, label: pipelineInst.model }, ...models]
+
+  return (
+    <div className="rounded-xl p-3 flex items-center gap-3 flex-wrap" style={{ background: 'rgba(6,10,16,0.88)', border: '1px solid rgba(0,200,255,0.2)' }}>
+      <span className="text-xs text-gray-400 shrink-0">Pipelines run on</span>
+      <select value={pipelineInst.provider}
+        onChange={e => void updateInstance(pipelineInst.id, { provider: e.target.value as ProviderName })}
+        className="rounded px-2 py-1 text-xs bg-black/40 border border-white/10 text-gray-200 focus:outline-none focus:border-cyan-500/50">
+        {providers.map(p => <option key={p} value={p}>{p}</option>)}
+      </select>
+      <select value={pipelineInst.model}
+        onChange={e => void updateInstance(pipelineInst.id, { model: e.target.value })}
+        className="flex-1 min-w-[220px] rounded px-2 py-1 text-xs bg-black/40 border border-white/10 text-gray-200 focus:outline-none focus:border-cyan-500/50">
+        {options.length === 0 && <option value="">Loading…</option>}
+        {options.map(m => <option key={m.id} value={m.id}>{m.label ?? m.id}</option>)}
+      </select>
+    </div>
+  )
+}
+
 export const PipelinesPage: React.FC = () => {
   const [tab, setTab] = useState<'runs' | 'approvals'>('runs')
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
@@ -277,6 +326,8 @@ export const PipelinesPage: React.FC = () => {
 
   return (
     <div className="p-6 h-full flex flex-col gap-4 overflow-hidden">
+
+      <PipelineModelPicker />
 
       {/* Run pipeline panel */}
       {showRun && (

@@ -11,6 +11,7 @@ export interface Instance {
   name:      string
   provider:  ProviderName
   model:     string
+  type?:     'chat' | 'pipeline'   // absent = 'chat' (back-compat); 'pipeline' runs pipelines + opens the Runs section when clicked
 }
 
 export interface SettingsSnapshot {
@@ -116,6 +117,7 @@ export class SettingsStore {
         name:     'Dave',
         provider: this.snapshot.provider,
         model:    this.snapshot.defaultModel,
+        type:     'chat',
       }
       this.snapshot.instances = [seed]
       this.snapshot.activeInstanceId = seed.id

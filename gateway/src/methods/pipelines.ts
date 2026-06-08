@@ -66,7 +66,11 @@ export function registerPipelineMethods(db: Database.Database, deps: PipelineMet
     let model    = deps.model
     if (deps.settingsStore && deps.providerRegistry) {
       const s = deps.settingsStore.get()
-      const inst = s.instances.find((i: Instance) => i.id === s.activeInstanceId)
+      // Pipelines run on the dedicated pipeline-type instance when one exists, so a
+      // pipeline can use a different model than the chat. Falls back to the active
+      // (chat) instance when none is designated — i.e. unchanged behaviour by default.
+      const inst = s.instances.find((i: Instance) => i.type === 'pipeline')
+                ?? s.instances.find((i: Instance) => i.id === s.activeInstanceId)
       if (inst) {
         const p = deps.providerRegistry.get(inst.provider)
         if (p) { provider = p; model = inst.model }

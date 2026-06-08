@@ -23,12 +23,13 @@ export function registerInstancesMethods(store: SettingsStore, providers: Provid
     const name     = params['name']
     const provider = params['provider']
     const model    = params['model']
+    const type     = params['type'] === 'pipeline' ? 'pipeline' : 'chat'
     if (typeof name !== 'string' || !name.trim()) return { ok: false, error: 'INSTANCE_NAME_REQUIRED' }
     if (!isValidProvider(provider))               return { ok: false, error: 'INSTANCE_PROVIDER_INVALID' }
     if (typeof model !== 'string' || !model.trim()) return { ok: false, error: 'INSTANCE_MODEL_REQUIRED' }
     if (!providers.has(provider))                  return { ok: false, error: `INSTANCE_PROVIDER_UNAVAILABLE: gateway has no credentials configured for "${provider}"` }
 
-    const next: Instance = { id: randomUUID(), name: name.trim(), provider, model: model.trim() }
+    const next: Instance = { id: randomUUID(), name: name.trim(), provider, model: model.trim(), type }
     const current = store.get()
     store.update({ instances: [...current.instances, next] })
     broadcastEvent('settings.changed', { settings: store.get() })
@@ -49,6 +50,7 @@ export function registerInstancesMethods(store: SettingsStore, providers: Provid
       patched.provider = params['provider']
     }
     if (typeof params['model'] === 'string' && params['model'].trim()) patched.model = params['model'].trim()
+    if (params['type'] === 'chat' || params['type'] === 'pipeline') patched.type = params['type']
 
     const nextList = [...current.instances]
     nextList[idx] = patched

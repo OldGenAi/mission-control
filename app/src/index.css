@@ -2,6 +2,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
+  color-scheme: dark;   /* render native controls (select dropdown lists, scrollbars) dark to match the UI */
   --bg: #030509;
   --bg-elevated: rgba(8, 13, 20, 0.9);
   --bg-hover: rgba(12, 18, 28, 0.95);

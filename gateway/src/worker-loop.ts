@@ -113,7 +113,7 @@ export async function runWorker(config: WorkerRunConfig): Promise<WorkerResult> 
     const maxIterations = credential?.maxIterations ?? 10
 
     config.broadcast('', 'agent.status', {
-      agentId: workerAgentId, status: 'thinking', correlationId,
+      agentId: workerAgentId, status: 'thinking', model: config.model, correlationId,
     })
 
     let iterations = 0

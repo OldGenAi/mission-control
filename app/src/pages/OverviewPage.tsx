@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { gateway } from '../lib/gateway-client'
 import type { GatewayEvent } from '../lib/gateway-client'
+import { useSettings } from '../lib/settings'
 
 interface SessionRow {
   id: string
@@ -79,13 +80,13 @@ const AgentsIcon = () => (
 
 export const OverviewPage: React.FC = () => {
   const navigate = useNavigate()
+  const { settings } = useSettings()
   const [gatewayOk, setGatewayOk] = useState(false)
   const [uptime, setUptime] = useState(0)
   const [sessions, setSessions] = useState<SessionRow[]>([])
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
   const [modelsOk, setModelsOk] = useState(false)
   const [activeProvider, setActiveProvider] = useState<string>('local')
-  const [activeModel, setActiveModel] = useState<string>('')
   const [daveStatus, setDaveStatus] = useState<string>('Offline')
   const [daveDetail, setDaveDetail] = useState<string>('')
   const [totalTokens, setTotalTokens] = useState(0)
@@ -105,7 +106,6 @@ export const OverviewPage: React.FC = () => {
       setGatewayOk(r.status === 'ok')
       setUptime(r.uptime ?? 0)
       setActiveProvider(r.provider ?? 'local')
-      setActiveModel(r.model ?? '')
     }).catch(() => setGatewayOk(false))
 
     gateway.request('sessions.list', {}).then((res) => {
@@ -230,35 +230,31 @@ export const OverviewPage: React.FC = () => {
     },
   ]
 
-  const isLocal      = activeProvider === 'local'
-  const isOpenRouter = activeProvider === 'openrouter'
-
-  // Three pill states so the dot colour matches reality:
-  //   active = selected + reachable (cyan)
-  //   idle   = a fine provider that just isn't the active one (grey — no alarm)
-  //   error  = selected but unreachable, or a core service down (red)
+  // Health reflects EVERY instance's provider, not just the active chat one — so a
+  // provider used only by the pipeline instance shows as in-use (with its model and
+  // role), not "Not selected".
   type HealthStatus = 'active' | 'idle' | 'error'
+  const instances = settings?.instances ?? []
+  const activeInstanceId = settings?.activeInstanceId
+  const roleOf = (i: { id: string; type?: string }) =>
+    i.type === 'pipeline' ? 'pipeline' : i.id === activeInstanceId ? 'chat' : 'instance'
+  const providerHealth = (provider: string): { status: HealthStatus; detail: string } => {
+    const using = instances.filter(i => i.provider === provider)
+    if (using.length === 0) return { status: 'idle', detail: 'Not configured' }
+    // Reachability is only known live for the ACTIVE provider (via modelsOk); a
+    // provider assigned to another instance is shown as in-use.
+    const status: HealthStatus = (activeProvider === provider && !modelsOk) ? 'error' : 'active'
+    const detail = using.map(i => `${i.model} · ${roleOf(i)}`).join('   ')
+    return { status, detail }
+  }
+  const lmHealth = providerHealth('local')
+  const orHealth = providerHealth('openrouter')
+
   const healthItems: { label: string; status: HealthStatus; detail: string }[] = [
-    { label: 'Gateway', status: gatewayOk ? 'active' : 'error', detail: gatewayOk ? 'Connected' : 'Offline' },
-    {
-      label: 'LM Studio',
-      status: !isLocal ? 'idle' : modelsOk ? 'active' : 'error',
-      detail: !isLocal
-        ? 'Not selected'
-        : modelsOk
-          ? (activeModel || 'Active · model loaded')
-          : 'Unreachable',
-    },
-    {
-      label: 'OpenRouter',
-      status: !isOpenRouter ? 'idle' : modelsOk ? 'active' : 'error',
-      detail: !isOpenRouter
-        ? 'Not selected'
-        : modelsOk
-          ? (activeModel || 'Active')
-          : 'Unreachable',
-    },
-    { label: 'SQLite', status: gatewayOk ? 'active' : 'error', detail: gatewayOk ? `WAL mode · ${fmtUptime(uptime)}` : 'Offline' },
+    { label: 'Gateway',    status: gatewayOk ? 'active' : 'error', detail: gatewayOk ? 'Connected' : 'Offline' },
+    { label: 'LM Studio',  status: lmHealth.status, detail: lmHealth.detail },
+    { label: 'OpenRouter', status: orHealth.status, detail: orHealth.detail },
+    { label: 'SQLite',     status: gatewayOk ? 'active' : 'error', detail: gatewayOk ? `WAL mode · ${fmtUptime(uptime)}` : 'Offline' },
   ]
 
   const DOT: Record<HealthStatus, { color: string; glow: boolean }> = {

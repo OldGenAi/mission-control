@@ -9,6 +9,7 @@ export interface Instance {
   name:     string
   provider: ProviderName
   model:    string
+  type?:    'chat' | 'pipeline'   // absent = 'chat'; 'pipeline' runs pipelines + opens the Runs section
 }
 
 export interface SettingsSnapshot {
@@ -38,9 +39,9 @@ export async function listInstances(): Promise<InstancesListResponse | null> {
   try { return await gateway.request<InstancesListResponse>('instances.list', {}) } catch { return null }
 }
 
-export async function createInstance(name: string, provider: ProviderName, model: string): Promise<Instance | null> {
+export async function createInstance(name: string, provider: ProviderName, model: string, type: 'chat' | 'pipeline' = 'chat'): Promise<Instance | null> {
   try {
-    const r = await gateway.request<{ ok: boolean; instance?: Instance; error?: string }>('instances.create', { name, provider, model })
+    const r = await gateway.request<{ ok: boolean; instance?: Instance; error?: string }>('instances.create', { name, provider, model, type })
     return r.ok && r.instance ? r.instance : null
   } catch { return null }
 }
@@ -59,7 +60,7 @@ export async function setActiveInstance(id: string): Promise<boolean> {
   } catch { return false }
 }
 
-export async function updateInstance(id: string, patch: Partial<Pick<Instance, 'name' | 'provider' | 'model'>>): Promise<Instance | null> {
+export async function updateInstance(id: string, patch: Partial<Pick<Instance, 'name' | 'provider' | 'model' | 'type'>>): Promise<Instance | null> {
   try {
     const r = await gateway.request<{ ok: boolean; instance?: Instance }>('instances.update', { id, ...patch })
     return r.ok && r.instance ? r.instance : null
