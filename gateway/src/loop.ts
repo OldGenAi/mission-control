@@ -1,6 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto'
 import type Database from 'better-sqlite3'
-import { loadSystemPrompt } from './memory/loader.js'
+import { loadSystemPrompt, currentDateTimeNote } from './memory/loader.js'
 import type { ProviderAdapter, Message, StreamChunk, ToolCall, ToolDefinition } from './providers/types.js'
 import { computeCost, contextPercent } from './providers/pricing.js'
 import { AgentRegistry } from './agents/registry.js'
@@ -87,10 +87,15 @@ export class AgentLoop {
       // Step 4 — load frozen identity snapshot for this session
       const systemPrompt = loadSystemPrompt(this.config.db, this.config.agentId)
 
+      // The live clock rides on the latest USER turn (which is always reprocessed anyway),
+      // NOT the system prompt — keeping the cached system+tools prefix byte-stable so SWA
+      // models (e.g. Gemma-4) reuse it instead of re-processing the whole prompt every turn.
+      // The clean `message` is what's persisted (above); this note is outgoing-only, so it
+      // never enters stored history. See loader.ts currentDateTimeNote / 2026-06-10 fix.
       const messages: Message[] = [
         { role: 'system', content: systemPrompt },
         ...history,
-        { role: 'user', content: message },
+        { role: 'user', content: `${currentDateTimeNote()}\n\n${message}` },
       ]
 
       // Step 5 — build tool definitions from the tools map

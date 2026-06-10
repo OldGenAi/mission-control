@@ -73,12 +73,37 @@ export function loadSystemPrompt(db: Database.Database, agentId: string): string
   if (yesterday) parts.push(`## Yesterday (${yesterdayKey()})\n${yesterday}`)
   if (today)     parts.push(`## Today (${todayKey()})\n${today}`)
 
-  // The model has no internal clock. Inject the real current time, rebuilt every
-  // turn (this function runs once per turn), so date/time questions are answered
-  // from here instead of web_search — search returns stale indexed snippets and
-  // gets the current time wrong. Timezone comes from the TZ env var (gateway/.env);
-  // formatted via Intl with an explicit timeZone so it works on Alpine (no system
-  // tzdata; Node's bundled ICU still resolves named zones). Defaults to UTC.
+  // NOTE (2026-06-10): the live date/time is deliberately NOT injected here. Per-turn-changing
+  // text anywhere in the system prompt busts llama.cpp prefix-cache reuse on SWA models
+  // (e.g. Gemma-4), forcing a FULL prompt re-process every turn (2-3s warm -> 60-70s,
+  // confirmed via LM Studio logs). The clock is instead injected by the caller (loop.ts) onto
+  // the LATEST USER turn via currentDateTimeNote() below — after the stable system+tools
+  // prefix — so Dave keeps an accurate live clock with zero cache penalty.
+
+  // Always injected — tells the model to actually call tools instead of guessing
+  parts.push(`## Tool Use — Mandatory
+
+You have tools available: web_search, web_fetch, file_read, file_write, file_edit, artifact_write, memory_write, memory_get, memory_search, memory_promote, pipeline_run, pipeline_status, and others.
+
+Rules you must follow without exception:
+1. NEVER answer from training data when a tool can get the real answer. Current events, live sports results, news, prices — always call a tool first. The current date and time are provided to you each turn — use them directly; do NOT web_search for the date or time, as search results are stale snapshots and will be wrong.
+2. When the user says "search", "look up", "find", "check the web", or any similar phrasing — you MUST call web_search. No exceptions, no pretending. (Exception: if the user explicitly names a pipeline, follow the pipeline rules in the Operational Spec instead.)
+3. Do not say "I've scanned" or "I've checked" unless you actually called a tool. If you cannot call a tool, say so plainly.
+4. If a tool call fails, report the error. Never fabricate a result.
+5. Always prefer a real tool result over a confident-sounding guess.`)
+
+  return parts.join('\n\n')
+}
+
+/**
+ * The live date/time note, rebuilt every turn. The caller (loop.ts) prepends this to the
+ * LATEST USER message — NOT the system prompt — so the cached system+tools prefix stays
+ * byte-stable for prefix-cache reuse (SWA models like Gemma-4 otherwise re-process the whole
+ * prompt every turn; see the 2026-06-10 fix above). Timezone via the TZ env var
+ * (gateway/.env); formatted via Intl with an explicit timeZone so it works on Alpine (Node's
+ * bundled ICU resolves named zones). Defaults to UTC.
+ */
+export function currentDateTimeNote(): string {
   const tzName = process.env.TZ || 'UTC'
   const dtFmt: Intl.DateTimeFormatOptions = {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
@@ -90,19 +115,5 @@ export function loadSystemPrompt(db: Database.Database, agentId: string): string
   } catch {
     nowStr = new Date().toLocaleString('en-GB', { ...dtFmt, timeZone: 'UTC' })
   }
-  parts.push(`## Current date and time\nIt is currently **${nowStr}** (the live clock on the machine you run on). Treat this as the authoritative present moment — use it directly for the date, the time, the day of the week, or how recent something is. Never web_search to find the current date or time; you already have it here.`)
-
-  // Always injected — tells the model to actually call tools instead of guessing
-  parts.push(`## Tool Use — Mandatory
-
-You have tools available: web_search, web_fetch, file_read, file_write, file_edit, artifact_write, memory_write, memory_get, memory_search, memory_promote, pipeline_run, pipeline_status, and others.
-
-Rules you must follow without exception:
-1. NEVER answer from training data when a tool can get the real answer. Current events, live sports results, news, prices — always call a tool first. The current date and time are already given above (see "## Current date and time") — use those directly; do NOT web_search for the date or time, as search results are stale snapshots and will be wrong.
-2. When the user says "search", "look up", "find", "check the web", or any similar phrasing — you MUST call web_search. No exceptions, no pretending. (Exception: if the user explicitly names a pipeline, follow the pipeline rules in the Operational Spec instead.)
-3. Do not say "I've scanned" or "I've checked" unless you actually called a tool. If you cannot call a tool, say so plainly.
-4. If a tool call fails, report the error. Never fabricate a result.
-5. Always prefer a real tool result over a confident-sounding guess.`)
-
-  return parts.join('\n\n')
+  return `[System note — the current date and time is **${nowStr}** (the live clock on the machine you run on). Treat this as the authoritative present moment for the date, the time, the day of the week, or how recent something is. Never web_search to find the current date or time; you already have it here.]`
 }
