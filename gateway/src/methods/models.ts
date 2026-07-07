@@ -23,29 +23,49 @@ export function registerModelsMethods(resolve: (provider?: string) => ModelsConf
   registerMethod('models.list', listModels)
 }
 
-async function listLocalModels(baseUrl: string): Promise<{ models: Array<{ id: string; label: string; contextLength?: number }> }> {
+// Return shape carries diagnostic fields (probedUrl + optional error) so the UI can
+// distinguish "still fetching" from "fetched, empty, here's why". The ChatPage
+// used to render "Loading…" forever when the local provider port was wrong.
+// probedUrl is always set; error is set on any non-2xx or network failure.
+// Type alias (not interface) so it satisfies the MethodHandler contract, which
+// expects Promise<Record<string, unknown>>. Named interfaces don't carry an
+// implicit index signature in TypeScript; type aliases with plain object shapes do.
+export type ModelsListResponse = {
+  models: Array<{ id: string; label: string; contextLength?: number }>
+  probedUrl: string
+  error?: string
+}
+
+async function listLocalModels(baseUrl: string): Promise<ModelsListResponse> {
+  const probedUrl = `${baseUrl}/models`
   try {
-    const res = await fetch(`${baseUrl}/models`)
+    const res = await fetch(probedUrl)
     if (!res.ok) {
-      console.warn(`[models] local models endpoint returned ${res.status}`)
-      return { models: [] }
+      const error = `local models endpoint at ${probedUrl} returned HTTP ${res.status}`
+      console.warn(`[models] ${error}`)
+      return { models: [], probedUrl, error }
     }
     const data = await res.json() as { data?: Array<{ id: string }> }
     return {
       models: (data.data ?? []).map((m) => ({ id: m.id, label: m.id })),
+      probedUrl,
     }
   } catch (e) {
-    console.warn('[models] failed to fetch local models:', e instanceof Error ? e.message : String(e))
-    return { models: [] }
+    const detail = e instanceof Error ? e.message : String(e)
+    const error = `could not reach local models endpoint at ${probedUrl} (${detail}). Is your local server (LM Studio / Ollama / llama.cpp) running on that port?`
+    console.warn(`[models] ${error}`)
+    return { models: [], probedUrl, error }
   }
 }
 
-async function listOpenRouterModels(): Promise<{ models: Array<{ id: string; label: string; contextLength?: number }> }> {
+async function listOpenRouterModels(): Promise<ModelsListResponse> {
+  const probedUrl = 'https://openrouter.ai/api/v1/models'
   try {
-    const res = await fetch('https://openrouter.ai/api/v1/models')
+    const res = await fetch(probedUrl)
     if (!res.ok) {
-      console.warn(`[models] OpenRouter models endpoint returned ${res.status}`)
-      return { models: [] }
+      const error = `OpenRouter models endpoint returned HTTP ${res.status}`
+      console.warn(`[models] ${error}`)
+      return { models: [], probedUrl, error }
     }
     const data = await res.json() as {
       data?: Array<{ id: string; name?: string; supported_parameters?: string[]; context_length?: number }>
@@ -62,9 +82,11 @@ async function listOpenRouterModels(): Promise<{ models: Array<{ id: string; lab
         contextLength: m.context_length,
       }))
       .sort((a, b) => a.label.localeCompare(b.label))
-    return { models }
+    return { models, probedUrl }
   } catch (e) {
-    console.warn('[models] failed to fetch OpenRouter models:', e instanceof Error ? e.message : String(e))
-    return { models: [] }
+    const detail = e instanceof Error ? e.message : String(e)
+    const error = `could not reach OpenRouter models endpoint (${detail}). Check your network and OPENROUTER_API_KEY.`
+    console.warn(`[models] ${error}`)
+    return { models: [], probedUrl, error }
   }
 }

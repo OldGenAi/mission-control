@@ -8,9 +8,10 @@
 #
 # The frontend (Vite) runs natively alongside this — cd app && npm run dev
 #
-# network_mode: host — container shares WSL's network namespace.
-# In WSL2 mirrored mode, WSL's 127.0.0.1 reaches Windows services,
-# so LOCAL_PROVIDER_URL=http://127.0.0.1:1234/v1 reaches LM Studio directly.
+# network_mode: host lets the container share WSL's network namespace.
+# In WSL2 mirrored mode, WSL's 127.0.0.1 reaches Windows services directly,
+# so LOCAL_PROVIDER_URL (whatever you set in gateway/.env: LM Studio's 1234,
+# Ollama's 11434, or llama.cpp's 8080) reaches the Windows-side server as-is.
 # Port 4747 binds on the WSL host and is auto-forwarded to Windows by mirrored mode.
 # No Windows Firewall rules or LAN exposure needed.
 
@@ -28,8 +29,10 @@ services:
       # machine on an untrusted network, set this to 127.0.0.1 so the port never binds to a
       # routable interface.
       GATEWAY_HOST: "0.0.0.0"
-      # 127.0.0.1 reaches Windows LM Studio via WSL2 mirrored networking.
-      LOCAL_PROVIDER_URL: "http://127.0.0.1:1234/v1"
+      # LOCAL_PROVIDER_URL is deliberately NOT set here. Docker Compose's `environment:`
+      # would override `env_file:`, silently blocking the value the user sets in
+      # gateway/.env. Leave it to env_file so the user's choice (LM Studio, Ollama,
+      # llama.cpp, or a custom port) takes effect.
     # Run as the host user so volume-mounted files are writable.
     # UID 1000 is the first user on Ubuntu — matches oldge.
     user: "1000:1000"

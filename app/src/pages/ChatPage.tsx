@@ -50,6 +50,11 @@ interface Model {
 
 interface ModelsResponse {
   models: Model[]
+  // Diagnostic fields the gateway now returns so the selector can distinguish
+  // "still fetching" from "fetched, empty, here's why" instead of showing
+  // "Loading…" forever when the local provider port is wrong.
+  probedUrl?: string
+  error?: string
 }
 
 interface StreamStats {
@@ -486,6 +491,12 @@ export function ChatPage() {
     () => mcConfig.getLastSession()
   )
   const [models, setModels] = useState<Model[]>([])
+  // Track fetch state separately from the models array so the selector can
+  // show "Loading…" only while actually in flight, and a real error message
+  // (with the URL that was tried) when the response came back empty.
+  const [modelsLoading, setModelsLoading] = useState<boolean>(true)
+  const [modelsError, setModelsError] = useState<string | null>(null)
+  const [modelsProbedUrl, setModelsProbedUrl] = useState<string | null>(null)
   // The chat model IS the active instance's model — that's the single source of truth.
   const activeInstance = settings?.instances.find(i => i.id === settings.activeInstanceId) ?? settings?.instances[0]
   const selectedModel = activeInstance?.model ?? settings?.defaultModel ?? mcConfig.getSelectedModel()
@@ -583,6 +594,7 @@ export function ChatPage() {
   // Load sessions + models on mount
   useEffect(() => {
     let cancelled = false
+    setModelsLoading(true)
     ;(async () => {
       try {
         await gateway.connect()
@@ -597,21 +609,44 @@ export function ChatPage() {
         const match = savedSession && list.find(s => s.id === savedSession)
         if (!match && list.length > 0) setSelectedId(list[0].id)
         setModels(modRes.models ?? [])
+        setModelsError(modRes.error ?? null)
+        setModelsProbedUrl(modRes.probedUrl ?? null)
       } catch (err) {
-        if (!cancelled) console.error("[ChatPage] init error:", err)
+        if (!cancelled) {
+          console.error("[ChatPage] init error:", err)
+          setModels([])
+          setModelsError(err instanceof Error ? err.message : String(err))
+          setModelsProbedUrl(null)
+        }
+      } finally {
+        if (!cancelled) setModelsLoading(false)
       }
     })()
     return () => { cancelled = true }
   }, [])
 
-  // Re-list models whenever the active instance's provider changes — keeps the
+  // Re-list models whenever the active instance's provider changes. Keeps the
   // dropdown catalogue in sync with the live provider (LM Studio vs OpenRouter).
   useEffect(() => {
     if (!activeInstance) return
     let cancelled = false
+    setModelsLoading(true)
     gateway.request<ModelsResponse>("models.list", {})
-      .then(r => { if (!cancelled) setModels(r.models ?? []) })
-      .catch(() => {})
+      .then(r => {
+        if (cancelled) return
+        setModels(r.models ?? [])
+        setModelsError(r.error ?? null)
+        setModelsProbedUrl(r.probedUrl ?? null)
+      })
+      .catch(err => {
+        if (cancelled) return
+        setModels([])
+        setModelsError(err instanceof Error ? err.message : String(err))
+        setModelsProbedUrl(null)
+      })
+      .finally(() => {
+        if (!cancelled) setModelsLoading(false)
+      })
     return () => { cancelled = true }
   }, [activeInstance?.provider])
 
@@ -848,12 +883,24 @@ export function ChatPage() {
           value={selectedModel}
           onChange={e => setSelectedModel(e.target.value)}
           style={{ minWidth: 180 }}
+          title={modelsError ?? undefined}
         >
-          {models.length === 0 && <option value="">Loading…</option>}
+          {modelsLoading && <option value="">Loading…</option>}
+          {!modelsLoading && models.length === 0 && (
+            <option value="">
+              {modelsProbedUrl ? `No models at ${modelsProbedUrl}` : 'No models available'}
+            </option>
+          )}
           {models.map(m => (
             <option key={m.id} value={m.id}>{m.label ?? m.id}</option>
           ))}
         </select>
+        {!modelsLoading && modelsError && (
+          <span
+            style={{ color: '#f66', fontSize: 14, marginLeft: 6, cursor: 'help' }}
+            title={modelsError}
+          >⚠</span>
+        )}
 
         <div className="chat-controls__sep" />
 

@@ -112,14 +112,40 @@ Under the hood:
 
 ## Requirements
 
-- **Docker** (with Docker Compose) — runs the gateway.
-- **Node.js 18+** runs the UI.
+You'll need three things installed on your machine before you start:
+
+- **Docker Desktop** (with Docker Compose). Runs the gateway.
+- **Node.js 18 or newer**. Runs the UI.
 - **A model provider**, one of:
-  - **LM Studio / Ollama** on your machine (free, private), or
+  - **LM Studio**, **Ollama**, or **llama.cpp** on your machine (free, private), or
   - an **OpenRouter** API key (cloud models, pay-as-you-go).
-- *(Optional)* a **Brave Search** API key, if you want the web-search tool.
+
+*(Optional)* a **Brave Search** API key, if you want the web-search tool.
 
 > Tested on Windows (WSL2) with Docker. macOS and Linux work the same way.
+
+---
+
+## Prerequisites
+
+If you're missing Docker or Node.js, install them first. Otherwise skip to Quick start.
+
+### Docker Desktop
+
+- **Windows / macOS:** download the installer from [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/). On Windows, enable "Use WSL 2 based engine" during setup (it's on by default in modern versions).
+- **Linux:** follow the [Docker Engine install guide](https://docs.docker.com/engine/install/) for your distro.
+
+**Make sure Docker Desktop is running before you run any `docker compose` command.** On Windows and macOS, if the whale icon isn't in your system tray, Docker isn't started and every docker command will fail with a "cannot connect to daemon" error. Start it, wait for the icon to be steady, then continue.
+
+### Node.js 18+
+
+Install from [nodejs.org](https://nodejs.org/en/download/) (LTS release is fine), or via a package manager:
+
+- **Windows (PowerShell):** `winget install OpenJS.NodeJS.LTS`
+- **macOS (Homebrew):** `brew install node`
+- **Linux:** see [NodeSource distributions](https://github.com/nodesource/distributions) or use [nvm](https://github.com/nvm-sh/nvm).
+
+Verify with `node --version`. Must be v18 or higher.
 
 ---
 
@@ -131,20 +157,37 @@ Under the hood:
    cd mission-control
    ```
 
-2. **Set up your provider**
+2. **Set up your provider.** Copy the environment template:
    ```bash
    cp gateway/.env.example gateway/.env
    ```
-   Open `gateway/.env` and set **either**:
-   - `PROVIDER=local` and start a model in LM Studio (default URL `http://127.0.0.1:1234/v1`), **or**
-   - `PROVIDER=openrouter` and paste your key into `OPENROUTER_API_KEY`.
+   Then open `gateway/.env` and edit the values based on which provider you're using. Pick ONE path:
 
-   *(Secrets like the gateway token are generated automatically on first boot you don't set those.)*
+   **A. LM Studio (local).** This is the default in the template. Start LM Studio and load a model in its UI, then leave these values as-is:
+   ```
+   PROVIDER=local
+   LOCAL_PROVIDER_URL=http://127.0.0.1:1234/v1
+   ```
+
+   **B. Ollama (local).** Ollama uses a different port. Start Ollama and pull a model (e.g. `ollama pull llama3.2`), then set:
+   ```
+   PROVIDER=local
+   LOCAL_PROVIDER_URL=http://127.0.0.1:11434/v1
+   ```
+
+   **C. OpenRouter (cloud).** Pay-as-you-go, no local server needed. Get a key at [openrouter.ai/keys](https://openrouter.ai/keys), then set:
+   ```
+   PROVIDER=openrouter
+   OPENROUTER_API_KEY=sk-or-v1-...
+   ```
+
+   *(Secrets like the gateway token are generated automatically on first boot. You don't set those.)*
 
 3. **Start the gateway**
    ```bash
    docker compose up -d --build
    ```
+   If this fails with "cannot connect to the Docker daemon", Docker Desktop isn't running. Start it and try again.
 
 4. **Start the UI**
    ```bash
@@ -197,6 +240,26 @@ Mission Control is actively developed. Planned updates include:
 - **Smarter automation** — self-healing retries, and automatic "escalation" from cheap models to powerful ones only when a task needs it.
 
 > Want something on this list sooner, or have an idea? Open an issue.
+
+---
+
+## Troubleshooting
+
+**Model selector says "Loading…" and never shows any models.**
+Your local server isn't reachable at the URL in `gateway/.env`. Check:
+- Is LM Studio / Ollama / llama.cpp actually running?
+- Does `LOCAL_PROVIDER_URL` in `gateway/.env` match its port? (LM Studio = 1234, Ollama = 11434, llama.cpp = 8080 by default.)
+- Hover the model selector in the UI. The tooltip shows the exact URL the gateway tried and the error it got.
+- After changing `.env`, restart the gateway: `docker compose up -d --build`.
+
+**`docker compose up` fails with "cannot connect to the Docker daemon".**
+Docker Desktop isn't running. Start it and wait for the whale icon to be steady in your system tray, then retry.
+
+**`npm install` fails, or `npm run dev` doesn't launch.**
+Check your Node version: `node --version` must be v18 or higher. If it's older, install a current LTS from the Prerequisites section above.
+
+**On Windows, `docker compose` runs but can't reach my local model server.**
+Docker on Windows uses WSL2. If your WSL is on the older "NAT" networking mode, `127.0.0.1` inside the container won't reach Windows-side services. Enable "mirrored" networking in `%UserProfile%\.wslconfig` (add `[wsl2]` and `networkingMode=mirrored`), then `wsl --shutdown` and start Docker Desktop again.
 
 ---
 

@@ -21,7 +21,12 @@ import { getConfig } from '../auth.js'
 
 // Prefer an explicit env secret (backward-compat); otherwise use the auto-generated,
 // persisted secret from config.json so a fresh install needs no manual APPROVAL_SECRET.
-const secret = process.env['APPROVAL_SECRET'] ?? getConfig().approvalSecret
+// Treat an empty-string env var as "not set". .env.example historically shipped with
+// `APPROVAL_SECRET=` (empty), which `??` would NOT fall through on (empty is a valid
+// string, not null/undefined), so a fresh copy of the template used to crash the gateway
+// at boot. Coerce empty to undefined so the fallback engages as intended.
+const envSecret = process.env['APPROVAL_SECRET']
+const secret = envSecret && envSecret.length > 0 ? envSecret : getConfig().approvalSecret
 if (!secret || secret.length < 32) {
   throw new Error(
     '[approval] No valid approval secret available (need ≥ 32 chars). ' +
