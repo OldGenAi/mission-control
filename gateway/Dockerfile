@@ -12,6 +12,8 @@ COPY tsconfig.json ./
 COPY src ./src
 # Compile TypeScript and copy spec/pipeline assets into dist/
 RUN npm run build
+# Drop dev-only packages (TypeScript, tsx, type definitions) so they are not shipped in the image.
+RUN npm prune --omit=dev
 
 # ---- production stage ----
 FROM node:22-alpine
