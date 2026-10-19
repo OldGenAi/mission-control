@@ -3,6 +3,7 @@ import type { FC } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { gateway } from '../lib/gateway-client'
 import type { GatewayEvent } from '../lib/gateway-client'
+import { getPerfMode, hudFps } from '../lib/perf'
 
 const C = {
   bg: '#020408', surface: '#080D14',
@@ -87,24 +88,36 @@ function txt(ctx: CanvasRenderingContext2D, x: number, y: number, s: string, col
 // BACKGROUND LAYERS
 // ─────────────────────────────────────────────────────────────────────────────
 
+// The hex grid is the same picture every frame, just slid sideways, so it is drawn ONCE into an
+// off-screen canvas and then copied with an offset (it used to stroke ~600 hexagons every frame).
+// The cache is stored with a (gw, gh) margin so the slide never shows an edge.
+let hexCache: { canvas: HTMLCanvasElement; w: number; h: number } | null = null
 function hexGrid(ctx: CanvasRenderingContext2D, W: number, H: number, t: number) {
   const s = 30, gw = s * 1.5, gh = s * Math.sqrt(3)
-  ctx.save(); ctx.strokeStyle = 'rgba(0,200,255,0.05)'; ctx.lineWidth = 0.5
-  const dx = t % gw, dy = (t * 0.22) % gh
-  for (let c = -1; c < W / gw + 2; c++) {
-    for (let r = -1; r < H / gh + 2; r++) {
-      const cx = c * gw + dx, cy = r * gh + (c % 2 === 0 ? 0 : gh / 2) + dy
-      ctx.beginPath()
-      for (let i = 0; i < 6; i++) {
-        const a = (Math.PI / 3) * i - Math.PI / 6
-        const px = cx + s * Math.cos(a), py = cy + s * Math.sin(a)
-        if (i === 0) ctx.moveTo(px, py)
-        else ctx.lineTo(px, py)
+  if (!hexCache || hexCache.w !== W || hexCache.h !== H) {
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.ceil(W + 3 * gw); canvas.height = Math.ceil(H + 3 * gh)
+    const g = canvas.getContext('2d')
+    if (!g) return
+    g.translate(gw, gh)   // cache pixel = screen pixel + (gw, gh)
+    g.strokeStyle = 'rgba(0,200,255,0.05)'; g.lineWidth = 0.5
+    for (let c = -1; c < W / gw + 2; c++) {
+      for (let r = -1; r < H / gh + 2; r++) {
+        const cx = c * gw, cy = r * gh + (c % 2 === 0 ? 0 : gh / 2)
+        g.beginPath()
+        for (let i = 0; i < 6; i++) {
+          const a = (Math.PI / 3) * i - Math.PI / 6
+          const px = cx + s * Math.cos(a), py = cy + s * Math.sin(a)
+          if (i === 0) g.moveTo(px, py)
+          else g.lineTo(px, py)
+        }
+        g.closePath(); g.stroke()
       }
-      ctx.closePath(); ctx.stroke()
     }
+    hexCache = { canvas, w: W, h: H }
   }
-  ctx.restore()
+  const dx = t % gw, dy = (t * 0.22) % gh
+  ctx.drawImage(hexCache.canvas, dx - gw, dy - gh)
 }
 
 function scanLine(ctx: CanvasRenderingContext2D, W: number, H: number, t: number) {
@@ -409,7 +422,10 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
     let particles: Particle[] = []
     let raf: number
     let lastFrame = 0
-    const FRAME_MS = 1000 / 30   // cap the canvas at ~30fps (was unthrottled ~60) to halve GPU (§3.26)
+    // Frame rate comes from the Performance setting (lib/perf.ts): ~15/s while something runs,
+    // ~5/s when idle ('auto'); 30/s in 'full' (the old behaviour). Measured 2026-10-19: 30 fps = 42%
+    // of the iGPU, 15 fps = 17%. Motion is scaled by elapsed time below so it keeps its speed.
+    const BASE_FRAME_MS = 1000 / 30
 
     const resize = () => {
       canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight
@@ -418,15 +434,20 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
 
     const draw = (now = 0) => {
       raf = requestAnimationFrame(draw)
-      if (now - lastFrame < FRAME_MS) return   // throttle to ~30fps — skip this frame, stay scheduled
+      const cur = propsRef.current
+      const somethingRunning = cur.agents.some(a => a.status !== 'idle')
+        || (cur.tick?.pipelines ?? []).some(p => p.status === 'running' || p.status === 'paused')
+      const frameMs = 1000 / hudFps(getPerfMode(), somethingRunning)
+      if (now - lastFrame < frameMs) return   // skip this frame, stay scheduled
+      const dt = Math.min(6, (now - lastFrame) / BASE_FRAME_MS)   // 1 = one old 30fps frame
       lastFrame = now
 
       const W = canvas.width, H = canvas.height
       if (!W || !H) return
 
-      anim.r1 += 0.0035; anim.r2 -= 0.008; anim.r3 += 0.016
-      anim.dash += 0.55; anim.breathe += 0.017; anim.hex += 0.1; anim.scan += 1; anim.sweep += 0.008
-      tickP(particles, W, H)
+      anim.r1 += 0.0035 * dt; anim.r2 -= 0.008 * dt; anim.r3 += 0.016 * dt
+      anim.dash += 0.55 * dt; anim.breathe += 0.017 * dt; anim.hex += 0.1 * dt; anim.scan += 1 * dt; anim.sweep += 0.008 * dt
+      for (let i = 0, n = Math.max(1, Math.round(dt)); i < n; i++) tickP(particles, W, H)
 
       ctx.clearRect(0, 0, W, H)
       ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H)

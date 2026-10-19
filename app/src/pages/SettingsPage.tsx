@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react"
 import { gateway } from "../lib/gateway-client"
 import { mcConfig } from "../lib/mc-config"
 import { useSettings, updateSettings, updateInstance } from "../lib/settings"
+import { getPerfMode, setPerfMode, type PerfMode } from "../lib/perf"
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 const T = {
@@ -755,6 +756,7 @@ function InfrastructureTab() {
 function AppearanceTab() {
   const [accent, setAccent] = useState(lsGet("accentColor", "#7B61FF"))
   const [saved, markSaved] = useSaved()
+  const [perf, setPerf] = useState<PerfMode>(getPerfMode)
 
   const themes = [
     { id: "aurora", label: "Aurora", desc: "Deep space with cyan + violet glow (default)" },
@@ -813,6 +815,14 @@ function AppearanceTab() {
               style={{ width: 28, height: 28, borderRadius: 6, background: col, border: `2px solid ${accent === col ? "#fff" : "transparent"}`, cursor: "pointer", boxShadow: `0 0 8px ${col}66` }} />
           ))}
         </div>
+      </Card>
+
+      <Card>
+        <SectionTitle>Performance</SectionTitle>
+        <Field label="Monitor animations" note="The Monitor pages animate constantly, which uses the graphics chip. Auto keeps them light: about 15 updates a second while something is running, about 5 when idle. Full is the original smooth look and can use a lot of GPU on a computer without a separate graphics card.">
+          <Select value={perf} onChange={(v: string) => { const m = (v === "full" || v === "low" ? v : "auto") as PerfMode; setPerf(m); setPerfMode(m) }}
+            options={[{ value: "auto", label: "Auto (recommended)" }, { value: "low", label: "Low (lightest)" }, { value: "full", label: "Full (smoothest, heavy)" }]} />
+        </Field>
       </Card>
 
       <Card>

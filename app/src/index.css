@@ -230,8 +230,9 @@ body::before {
   flex-direction: column;
   overflow: hidden;
   background: rgba(3, 5, 14, 0.38);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  /* No backdrop-filter here. A blur on this big container makes the browser re-composite the whole
+     page area whenever anything inside animates (the Monitor pages), which was a large share of the
+     GPU use. The 6px blur over a dark tint was hardly visible. */
 }
 
 /* Top bar */
