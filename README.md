@@ -72,6 +72,7 @@ The short version: **Dave is the chat; a pipeline is that same intelligence turn
 **Models & providers**
 - Run **local** models (LM Studio, Ollama, llama.cpp: anything OpenAI-compatible) for free and private, or **OpenRouter** for cloud models (pay-as-you-go).
 - **Instances:** save multiple model setups and switch the active one in a click.
+- **Two models at once:** give pipelines their own model. Add an instance with Workspace set to Pipeline, and pipelines (including ones Dave launches) run on it while you keep chatting with Dave on a different instance, e.g. a big cloud model on a research job while a fast local model handles your chat.
 
 **Live Monitor**
 - A real-time HUD showing your agents, their context usage, tokens, cost, latency, and the background watchdog so you always see what's happening.
@@ -122,7 +123,7 @@ You'll need three things installed on your machine before you start:
 
 *(Optional)* a **Brave Search** API key, if you want the web-search tool.
 
-> Tested on Windows (WSL2) with Docker. macOS and Linux work the same way.
+> Tested on Windows (WSL2) with Docker. macOS and Linux have not been tested yet: with Docker and Node installed they should work, but treat that as unconfirmed.
 
 ---
 
@@ -230,7 +231,6 @@ Run on a local model and leave the web tools unused, and **nothing leaves your m
 
 Mission Control is actively developed. Planned updates include:
 
-- **Run two models at once, for different jobs.** Use one model/instance for a background pipeline *while* chatting with Dave on a different one e.g. a big cloud model crunching a research pipeline while a fast local model handles your chat. (The foundation is already in place; this exposes it in the UI.)
 - **Per-command approval for the shell tool**: a prompt to approve or reject each individual shell command in real time, for an extra layer of human control.
 - **Direct Anthropic support**: a native Claude adapter (today you can already reach Claude and other models via OpenRouter).
 - **Multiple local servers**: point different instances at different local model servers at the same time.
