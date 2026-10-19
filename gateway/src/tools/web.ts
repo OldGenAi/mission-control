@@ -12,7 +12,12 @@
  */
 
 import { redact } from '../store/redact.js'
+import { guardedFetch } from './ssrf-guard.js'
 import type { RegisteredTool, ToolContext, ToolResult } from './types.js'
+
+// Ceiling on web_fetch response size. maxBytes is chosen by the model, so it is clamped here.
+const FETCH_MAX_BYTES = 2 * 1024 * 1024
+const FETCH_DEFAULT_BYTES = 512 * 1024
 
 // ---------------------------------------------------------------------------
 // HTML stripping — removes tags, scripts, styles, collapses whitespace
@@ -39,61 +44,8 @@ function stripHtml(html: string): string {
     .trim()
 }
 
-// ---------------------------------------------------------------------------
-// SSRF protection — private IP range block
-// ---------------------------------------------------------------------------
-
-function isPrivateHost(hostname: string): boolean {
-  let h = hostname.replace(/^\[|\]$/g, '').toLowerCase()
-
-  // IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1) — unwrap to the embedded IPv4 and check that,
-  // so the mapped form can't smuggle a loopback/private address past the IPv4 rules.
-  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(h)
-  if (mapped) h = mapped[1]
-
-  // IPv6 literals (contain a colon)
-  if (h.includes(':')) {
-    if (h === '::1' || h === '::') return true   // loopback / unspecified
-    if (/^fe[89ab]/.test(h)) return true         // link-local fe80::/10
-    if (/^f[cd]/.test(h)) return true            // unique-local fc00::/7
-    return false
-  }
-
-  // Hostnames + IPv4
-  if (h === 'localhost' || h === 'metadata.google.internal') return true
-  if (/^127\./.test(h)) return true                                    // loopback
-  if (h === '0.0.0.0' || /^0\./.test(h)) return true                   // unspecified / 0.0.0.0/8
-  if (/^10\./.test(h)) return true                                     // RFC 1918
-  if (/^192\.168\./.test(h)) return true
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true
-  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h)) return true  // CGNAT RFC 6598
-  if (/^169\.254\./.test(h)) return true                              // link-local incl. cloud metadata 169.254.169.254
-
-  return false
-}
-
-// Fetch with SSRF-safe redirect handling: a public URL can 302-redirect to a private or
-// metadata address, which the single up-front host check misses. We follow redirects
-// manually and re-validate every hop's host + protocol before continuing. Capped to avoid loops.
-const MAX_REDIRECTS = 5
-async function ssrfSafeFetch(initialUrl: string, init: RequestInit): Promise<Response> {
-  let url = initialUrl
-  for (let hop = 0; ; hop++) {
-    const res = await fetch(url, { ...init, redirect: 'manual' })
-    if (res.status < 300 || res.status >= 400) return res
-    const location = res.headers.get('location')
-    if (!location) return res
-    if (hop >= MAX_REDIRECTS) throw new Error('SSRF protection: too many redirects')
-    const next = new URL(location, url)   // resolves relative redirects against the current hop
-    if (!['http:', 'https:'].includes(next.protocol)) {
-      throw new Error(`SSRF protection: redirect to disallowed protocol "${next.protocol}"`)
-    }
-    if (isPrivateHost(next.hostname)) {
-      throw new Error(`SSRF protection: redirect to private/reserved host "${next.hostname}" blocked`)
-    }
-    url = next.toString()
-  }
-}
+// SSRF protection (private/reserved address blocking, connect-time DNS check, redirect
+// re-validation, capped body reads) lives in ./ssrf-guard.ts.
 
 function makeResult(
   correlationId: string,
@@ -168,18 +120,14 @@ export const webFetch: RegisteredTool = {
       return makeResult(context.correlationId, 'web_fetch', start, '', `protocol "${parsed.protocol}" is not allowed — use http or https`)
     }
 
-    if (isPrivateHost(parsed.hostname)) {
-      return makeResult(
-        context.correlationId,
-        'web_fetch',
-        start,
-        '',
-        `SSRF protection: "${parsed.hostname}" is a private or reserved host — access denied`
-      )
-    }
-
     const method = (args['method'] as string | undefined)?.toUpperCase() ?? 'GET'
-    const maxBytes = typeof args['maxBytes'] === 'number' ? args['maxBytes'] : 512 * 1024
+    if (method !== 'GET' && method !== 'POST') {
+      return makeResult(context.correlationId, 'web_fetch', start, '', `method "${method}" is not allowed — use GET or POST`)
+    }
+    const requestedBytes = typeof args['maxBytes'] === 'number' && Number.isFinite(args['maxBytes']) && args['maxBytes'] > 0
+      ? Math.floor(args['maxBytes'])
+      : FETCH_DEFAULT_BYTES
+    const maxBytes = Math.min(requestedBytes, FETCH_MAX_BYTES)
 
     const rawHeaders = args['headers']
     const headers: Record<string, string> = {
@@ -192,20 +140,19 @@ export const webFetch: RegisteredTool = {
     }
 
     try {
-      const response = await ssrfSafeFetch(rawUrl, {
+      const response = await guardedFetch(rawUrl, {
         method,
         headers,
         body: method === 'POST' && typeof args['body'] === 'string' ? args['body'] : undefined,
-        signal: AbortSignal.timeout(15_000),
+        timeoutMs: 15_000,
+        maxBytes,
       })
 
-      const buffer = await response.arrayBuffer()
-      const truncated = buffer.byteLength > maxBytes
-      const slice = truncated ? buffer.slice(0, maxBytes) : buffer
-      const raw = new TextDecoder().decode(slice)
+      const truncated = response.truncated
+      const raw = new TextDecoder().decode(response.body)
 
       // Strip HTML to plain text for HTML responses — raw HTML is 128k+ tokens
-      const contentType = response.headers.get('content-type') ?? ''
+      const contentType = response.contentType
       const isHtml = contentType.includes('text/html') || raw.trimStart().startsWith('<')
       const body = isHtml ? stripHtml(raw) : raw
 
@@ -221,7 +168,7 @@ export const webFetch: RegisteredTool = {
         url: rawUrl,
         body: modelBody,
         truncated: truncated || body.length > MODEL_MAX_CHARS,
-        byteLength: buffer.byteLength,
+        byteLength: response.body.byteLength,
       })
 
       return makeResult(context.correlationId, 'web_fetch', start, result)

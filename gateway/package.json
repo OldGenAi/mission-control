@@ -7,7 +7,8 @@
     "dev": "node --env-file=.env node_modules/.bin/tsx watch src/index.ts",
     "build": "tsc && mkdir -p dist/agents/specs && cp src/agents/specs/*.md dist/agents/specs/ && mkdir -p dist/pipelines && cp src/pipelines/*.yaml dist/pipelines/",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
