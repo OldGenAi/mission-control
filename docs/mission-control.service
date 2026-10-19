@@ -1,8 +1,12 @@
-# Mission Control gateway — systemd user service (Beelink production)
+# Mission Control gateway: systemd user service (alternative to running it in Docker)
+#
+# Build first:  cd gateway && npm ci && npm run build
 #
 # Install:
 #   mkdir -p ~/.config/systemd/user
-#   cp ~/mission-control/docs/mission-control.service ~/.config/systemd/user/
+#   cp docs/mission-control.service ~/.config/systemd/user/
+#   # Edit ExecStart below if `which node` is not /usr/bin/node (with nvm it is a long path
+#   # under ~/.nvm; systemd does not read your shell profile).
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now mission-control
 #
@@ -10,6 +14,9 @@
 #   systemctl --user status mission-control
 #   systemctl --user restart mission-control
 #   journalctl --user -u mission-control -f   # stream logs
+#
+# %h is systemd's shorthand for your home directory. This assumes the repo lives at
+# ~/mission-control, which is also the folder the file tools use as their workspace.
 
 [Unit]
 Description=Mission Control Gateway
@@ -17,9 +24,9 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/oldge/mission-control/gateway
-ExecStart=/home/oldge/.nvm/versions/node/v22.22.2/bin/node dist/index.js
-EnvironmentFile=/home/oldge/mission-control/gateway/.env
+WorkingDirectory=%h/mission-control/gateway
+ExecStart=/usr/bin/node dist/index.js
+EnvironmentFile=%h/mission-control/gateway/.env
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal

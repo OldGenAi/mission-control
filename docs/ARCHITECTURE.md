@@ -983,8 +983,7 @@ mission-control/
 │           └── db.ts               ← SQLite setup, migrations, all tables
 │
 ├── docs/
-│   ├── ARCHITECTURE.md             ← this file
-│   └── BUILD_PLAN.md
+│   └── ARCHITECTURE.md             ← this file
 │
 └── CLAUDE.md
 ```
@@ -993,7 +992,7 @@ mission-control/
 
 ## 17. Build Sequence
 
-Phases are listed in `docs/BUILD_PLAN.md`. This is the logical dependency order:
+This is the logical dependency order:
 
 1. Gateway skeleton (auth, health, WebSocket)
 2. LM Studio adapter + basic loop (Dave chatting, no tools)
