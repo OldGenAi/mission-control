@@ -205,8 +205,8 @@ function ReadonlyField({ label, value, note }: { label: string; value: string; n
 // Infrastructure tabs so the consent step can't be sidestepped from one screen.
 function ExecConfirmModal({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
   const limits = [
-    "Runs only inside your workspace folder",
-    "API keys & secrets are stripped from the command's environment",
+    "Starts in your workspace folder (it is not a sandbox: commands can reach other files this app can)",
+    "API keys are not passed in the command's environment variables (files on disk are still readable)",
     "30-second timeout per command",
     "Output capped at 64 KB",
   ]
@@ -696,7 +696,7 @@ function InfrastructureTab() {
               <span style={{ fontSize: 13, color: T.text }}>Allow Dave to run shell commands (exec tool)</span>
               <GatedExecToggle checked={execEnabled} />
             </div>
-            <p style={{ fontSize: 11, color: T.muted, margin: "6px 0 0" }}>Off by default. Enabling asks for confirmation first. Commands run only inside your workspace, with secrets stripped, a 30-second timeout, and a 64 KB output cap. Same toggle as Quick → Exec tool.</p>
+            <p style={{ fontSize: 11, color: T.muted, margin: "6px 0 0" }}>Off by default. Enabling asks for confirmation first. Commands start in your workspace (this is not a sandbox), run without your API keys in their environment, and have a 30-second timeout and a 64 KB output cap. Same toggle as Quick → Exec tool.</p>
           </Field>
         </div>
 
