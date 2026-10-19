@@ -105,15 +105,16 @@ export function useSettings(): { settings: SettingsSnapshot | null; reload: () =
   }, [])
 
   useEffect(() => {
-    reload()
+    let alive = true
+    void fetchSettings().then(s => { if (alive && s) setSettings(s) })
     const unsub = gateway.onEvent(e => {
       if (e.event === 'settings.changed' && e.payload && typeof e.payload === 'object') {
         const next = (e.payload as { settings?: SettingsSnapshot }).settings
         if (next) setSettings(next)
       }
     })
-    return unsub
-  }, [reload])
+    return () => { alive = false; unsub() }
+  }, [])
 
   return { settings, reload }
 }

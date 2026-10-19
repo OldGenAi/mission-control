@@ -95,7 +95,12 @@ function hexGrid(ctx: CanvasRenderingContext2D, W: number, H: number, t: number)
     for (let r = -1; r < H / gh + 2; r++) {
       const cx = c * gw + dx, cy = r * gh + (c % 2 === 0 ? 0 : gh / 2) + dy
       ctx.beginPath()
-      for (let i = 0; i < 6; i++) { const a = (Math.PI / 3) * i - Math.PI / 6; i === 0 ? ctx.moveTo(cx + s * Math.cos(a), cy + s * Math.sin(a)) : ctx.lineTo(cx + s * Math.cos(a), cy + s * Math.sin(a)) }
+      for (let i = 0; i < 6; i++) {
+        const a = (Math.PI / 3) * i - Math.PI / 6
+        const px = cx + s * Math.cos(a), py = cy + s * Math.sin(a)
+        if (i === 0) ctx.moveTo(px, py)
+        else ctx.lineTo(px, py)
+      }
       ctx.closePath(); ctx.stroke()
     }
   }

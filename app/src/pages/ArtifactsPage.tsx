@@ -87,18 +87,21 @@ export const ArtifactsPage: React.FC = () => {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [fullContent, setFullContent] = useState<Record<string, string>>({})
 
+  const fetchArtifacts = () => gateway.request('artifacts.list', { limit: 50 })
+    .then((res) => {
+      const r = res as { artifacts?: Artifact[] }
+      setArtifacts(r.artifacts ?? [])
+    })
+    .catch(() => {})
+    .finally(() => setLoading(false))
+
   const load = () => {
     setLoading(true)
-    gateway.request('artifacts.list', { limit: 50 })
-      .then((res) => {
-        const r = res as { artifacts?: Artifact[] }
-        setArtifacts(r.artifacts ?? [])
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false))
+    void fetchArtifacts()
   }
 
-  useEffect(() => { load() }, [])
+  // `loading` starts true, so the first fetch needs no extra setLoading(true).
+  useEffect(() => { void fetchArtifacts() }, [])
 
   const handleToggle = async (artifact: Artifact) => {
     if (expandedId === artifact.id) {

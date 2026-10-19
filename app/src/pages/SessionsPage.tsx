@@ -36,21 +36,18 @@ export const SessionsPage: React.FC = () => {
   const [editTitle, setEditTitle] = useState('')
   const [busyId, setBusyId] = useState<string | null>(null)
 
-  const load = (v: View = view) => {
-    setLoading(true)
-    gateway.request(v === 'trash' ? 'sessions.listDeleted' : 'sessions.list', {})
-      .then((res) => setSessions((res as { sessions?: SessionRow[] }).sessions ?? []))
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }
-
   useEffect(() => {
-    load(view)
-    setPage(0)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- load is stable; re-run only on view change
+    let alive = true
+    gateway.request(view === 'trash' ? 'sessions.listDeleted' : 'sessions.list', {})
+      .then((res) => { if (alive) setSessions((res as { sessions?: SessionRow[] }).sessions ?? []) })
+      .catch(() => {})
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
   }, [view])
 
-  const switchView = (v: View) => { setEditId(null); setView(v) }
+  // The list is replaced when the tab changes, so show "loading" and go back to page 1 here,
+  // in the click handler, rather than from inside the fetch effect.
+  const switchView = (v: View) => { setEditId(null); setPage(0); setLoading(true); setView(v) }
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase()

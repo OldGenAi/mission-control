@@ -29,6 +29,29 @@ interface AgentStatusPayload {
   estimatedTokens?: number
 }
 
+// The on/off switches for one agent's tools: this browser's saved choice if there is one
+// (tools it has not seen yet default to ON), otherwise everything ON. A saved all-OFF
+// config comes from old code and is treated as stale.
+function readToolToggles(
+  tools: ToolInfo[],
+  agent: string,
+): { toggles: Record<string, boolean>; fromSaved: boolean; staleSaved: boolean } {
+  const saved = localStorage.getItem(`mc-tools-${agent}`)
+  let staleSaved = false
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved) as Record<string, boolean>
+      const merged: Record<string, boolean> = {}
+      for (const t of tools) merged[t.name] = parsed[t.name] ?? true
+      if (Object.values(merged).some(Boolean)) return { toggles: merged, fromSaved: true, staleSaved: false }
+      staleSaved = true
+    } catch { /* unreadable saved config: fall through to defaults */ }
+  }
+  const initial: Record<string, boolean> = {}
+  for (const t of tools) initial[t.name] = true
+  return { toggles: initial, fromSaved: false, staleSaved }
+}
+
 const STATIC_ROLES: AgentInfo[] = [
   { role: 'tier1_agent', tier: 1, allowedTools: [], maxIterations: 20, maxCostUsd: 1, timeoutSeconds: 120 },
   { role: 'Orchestrator', tier: 2, allowedTools: [], maxIterations: 20, maxCostUsd: 5, timeoutSeconds: 600 },
@@ -130,30 +153,25 @@ export const AgentsPage: React.FC = () => {
     return unsub
   }, [])
 
+  // Reset the switches when the tool list loads or a different agent is selected. Worked out
+  // while rendering (no effect), keyed on agent + tool names.
+  const toolsKey = tools.length === 0 ? '' : `${selected}|${tools.map((t) => t.name).join(',')}`
+  const [appliedToolsKey, setAppliedToolsKey] = useState('')
+  if (toolsKey && toolsKey !== appliedToolsKey) {
+    setAppliedToolsKey(toolsKey)
+    setToolToggles(readToolToggles(tools, selected).toggles)
+  }
+
+  // The non-render side of the same change: drop a stale saved config, and tell the gateway
+  // about a saved one. With nothing saved the gateway uses its own default (all credentialed).
   useEffect(() => {
     if (tools.length === 0) return
-    const saved = localStorage.getItem(`mc-tools-${selected}`)
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved) as Record<string, boolean>
-        const merged: Record<string, boolean> = {}
-        for (const t of tools) merged[t.name] = parsed[t.name] ?? true
-        // Stale all-false config (from old code) — discard it and use defaults
-        const hasAnyEnabled = Object.values(merged).some(Boolean)
-        if (!hasAnyEnabled) {
-          localStorage.removeItem(`mc-tools-${selected}`)
-        } else {
-          setToolToggles(merged)
-          const enabledTools = Object.entries(merged).filter(([, v]) => v).map(([k]) => k)
-          gateway.request('agent.tools.set', { agentId: selected, enabledTools }).catch(() => {})
-          return
-        }
-      } catch { /* fall through to defaults */ }
+    const { toggles, fromSaved, staleSaved } = readToolToggles(tools, selected)
+    if (staleSaved) localStorage.removeItem(`mc-tools-${selected}`)
+    if (fromSaved) {
+      const enabledTools = Object.entries(toggles).filter(([, v]) => v).map(([k]) => k)
+      gateway.request('agent.tools.set', { agentId: selected, enabledTools }).catch(() => {})
     }
-    // No saved config — default all tools ON, gateway uses its own default (all credentialed)
-    const initial: Record<string, boolean> = {}
-    for (const t of tools) initial[t.name] = true
-    setToolToggles(initial)
   }, [tools, selected])
 
   useEffect(() => {

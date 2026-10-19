@@ -190,12 +190,15 @@ const PipelineModelPicker: React.FC = () => {
   const pipelineInst = settings?.instances.find(i => i.type === 'pipeline') ?? null
 
   useEffect(() => { listInstances().then(r => { if (r) setProviders(r.availableProviders) }).catch(() => {}) }, [])
+  const pipelineProvider = pipelineInst?.provider
   useEffect(() => {
-    if (!pipelineInst) return
-    gateway.request('models.list', { provider: pipelineInst.provider })
-      .then(r => setModels((r as { models?: { id: string; label?: string }[] }).models ?? []))
-      .catch(() => setModels([]))
-  }, [pipelineInst?.provider])
+    if (!pipelineProvider) return
+    let alive = true
+    gateway.request('models.list', { provider: pipelineProvider })
+      .then(r => { if (alive) setModels((r as { models?: { id: string; label?: string }[] }).models ?? []) })
+      .catch(() => { if (alive) setModels([]) })
+    return () => { alive = false }
+  }, [pipelineProvider])
 
   if (!settings) return null
   if (!pipelineInst) {
@@ -248,7 +251,7 @@ export const PipelinesPage: React.FC = () => {
     gateway.request('pipelines.available', {}).then((res) => {
       const list = (res as { pipelines?: AvailablePipeline[] }).pipelines ?? []
       setAvailable(list)
-      if (list.length > 0 && !runName) setRunName(list[0].name)
+      if (list.length > 0) setRunName((current) => current || list[0].name)
     }).catch(() => {})
 
     gateway.request('monitor.subscribe', {}).then((res) => {

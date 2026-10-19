@@ -396,23 +396,38 @@ function GatewayTab() {
   const [connStatus, setConnStatus] = useState<"ok" | "error" | "loading" | "unknown">("loading")
   const [uptime, setUptime] = useState("—")
   const [version, setVersion] = useState("—")
-  const [reconnecting, setReconnecting] = useState(false)
+  const [reconnecting, setReconnecting] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const refresh = useCallback(async () => {
-    setConnStatus("loading"); setError(null); setReconnecting(true)
+  // Connect and read the gateway's health. Every state change here happens after an await.
+  const readHealth = useCallback(async (isCurrent: () => boolean = () => true) => {
     try {
       await gateway.connect()
       const h = await gateway.request("health", {}) as { uptime?: number; version?: string }
+      if (!isCurrent()) return
       setConnStatus("ok")
       if (h.uptime != null) setUptime(fmtUptime(h.uptime))
       if (h.version) setVersion(h.version)
     } catch (err) {
+      if (!isCurrent()) return
       setConnStatus("error"); setError(String(err))
-    } finally { setReconnecting(false) }
+    } finally { if (isCurrent()) setReconnecting(false) }
   }, [])
 
-  useEffect(() => { refresh() }, [refresh])
+  // The Reconnect button: show "loading" first, then check again.
+  const refresh = () => {
+    setConnStatus("loading"); setError(null); setReconnecting(true)
+    void readHealth()
+  }
+
+  // On first show the state is already "loading" / "reconnecting", so just check. The
+  // call goes through a local function so nothing is set synchronously in the effect body.
+  useEffect(() => {
+    let current = true
+    const first = () => readHealth(() => current)
+    void first()
+    return () => { current = false }
+  }, [readHealth])
 
   if (connStatus === "error") return (
     <div style={{ marginTop: 24 }}>
@@ -472,14 +487,16 @@ function ProvidersTab() {
   const [saved, markSaved] = useSaved()
   const [error, setError]  = useState<string | null>(null)
 
-  // Sync local form state when gateway settings arrive / change in another tab.
-  useEffect(() => {
-    if (!settings) return
+  // Sync local form state when gateway settings arrive / change in another tab. Done while
+  // rendering (compare with the last settings object copied in) instead of in an effect.
+  const [copiedSettings, setCopiedSettings] = useState(settings)
+  if (settings && settings !== copiedSettings) {
+    setCopiedSettings(settings)
     setLocalUrl(settings.localProviderUrl)
     setOrKey(settings.providerKeys.openrouter)
     setAnthropicKey(settings.providerKeys.anthropic)
     setSearchKey(settings.searchApiKey)
-  }, [settings])
+  }
 
   const test = async (provider: string) => {
     setTestStatus(p => ({ ...p, [provider]: "loading" }))
@@ -578,11 +595,14 @@ function ModelsTab() {
   // tab must write the instance, exactly like the Chat dropdown, or it's a no-op.
   const activeInstance = settings?.instances.find(i => i.id === settings.activeInstanceId) ?? settings?.instances[0]
 
-  useEffect(() => {
-    if (!settings) return
+  // Follow the active instance's model whenever the settings object changes. Done while
+  // rendering instead of in an effect.
+  const [modelFromSettings, setModelFromSettings] = useState(settings)
+  if (settings && settings !== modelFromSettings) {
+    setModelFromSettings(settings)
     const ai = settings.instances.find(i => i.id === settings.activeInstanceId) ?? settings.instances[0]
     setDaveModel(ai?.model ?? settings.defaultModel)
-  }, [settings])
+  }
 
   useEffect(() => {
     gateway.request("models.list", {})

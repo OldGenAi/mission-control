@@ -192,6 +192,7 @@ function InstancesPanel() {
   // general pages (Overview, Settings, Monitor…) and only changes when you open a
   // workspace that belongs to an instance: Chat (chat instance) or Runs (pipeline).
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [seenRouteId, setSeenRouteId] = useState<string | null>(null)
 
   const refresh = async () => {
     const r = await listInstances()
@@ -202,24 +203,34 @@ function InstancesPanel() {
   }
 
   useEffect(() => {
-    refresh()
+    let alive = true
+    const pull = async () => {
+      const r = await listInstances()
+      if (!alive || !r) return
+      setInstances(r.instances)
+      setActiveId(r.activeInstanceId)
+      setAvailable(r.availableProviders)
+    }
+    void pull()
     const unsub = gateway.onEvent(e => {
-      if (e.event === 'settings.changed') refresh()
+      if (e.event === 'settings.changed') void pull()
     })
-    return unsub
+    return () => { alive = false; unsub() }
   }, [])
 
   // Keep the sticky selection in step with the workspace you open: Chat → the chat
   // instance, Runs → the pipeline instance. General pages leave it unchanged.
-  useEffect(() => {
-    if (location.pathname.startsWith('/chat')) {
-      const chat = instances.find(i => i.id === activeId) ?? instances.find(i => i.type !== 'pipeline')
-      if (chat) setSelectedId(chat.id)
-    } else if (location.pathname.startsWith('/pipelines')) {
-      const pipe = instances.find(i => i.type === 'pipeline')
-      if (pipe) setSelectedId(pipe.id)
-    }
-  }, [location.pathname, activeId, instances])
+  // Worked out while rendering rather than in an effect, so it costs no extra render pass.
+  let routeInstanceId: string | null = null
+  if (location.pathname.startsWith('/chat')) {
+    routeInstanceId = (instances.find(i => i.id === activeId) ?? instances.find(i => i.type !== 'pipeline'))?.id ?? null
+  } else if (location.pathname.startsWith('/pipelines')) {
+    routeInstanceId = instances.find(i => i.type === 'pipeline')?.id ?? null
+  }
+  if (routeInstanceId !== seenRouteId) {
+    setSeenRouteId(routeInstanceId)
+    if (routeInstanceId) setSelectedId(routeInstanceId)
+  }
 
   const switchTo = async (inst: Instance) => {
     setSelectedId(inst.id)   // highlight the clicked instance immediately

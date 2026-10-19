@@ -510,7 +510,7 @@ export function ChatPage() {
   const setThinking = useCallback((v: boolean) => { void updateSettings({ thinkingDefault: v }); mcConfig.setThinking(v) }, [])
   const [showTools, setShowTools] = useState(true)
   const [history, setHistory] = useState<ChatHistoryResponse | null>(null)
-  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(Boolean(selectedId))
   const [historyError, setHistoryError] = useState<string | null>(null)
   const [draft, setDraft] = useState("")
   const [sending, setSending] = useState(false)
@@ -527,8 +527,26 @@ export function ChatPage() {
   // correlationId of the in-flight turn, captured from chat.send — used by Stop.
   const activeCorrelationRef = useRef<string | null>(null)
 
-  // Clear streaming state when switching sessions
-  useEffect(() => { setStreamingText(null); setStreamStats(null) }, [selectedId])
+  // Reset per-session state when the selected session changes. Done while rendering rather
+  // than in an effect, so the old session's text never shows for a frame under the new one.
+  // The history effect further down then fetches the new session.
+  const [shownSessionId, setShownSessionId] = useState(selectedId)
+  if (shownSessionId !== selectedId) {
+    setShownSessionId(selectedId)
+    setStreamingText(null)
+    setStreamStats(null)
+    setHistory(null)
+    setHistoryError(null)
+    setHistoryLoading(Boolean(selectedId))
+  }
+
+  // Show "Loading…" again while the model list for a newly selected provider is fetched.
+  const activeProvider = activeInstance?.provider
+  const [listedProvider, setListedProvider] = useState(activeProvider)
+  if (listedProvider !== activeProvider) {
+    setListedProvider(activeProvider)
+    if (activeProvider) setModelsLoading(true)
+  }
 
   // Subscribe to monitor ticks so paused-pipeline approval cards can appear inline.
   // Each page subscribes independently — when this page unmounts, it unsubscribes.
@@ -594,7 +612,7 @@ export function ChatPage() {
   // Load sessions + models on mount
   useEffect(() => {
     let cancelled = false
-    setModelsLoading(true)
+    // modelsLoading starts true, so nothing to set before the first fetch.
     ;(async () => {
       try {
         await gateway.connect()
@@ -628,9 +646,8 @@ export function ChatPage() {
   // Re-list models whenever the active instance's provider changes. Keeps the
   // dropdown catalogue in sync with the live provider (LM Studio vs OpenRouter).
   useEffect(() => {
-    if (!activeInstance) return
+    if (!activeProvider) return
     let cancelled = false
-    setModelsLoading(true)
     gateway.request<ModelsResponse>("models.list", {})
       .then(r => {
         if (cancelled) return
@@ -648,16 +665,13 @@ export function ChatPage() {
         if (!cancelled) setModelsLoading(false)
       })
     return () => { cancelled = true }
-  }, [activeInstance?.provider])
+  }, [activeProvider])
 
-  // Load history when session changes
+  // Load history when session changes (the reset to "loading, empty" happens in the
+  // render-time block above, so nothing is set synchronously here).
   useEffect(() => {
-    if (!selectedId) { setHistory(null); setStreamStats(null); return }
-    setStreamStats(null)
+    if (!selectedId) return
     let cancelled = false
-    setHistoryLoading(true)
-    setHistoryError(null)
-    setHistory(null)
     ;(async () => {
       try {
         const res = await gateway.request<ChatHistoryResponse>("sessions.history", { sessionId: selectedId })
