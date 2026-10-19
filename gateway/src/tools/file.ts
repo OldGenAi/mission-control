@@ -7,6 +7,9 @@
  * the workspace root before any operation. Any path that escapes the workspace
  * (via ../ traversal, symlinks, or absolute paths outside the root) is
  * rejected with an error — the filesystem is never touched.
+ *
+ * Protected paths: inside the workspace, credential files (.env, keys, databases) and
+ * .git / .ssh style folders are refused as well. See PROTECTED_* below.
  */
 
 import fs from 'node:fs'
@@ -18,6 +21,28 @@ import type { RegisteredTool, ToolContext, ToolResult } from './types.js'
 // ---------------------------------------------------------------------------
 // Workspace boundary enforcement
 // ---------------------------------------------------------------------------
+
+// Files and folders the file tools never touch, even inside the workspace. They hold credentials
+// (gateway/.env with provider keys, SSH and cloud keys, databases) or can run code when something
+// else opens them (.git hooks). Without this, an agent steered by a poisoned web page could read
+// gateway/.env and send the keys out through web_fetch.
+const PROTECTED_DIRS = new Set(['.git', '.ssh', '.gnupg', '.aws', '.missioncontrol'])
+const PROTECTED_FILE = /^(\.env(\..+)?|\.npmrc|\.netrc|\.git-credentials|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|.+\.(pem|key|p12|pfx|sqlite|sqlite-shm|sqlite-wal|db))$/i
+const PROTECTED_ALLOW = new Set(['.env.example', '.env.sample', '.env.template'])
+
+function protectedReason(realWorkspace: string, target: string): string | null {
+  const parts = path.relative(realWorkspace, target).split(path.sep).filter(Boolean)
+  for (const part of parts) {
+    if (PROTECTED_DIRS.has(part.toLowerCase())) {
+      return `access to "${part}" is blocked: it can hold credentials or run code`
+    }
+  }
+  const name = parts[parts.length - 1]?.toLowerCase()
+  if (name && !PROTECTED_ALLOW.has(name) && PROTECTED_FILE.test(name)) {
+    return `access to "${name}" is blocked: it can hold credentials`
+  }
+  return null
+}
 
 function resolveAndCheck(filePath: string): { safe: true; absolute: string } | { safe: false; reason: string } {
   if (!filePath || typeof filePath !== 'string') {
@@ -67,6 +92,11 @@ function resolveAndCheck(filePath: string): { safe: true; absolute: string } | {
       reason: `workspace boundary violation: path resolves outside ${realWorkspace}`,
     }
   }
+
+  // Protected files — checked on both the path as given and the symlink-resolved path, so a
+  // harmless-looking link to .env is refused too.
+  const blocked = protectedReason(realWorkspace, absolute) ?? protectedReason(realWorkspace, resolved)
+  if (blocked) return { safe: false, reason: blocked }
 
   return { safe: true, absolute: resolved }
 }
