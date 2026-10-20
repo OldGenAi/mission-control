@@ -12,7 +12,7 @@ import type { RegisteredTool, ToolResult } from '../src/tools/types.js'
 // /private/var; the tools must accept that and still hold the boundary.
 const realHome = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-file-test-'))
 const home = `${realHome}-link`
-fs.symlinkSync(realHome, home)
+fs.symlinkSync(realHome, home, 'junction') // a junction on Windows (no admin rights needed), a plain symlink elsewhere
 const workspace = path.join(home, 'mission-control')
 process.env['HOME'] = home
 process.env['USERPROFILE'] = home
