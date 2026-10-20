@@ -62,9 +62,15 @@ function resolveAndCheck(filePath: string): { safe: true; absolute: string } | {
     ? path.resolve(expanded)
     : path.resolve(workspace, expanded)
 
-  // First pass — fast boundary check before any filesystem access
+  // First pass — fast boundary check before any filesystem access. A path built from the
+  // workspace as configured may reach it through a symlink (on macOS /var is a link to
+  // /private/var, so a workspace under the temp folder differs from its real path), so accept
+  // either spelling here. The second pass below is the real check: it resolves symlinks and
+  // compares against the real workspace only.
+  const givenNorm = path.resolve(workspace) + path.sep
   const normalised = absolute.endsWith(path.sep) ? absolute : absolute + path.sep
-  if (!normalised.startsWith(workspaceNorm)) {
+  const underGiven = normalised.startsWith(givenNorm)
+  if (!underGiven && !normalised.startsWith(workspaceNorm)) {
     return {
       safe: false,
       reason: `workspace boundary violation: path resolves outside ${realWorkspace}`,
@@ -95,7 +101,8 @@ function resolveAndCheck(filePath: string): { safe: true; absolute: string } | {
 
   // Protected files — checked on both the path as given and the symlink-resolved path, so a
   // harmless-looking link to .env is refused too.
-  const blocked = protectedReason(realWorkspace, absolute) ?? protectedReason(realWorkspace, resolved)
+  const blocked = protectedReason(underGiven ? path.resolve(workspace) : realWorkspace, absolute)
+    ?? protectedReason(realWorkspace, resolved)
   if (blocked) return { safe: false, reason: blocked }
 
   return { safe: true, absolute: resolved }

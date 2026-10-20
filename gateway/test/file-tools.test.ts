@@ -7,8 +7,12 @@ import path from 'node:path'
 import type { RegisteredTool, ToolResult } from '../src/tools/types.js'
 
 // The workspace is <home>/mission-control, so point "home" at a throwaway folder BEFORE the
-// tools are imported (they read it once, at import time).
-const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-file-test-'))
+// tools are imported (they read it once, at import time). "home" is a symlink to the real folder,
+// so the workspace is reached through a link, as on macOS where the temp folder /var is a link to
+// /private/var; the tools must accept that and still hold the boundary.
+const realHome = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-file-test-'))
+const home = `${realHome}-link`
+fs.symlinkSync(realHome, home)
 const workspace = path.join(home, 'mission-control')
 process.env['HOME'] = home
 process.env['USERPROFILE'] = home
@@ -36,7 +40,8 @@ before(async () => {
 })
 
 after(() => {
-  fs.rmSync(home, { recursive: true, force: true })
+  fs.rmSync(home, { force: true })
+  fs.rmSync(realHome, { recursive: true, force: true })
 })
 
 test('ordinary workspace files can be read, written and edited', async () => {
