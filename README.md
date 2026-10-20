@@ -116,7 +116,7 @@ Under the hood:
 You'll need three things installed on your machine before you start:
 
 - **Docker Desktop** (with Docker Compose). Runs the gateway.
-- **Node.js 18 or newer**. Runs the UI.
+- **Node.js 22 or newer**. Runs the UI and the gateway.
 - **A model provider**, one of:
   - **LM Studio**, **Ollama**, or **llama.cpp** on your machine (free, private), or
   - an **OpenRouter** API key (cloud models, pay-as-you-go).
@@ -138,7 +138,7 @@ If you're missing Docker or Node.js, install them first. Otherwise skip to Quick
 
 **Make sure Docker Desktop is running before you run any `docker compose` command.** On Windows and macOS, if the whale icon isn't in your system tray, Docker isn't started and every docker command will fail with a "cannot connect to daemon" error. Start it, wait for the icon to be steady, then continue.
 
-### Node.js 18+
+### Node.js 22+
 
 Install from [nodejs.org](https://nodejs.org/en/download/) (LTS release is fine), or via a package manager:
 
@@ -146,7 +146,7 @@ Install from [nodejs.org](https://nodejs.org/en/download/) (LTS release is fine)
 - **macOS (Homebrew):** `brew install node`
 - **Linux:** see [NodeSource distributions](https://github.com/nodesource/distributions) or use [nvm](https://github.com/nvm-sh/nvm).
 
-Verify with `node --version`. Must be v18 or higher.
+Verify with `node --version`. Must be v22 or higher.
 
 ---
 
@@ -256,7 +256,7 @@ Your local server isn't reachable at the URL in `gateway/.env`. Check:
 Docker Desktop isn't running. Start it and wait for the whale icon to be steady in your system tray, then retry.
 
 **`npm install` fails, or `npm run dev` doesn't launch.**
-Check your Node version: `node --version` must be v18 or higher. If it's older, install a current LTS from the Prerequisites section above.
+Check your Node version: `node --version` must be v22 or higher. If it's older, install a current LTS from the Prerequisites section above.
 
 **On Windows, `docker compose` runs but can't reach my local model server.**
 Docker on Windows uses WSL2. If your WSL is on the older "NAT" networking mode, `127.0.0.1` inside the container won't reach Windows-side services. Enable "mirrored" networking in `%UserProfile%\.wslconfig` (add `[wsl2]` and `networkingMode=mirrored`), then `wsl --shutdown` and start Docker Desktop again.

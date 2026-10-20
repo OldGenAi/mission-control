@@ -10,9 +10,12 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "tsx --test test/*.test.ts"
   },
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
-    "better-sqlite3": "^9.6.0",
+    "better-sqlite3": "^13.0.3",
     "express": "^4.19.2",
     "js-yaml": "^4.1.0",
     "jsonrepair": "^3.14.0",
