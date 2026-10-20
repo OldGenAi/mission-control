@@ -25,6 +25,7 @@ import { registerMethod } from './router.js'
 import { startWatchdog } from './pipeline/watchdog.js'
 import { startDailyNoteSweep } from './memory/sweep.js'
 import { ProviderRegistry } from './providers/registry.js'
+import { resolveBootProvider } from './providers/unconfigured.js'
 import { startPricingRefresh } from './providers/pricing.js'
 import { registerInstancesMethods } from './methods/instances.js'
 import { fileRead, fileWrite, fileEdit, fileList } from './tools/file.js'
@@ -94,12 +95,14 @@ const defaultInstance = settings.instances.find(i => i.id === settings.activeIns
 let provider: ProviderAdapter
 let model: string = defaultInstance?.model ?? settings.defaultModel
 
-const defaultProvider = providerRegistry.get(defaultInstance?.provider ?? settings.provider)
-if (!defaultProvider) {
-  console.error(`[gateway] no usable provider configured — instance "${defaultInstance?.name ?? 'default'}" wants "${defaultInstance?.provider ?? settings.provider}" but no credentials are set`)
-  process.exit(1)
+// A fresh install has no key yet and the key is entered in the UI, so start anyway: without credentials the
+// default provider is a stand-in that answers with a plain "set up a key" error, and a key saved in Settings
+// takes effect on the next request (chat and pipelines look the live provider up per request).
+const boot = resolveBootProvider(providerRegistry, defaultInstance?.provider ?? settings.provider)
+if (!boot.configured) {
+  console.warn(`[gateway] instance "${defaultInstance?.name ?? 'default'}" wants "${defaultInstance?.provider ?? settings.provider}" but no credentials are set yet. Starting anyway: add a key or a local model in Settings → Providers.`)
 }
-provider = defaultProvider
+provider = boot.provider
 console.log(`[settings] active instance: "${defaultInstance?.name ?? 'default'}"  PROVIDER: ${defaultInstance?.provider ?? settings.provider}  MODEL: ${model}`)
 console.log(`[settings] available providers: ${providerRegistry.names().join(', ')}`)
 
