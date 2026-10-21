@@ -53,6 +53,7 @@ const COMMANDS: Array<[string, string]> = [
   ['mc logs [lines]', 'Show the end of the log (default 50 lines)'],
   ['mc doctor', 'Check your setup and say what to fix'],
   ['mc shortcuts', 'Add (or put back) the desktop icons'],
+  ['mc uninstall [--all]', 'Remove Mission Control (--all also deletes your chats and settings)'],
   ['mc version', 'Show the version'],
   ['mc help', 'Show this help'],
 ]

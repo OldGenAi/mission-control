@@ -71,7 +71,7 @@ test('doctor summary wording', () => {
 test('help names every command and the version', () => {
   const text = helpText('0.2.0')
   assert.equal(text.split('\n')[0], 'Mission Control 0.2.0')
-  for (const command of ['start', 'stop', 'status', 'open', 'logs', 'doctor', 'shortcuts', 'version', 'help']) {
+  for (const command of ['start', 'stop', 'status', 'open', 'logs', 'doctor', 'shortcuts', 'uninstall', 'version', 'help']) {
     assert.match(text, new RegExp(`^  mc ${command}\\b`, 'm'), command)
   }
   assert.doesNotMatch(text, /—/, 'no em-dashes in user-facing text')
