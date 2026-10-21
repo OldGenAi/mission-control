@@ -1,8 +1,8 @@
 // Server core for the Mission Control gateway
 import { createServer, type Server } from 'http';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
-import express from 'express';
-import { validateToken, validateOrigin } from './auth.js';
+import { validateOrigin, validateHost } from './auth.js';
+import { buildHttpApp, resolveUiDir } from './http-app.js';
 import { addClient, removeClient, sendResponse, sendEvent, broadcastEvent, getAllClients } from './broadcast.js';
 import { dispatch, registerMethod, listMethods } from './router.js';
 import type { ConnectedClient, GatewayRequest, GatewayResponse } from './types.js';
@@ -10,7 +10,11 @@ import { ERROR_CODES } from './types.js';
 import { randomUUID } from 'crypto';
 import { connectHandler } from './methods/connect.js';
 
-const PORT = 4747;
+const PORT = Number(process.env['GATEWAY_PORT'] ?? 4747);
+if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+  console.error(`[gateway] GATEWAY_PORT must be a port number (1-65535), got "${process.env['GATEWAY_PORT']}"`);
+  process.exit(1);
+}
 // GATEWAY_HOST=0.0.0.0 in Docker so the container port is reachable from the host.
 // Default stays loopback for native installs.
 const HOST = process.env['GATEWAY_HOST'] ?? '127.0.0.1';
@@ -25,14 +29,8 @@ let httpServer: Server | null = null;
 let wss: WebSocketServer | null = null;
 
 export async function startServer(): Promise<void> {
-  const app = express();
-  app.use(express.json());
-
-  app.get('/health', (_req, res) => {
-    res.json({ ok: true, uptime: process.uptime() });
-  });
-
-  httpServer = createServer(app);
+  const uiDir = resolveUiDir();
+  httpServer = createServer(buildHttpApp(uiDir));
 
   // noServer: true — we handle the upgrade event ourselves so we can reject
   // bad Origins BEFORE the 101 Switching Protocols response goes out.
@@ -40,10 +38,11 @@ export async function startServer(): Promise<void> {
   // against the ws default of ~100 MB so a malformed/oversized frame can't balloon the heap.
   wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024 });
 
-  // Gate every WebSocket upgrade at the HTTP layer — Origin checked here,
-  // before ws emits 'connection' and before the 101 is sent.
+  // Gate every WebSocket upgrade at the HTTP layer — Host (DNS rebinding) and Origin
+  // (cross-site WebSocket hijacking) checked here, before ws emits 'connection' and
+  // before the 101 is sent.
   httpServer.on('upgrade', (req, socket, head) => {
-    if (!validateOrigin(req.headers.origin)) {
+    if (!validateHost(req.headers.host) || !validateOrigin(req.headers.origin)) {
       socket.write('HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
       socket.destroy();
       return;
@@ -175,6 +174,7 @@ export async function startServer(): Promise<void> {
   return new Promise<void>((resolve) => {
     httpServer!.listen(PORT, HOST, () => {
       console.log(`[gateway] listening on ws://${HOST}:${PORT}`);
+      console.log(uiDir ? `[gateway] UI at http://127.0.0.1:${PORT} (from ${uiDir})` : '[gateway] no UI build found; use the Vite dev server');
       resolve();
     });
   });

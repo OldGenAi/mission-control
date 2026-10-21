@@ -18,14 +18,14 @@ function gatewayTokenFromConfig(): string {
 }
 
 // https://vite.dev/config/
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ command, mode }) => {
   const envToken = loadEnv(mode, process.cwd(), 'VITE_').VITE_MC_TOKEN
   const config: UserConfig = {
     plugins: [react(), tailwindcss()],
   }
-  // Only inject when the user hasn't set one explicitly — leave Vite's native .env path
-  // alone in that case.
-  if (!envToken) {
+  // Dev server only, and only when the user hasn't set one explicitly. A build must never
+  // contain the token: the built UI is served by the gateway and signs in with a session.
+  if (command === 'serve' && !envToken) {
     const token = gatewayTokenFromConfig()
     if (token) {
       config.define = { 'import.meta.env.VITE_MC_TOKEN': JSON.stringify(token) }

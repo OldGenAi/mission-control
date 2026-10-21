@@ -2,20 +2,27 @@
 //
 // Protocol:
 //   1. Server sends: {type:"event", event:"connect.challenge", payload:{nonce}}
-//   2. Client sends: {type:"req", id, method:"connect", params:{token, nonce}}
-//   3. Server sends: {type:"res", id, ok:true, payload:{type:"hello-ok", features:{...}}}
+//   2. Client sends: {type:"req", id, method:"connect", params:{token | session, nonce}}
+//   3. Server sends: {type:"res", id, ok:true, payload:{type:"hello-ok", features:{...}, session?}}
 //   4. Bidirectional req/res + push events from here on.
+//
+// Dev (Vite) talks to the gateway on :4747 with the token Vite injects. The built UI is
+// served by the gateway itself, so it uses its own address and a browser session.
 //
 // Module-level singleton — React StrictMode safe.
 
-const WS_URL  = (import.meta.env.VITE_MC_GATEWAY_URL  as string | undefined) ?? 'ws://127.0.0.1:4747'
-const TOKEN   = (import.meta.env.VITE_MC_TOKEN         as string | undefined) ?? ''
+import { loadSession, saveSession, clearSession } from './session'
+
+const WS_URL  = (import.meta.env.VITE_MC_GATEWAY_URL as string | undefined)
+  ?? (import.meta.env.DEV ? 'ws://127.0.0.1:4747' : `ws://${location.host}`)
+const TOKEN   = import.meta.env.DEV ? ((import.meta.env.VITE_MC_TOKEN as string | undefined) ?? '') : ''
 
 // ---------- types -------------------------------------------------
 
 export interface HelloOk {
   type: 'hello-ok'
   features: { methods: string[]; events: string[] }
+  session?: string
 }
 
 export interface GatewayEvent {
@@ -69,11 +76,18 @@ class GatewayClient {
           method: 'connect',
           resolve: (payload) => {
             this.hello = payload as HelloOk
+            if (this.hello.session) saveSession(this.hello.session)
             this.connectResolve?.(this.hello)
           },
-          reject: (err) => this.connectReject?.(err),
+          reject: (err) => {
+            // A session the gateway no longer accepts (expired, or its secret rotated):
+            // drop it and reload into the sign-in screen.
+            if (!TOKEN && loadSession()) { clearSession(); location.reload() }
+            this.connectReject?.(err)
+          },
         })
-        ws.send(JSON.stringify({ type: 'req', id, method: 'connect', params: { token: TOKEN, nonce } }))
+        const session = TOKEN ? undefined : (loadSession() ?? undefined)
+        ws.send(JSON.stringify({ type: 'req', id, method: 'connect', params: { token: TOKEN || undefined, session, nonce } }))
         return
       }
 
