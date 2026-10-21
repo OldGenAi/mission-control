@@ -1,0 +1,100 @@
+# Builds the ready-to-run packages (one per system), proves each one starts on its own
+# system, and for a version tag publishes them as a DRAFT release with checksums and
+# build provenance. A person reads the draft and presses Publish; nothing goes out by itself.
+# Run it by hand (Actions > Release > Run workflow) to get the packages as build artifacts only.
+#
+# Third-party actions are pinned to full commit SHAs (tag in the comment): this workflow can
+# write releases, so a moved tag must not be able to change what runs here.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # A change to the packaging itself is proven on all four systems before it merges.
+  pull_request:
+    paths: ["release/**", ".github/workflows/release.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Package (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, platform: linux-x64 }
+          - { os: ubuntu-24.04-arm, platform: linux-arm64 }
+          - { os: macos-latest, platform: darwin-arm64 }
+          - { os: windows-latest, platform: win-x64 }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            gateway/package-lock.json
+            app/package-lock.json
+      # Same reason as ci.yml: npm scripts use mkdir -p, cp and globs.
+      - if: runner.os == 'Windows'
+        run: npm config set script-shell "C:\\Program Files\\Git\\bin\\bash.exe"
+      - name: Build gateway
+        working-directory: gateway
+        run: npm ci --no-audit --no-fund && npm run build && npm test
+      - name: Build UI
+        working-directory: app
+        run: npm ci --no-audit --no-fund && npm run build
+      - name: Package
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          [ "$GITHUB_REF_TYPE" = tag ] || version="0.0.0-dev.${GITHUB_SHA::7}"
+          node release/build-package.mjs --platform "${{ matrix.platform }}" --version "$version"
+      - name: Smoke test
+        run: node release/smoke-test.mjs release/out/mission-control-*-${{ matrix.platform }}.${{ runner.os == 'Windows' && 'zip' || 'tar.gz' }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package-${{ matrix.platform }}
+          path: |
+            release/out/*.tar.gz
+            release/out/*.zip
+            release/out/*.sha256
+          if-no-files-found: error
+
+  draft-release:
+    name: Draft release
+    if: github.ref_type == 'tag'
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # create the draft release
+      id-token: write        # sign the provenance attestation
+      attestations: write    # store it
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: package-*
+          merge-multiple: true
+          path: dist
+      - name: Checksums
+        working-directory: dist
+        run: cat *.sha256 > SHA256SUMS && rm *.sha256 && cat SHA256SUMS
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --draft --verify-tag --title "Mission Control $GITHUB_REF_NAME" --generate-notes

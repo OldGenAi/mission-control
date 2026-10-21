@@ -30,8 +30,8 @@ function setUiSecurityHeaders(req: Request, res: Response): void {
     "default-src 'self'",
     "script-src 'self'",
     // Inline styles: the components use React style props. Scripts stay 'self' only (XSS).
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "font-src 'self' https://fonts.gstatic.com",
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self'",
     "img-src 'self' data: blob:",
     `connect-src 'self' ws://${req.headers.host}`,
     "object-src 'none'",
