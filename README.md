@@ -1,94 +1,86 @@
 # Mission Control
 
-**Your own AI command center: a self-hosted agentic OS you actually control.**
+Your own AI command center: a self-hosted agentic OS you actually control.
 
-Mission Control is a personal AI system you run on your own machine. You chat with **Dave**, your always-on AI agent, who can answer questions, use tools (web search, files, shell), remember what matters, and, when a job is bigger than a quick chat, hand it off to a **pipeline**: a reliable, repeatable workflow run by a team of specialist AI workers.
+Mission Control is a personal AI system you run on your own computer. You chat with Dave, your always-on AI agent. He can answer questions, use tools (web search, files, an optional shell), remember what matters, and when a job is bigger than a quick chat, hand it to a pipeline: a repeatable workflow carried out by a team of specialist AI workers.
 
-It runs on **your hardware**, with **your choice of model**: a free local model (via LM Studio / Ollama) or a paid cloud model (via OpenRouter). Your data, your keys, and your conversations stay on your machine.
+It runs on your hardware with your choice of model: a free local model (LM Studio, Ollama, llama.cpp) or a paid cloud model through OpenRouter. Your data, your keys and your conversations stay on your machine.
 
-> Built by [OldGenAI](#about). Free and open source under the [MIT license](#license).
+Built by [OldGenAI](#about). Free and open source under the [MIT license](#license).
 
----
+## Contents
 
-## Table of contents
-
-- [What it is (in plain English)](#what-it-is-in-plain-english)
-- [Chat vs. Pipelines: the core idea](#chat-vs-pipelines-the-core-idea)
+- [What it is](#what-it-is)
+- [Chat vs. pipelines](#chat-vs-pipelines)
 - [Features](#features)
 - [How it works](#how-it-works)
 - [Requirements](#requirements)
 - [Quick start](#quick-start)
+- [Running it with Docker instead](#running-it-with-docker-instead)
 - [Configuration](#configuration)
-- [Security & privacy](#security--privacy)
-- [Roadmap: what's coming](#roadmap-whats-coming)
+- [Security and privacy](#security-and-privacy)
+- [Troubleshooting](#troubleshooting)
+- [Roadmap](#roadmap)
 - [License](#license)
 - [About](#about)
 
----
+## What it is
 
-## What it is (in plain English)
+Most AI tools are a chat box on somebody else's server. Mission Control runs on your own computer instead.
 
-Most AI tools are a chat box hosted by someone else. Mission Control is different:
+- You host it. Nothing goes to a server you don't control unless you pick a cloud model or use the web tools.
+- It can act, not just talk: search the web, read and write files in its own workspace, run jobs, remember things across days, and coordinate a team of sub-agents for bigger work. That's what "agentic OS" means here.
+- You pick the model. Point it at a free local model or a cloud model, and switch whenever you like.
 
-- **You host it.** It runs in Docker on your own computer. Nothing goes to a server you don't control unless *you* choose a cloud model or use the web tools.
-- **It's an "agentic OS."** A fancy way of saying it's not just a chatbot, it's an AI that can *act*: search the web, read and write files, run tasks, remember things across days, and coordinate a team of sub-agents to get bigger jobs done.
-- **You pick the brain.** Point it at a free local model on your own machine, or a powerful cloud model, and switch any time.
+There are two ways to get work done: chat with Dave, or run a pipeline.
 
-There are two ways to get work done: **chat** with Dave, or run a **pipeline**. The difference between them is the heart of the whole thing.
+## Chat vs. pipelines
 
----
+Dave (chat) is for conversation and one-off tasks. Ask him anything and he'll answer, look things up, edit a file or remember something for you.
 
-## Chat vs. Pipelines: the core idea
+Pipelines are for work you want done the same way every time, in parallel, with a record of what happened. A pipeline is a saved recipe: the same steps on every run, a budget, optional human approval, and a sourced report at the end, carried out by a team of workers running at once.
 
-**Dave (chat)** is for conversation and one-off tasks. Ask him anything; he'll answer, look things up, edit a file, or remember something for you. Like talking to a very capable assistant.
-
-**Pipelines** are for work you want done *reliably, repeatedly, in parallel, and on the record.* A pipeline is a saved recipe that runs the same steps every time with a budget, optional human approval, and a tidy sourced report at the end, carried out by a **team** of specialist AI workers running at once.
-
-| | **Dave (chat)** | **Pipeline** |
+| | Dave (chat) | Pipeline |
 |---|---|---|
 | Best for | one-off questions, exploring | repeatable jobs, bigger tasks |
-| How it runs | conversational, improvised | the same defined steps every time |
-| Cost & safety | bounded per chat turn | hard budgets, timeouts, approval gates |
-| Teamwork | one agent at a time | a team of workers in parallel |
+| How it runs | conversational | the same defined steps every time |
+| Cost and safety | bounded per chat turn | hard budgets, timeouts, approval gates |
+| Teamwork | one agent | a team of workers in parallel |
 | Output | a chat transcript | structured, sourced reports (artifacts) |
 | Do you need to be there? | yes | no, it runs in the background and tells Dave when it's done |
 
-The short version: **Dave is the chat; a pipeline is that same intelligence turned into a dependable, repeatable process**: the difference between asking a clever friend a question and running a documented workflow your work relies on. And you don't have to choose: Dave can *launch* pipelines for you.
-
----
+You don't have to choose between them. Dave can launch pipelines for you.
 
 ## Features
 
-**The agent & the team**
-- **Dave**, your Tier-1 personal agent: chat, 17 built-in tools, and persistent memory.
-- An **Orchestrator** and **specialist workers** (Researcher, Coder) that pipelines use to split a job up and run parts in **parallel**.
+The agent and the team
+- Dave, your tier-1 personal agent: chat, 17 built-in tools and persistent memory.
+- An orchestrator and specialist workers (researcher, coder) that pipelines use to split a job up and run the parts in parallel.
 
-**Pipelines (deterministic workflows)**
+Pipelines
 - Ready-made presets: research a topic, summarise a URL, draft a document, review code, build a daily digest, fact-check a claim, and more.
-- **Budgets & guardrails:** token/cost ceilings, timeouts, and an automatic stop-on-repeated-failure so nothing runs away.
-- **Approval gates:** pause a pipeline for your sign-off before it continues.
-- **Artifacts:** every result is saved as a typed, sourced document linked to the run that produced it, so you can trust and trace it.
+- Budgets and guardrails: token and cost ceilings, timeouts, and an automatic stop when something keeps failing.
+- Approval gates: a pipeline can pause for your sign-off before it carries on.
+- Artifacts: every result is saved as a sourced document linked to the run that produced it, so you can trace where it came from.
 
-**Models & providers**
-- Run **local** models (LM Studio, Ollama, llama.cpp: anything OpenAI-compatible) for free and private, or **OpenRouter** for cloud models (pay-as-you-go).
-- **Instances:** save multiple model setups and switch the active one in a click.
-- **Two models at once:** give pipelines their own model. Add an instance with Workspace set to Pipeline, and pipelines (including ones Dave launches) run on it while you keep chatting with Dave on a different instance, e.g. a big cloud model on a research job while a fast local model handles your chat.
+Models and providers
+- Local models (LM Studio, Ollama, llama.cpp, anything OpenAI-compatible) for free and private use, or OpenRouter for cloud models (pay as you go).
+- Instances: save several model setups and switch the active one with a click.
+- Two models at once: give pipelines their own model. Add an instance with Workspace set to Pipeline, and pipelines (including ones Dave launches) run on it while you keep chatting with Dave on another, for example a big cloud model on a research job while a fast local model handles chat.
 
-**Live Monitor**
-- A real-time HUD showing your agents, their context usage, tokens, cost, latency, and the background watchdog so you always see what's happening.
-- The pipeline flow panel shows your **most recent run**, so a finished run stays on screen. If a step is red, that means the last run failed there. It is history, not a live error, and it clears as soon as the next run starts.
+Live monitor
+- A real-time view of your agents, their context use, tokens, cost, latency and the background watchdog.
+- The pipeline panel shows your most recent run, so a finished run stays on screen. A red step means the last run failed there. It's history, not a live error, and it clears when the next run starts.
 
-**Memory**
-- Short-term **daily notes** that fade after a week, and **milestones** that stick around. Dave decides what's worth keeping.
+Memory
+- Short-term daily notes that fade after a week, and milestones that stay. Dave decides what's worth keeping.
 
-**Built-in tools**
-- Web search (Brave) and safe web fetch, workspace-scoped file read/write/edit, and an optional shell (`exec`) tool that is **off by default** and asks for an explicit, informed confirmation before you can ever turn it on.
-
----
+Built-in tools
+- Web search (Brave) and a guarded web fetch, file read, write and edit inside the workspace, and an optional shell (`exec`) tool that is off by default and needs an explicit confirmation before it can be turned on.
 
 ## How it works
 
-Three tiers, each with a clear job:
+Three tiers, each with one job:
 
 ```
    You
@@ -103,172 +95,147 @@ Three tiers, each with a clear job:
 ```
 
 Under the hood:
-- A **gateway** (Node.js / TypeScript) talks to the UI over a local WebSocket and runs the agents.
-- **Pipelines** are simple YAML files describing the steps.
-- Everything (sessions, artifacts, memory, logs) is stored locally in **SQLite**.
-- The **UI** is a React app.
-- It's all packaged with **Docker**.
-
----
+- A gateway (Node.js and TypeScript) runs the agents and serves the app. The app talks to it over a local WebSocket.
+- Pipelines are plain YAML files describing the steps.
+- Everything (sessions, artifacts, memory, logs) is stored locally in SQLite.
+- The app is built with React.
 
 ## Requirements
 
-You'll need three things installed on your machine before you start:
+- Node.js 22 or newer.
+- A model, one of:
+  - LM Studio, Ollama or llama.cpp running on your computer (free, private), or
+  - an OpenRouter API key (cloud models, pay as you go).
+- Optional: a Brave Search API key, if you want the web search tool.
 
-- **Docker Desktop** (with Docker Compose). Runs the gateway.
-- **Node.js 22 or newer**. Runs the UI and the gateway.
-- **A model provider**, one of:
-  - **LM Studio**, **Ollama**, or **llama.cpp** on your machine (free, private), or
-  - an **OpenRouter** API key (cloud models, pay-as-you-go).
+Docker is not needed. If you prefer it, see [Running it with Docker instead](#running-it-with-docker-instead).
 
-*(Optional)* a **Brave Search** API key, if you want the web-search tool.
+Tested automatically on every change on Windows, macOS and Linux, and used every day on Windows 11 and a Mac mini.
 
-> Tested on Windows (WSL2) with Docker. macOS and Linux have not been tested yet: with Docker and Node installed they should work, but treat that as unconfirmed.
+A one-line installer that sets all of this up for you is on the way. Until then, the steps below take a few minutes.
 
----
+### Installing Node.js
 
-## Prerequisites
+Get the LTS version from [nodejs.org](https://nodejs.org/en/download/), or use a package manager:
 
-If you're missing Docker or Node.js, install them first. Otherwise skip to Quick start.
+- Windows (PowerShell): `winget install OpenJS.NodeJS.LTS`
+- macOS (Homebrew): `brew install node`
+- Linux: [nvm](https://github.com/nvm-sh/nvm) or [NodeSource](https://github.com/nodesource/distributions)
 
-### Docker Desktop
-
-- **Windows / macOS:** download the installer from [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/). On Windows, enable "Use WSL 2 based engine" during setup (it's on by default in modern versions).
-- **Linux:** follow the [Docker Engine install guide](https://docs.docker.com/engine/install/) for your distro.
-
-**Make sure Docker Desktop is running before you run any `docker compose` command.** On Windows and macOS, if the whale icon isn't in your system tray, Docker isn't started and every docker command will fail with a "cannot connect to daemon" error. Start it, wait for the icon to be steady, then continue.
-
-### Node.js 22+
-
-Install from [nodejs.org](https://nodejs.org/en/download/) (LTS release is fine), or via a package manager:
-
-- **Windows (PowerShell):** `winget install OpenJS.NodeJS.LTS`
-- **macOS (Homebrew):** `brew install node`
-- **Linux:** see [NodeSource distributions](https://github.com/nodesource/distributions) or use [nvm](https://github.com/nvm-sh/nvm).
-
-Verify with `node --version`. Must be v22 or higher.
-
----
+Check it with `node --version`. It needs to say v22 or higher.
 
 ## Quick start
 
-1. **Clone the repo**
+1. Get the code:
    ```bash
    git clone https://github.com/OldGenAi/mission-control.git
    cd mission-control
    ```
 
-2. **Set up your provider.** Copy the environment template:
-   ```bash
-   cp gateway/.env.example gateway/.env
-   ```
-   Then open `gateway/.env` and edit the values based on which provider you're using. Pick ONE path:
-
-   **A. LM Studio (local).** This is the default in the template. Start LM Studio and load a model in its UI, then leave these values as-is:
-   ```
-   PROVIDER=local
-   LOCAL_PROVIDER_URL=http://127.0.0.1:1234/v1
-   ```
-
-   **B. Ollama (local).** Ollama uses a different port. Start Ollama and pull a model (e.g. `ollama pull llama3.2`), then set:
-   ```
-   PROVIDER=local
-   LOCAL_PROVIDER_URL=http://127.0.0.1:11434/v1
-   ```
-
-   **C. OpenRouter (cloud).** Pay-as-you-go, no local server needed. Get a key at [openrouter.ai/keys](https://openrouter.ai/keys), then set:
-   ```
-   PROVIDER=openrouter
-   OPENROUTER_API_KEY=sk-or-v1-...
-   ```
-
-   *(Secrets like the gateway token are generated automatically on first boot. You don't set those.)*
-
-3. **Start the gateway**
-   ```bash
-   docker compose up -d --build
-   ```
-   If this fails with "cannot connect to the Docker daemon", Docker Desktop isn't running. Start it and try again.
-
-4. **Start the UI**
+2. Build the app:
    ```bash
    cd app
-   npm install
-   npm run dev
+   npm ci
+   npm run build
+   cd ..
    ```
 
-5. **Open it** at **http://localhost:5173** and say hello to Dave.
+3. Build and start the gateway (leave this window open, it keeps Mission Control running):
+   ```bash
+   cd gateway
+   npm ci
+   npm run build
+   npm start
+   ```
 
----
+4. In a second window, open it in your browser, already signed in:
+   ```bash
+   cd mission-control/gateway
+   npm run open
+   ```
+   The sign-in link works once, for one minute. Next time, run `npm run open` again, or just reopen the page: the browser stays signed in for 30 days.
+
+5. Choose your model in Settings. Out of the box Mission Control looks for LM Studio at `http://127.0.0.1:1234/v1`. If that's what you use, start LM Studio, load a model and say hello to Dave. For Ollama (port 11434) or llama.cpp (port 8080), change the local server address in Settings. For a cloud model, add your OpenRouter key under Settings, Providers.
+
+To stop Mission Control, press Ctrl+C in the gateway window.
+
+### For developers
+
+`npm run dev` in `gateway/` and in `app/` runs both with live reloading, and the app is then at http://localhost:5173. The dev gateway reads `gateway/.env` (copy it from `gateway/.env.example`).
+
+## Running it with Docker instead
+
+Docker keeps Mission Control in its own container. Day to day it works the same, but if you plan to turn on the shell tool, this limits what shell commands can reach to the folders shared with the container (see [Security and privacy](#security-and-privacy)).
+
+1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) (on Windows, keep "Use WSL 2 based engine" on) or [Docker Engine](https://docs.docker.com/engine/install/) on Linux, and make sure it's running.
+2. Copy the settings template and pick your provider in it: `cp gateway/.env.example gateway/.env`
+3. Start the gateway: `docker compose up -d --build`
+4. Start the app: `cd app && npm ci && npm run dev`, then open http://localhost:5173.
 
 ## Configuration
 
-Almost everything is configured **in the UI** (Settings), with no file editing after first boot:
+Almost everything is set up in the app, under Settings:
 
-- **Providers & keys**: add your OpenRouter / Brave keys; they're stored encrypted at rest.
-- **Instances**: create model setups (e.g. one local, one cloud) and switch the active one in the sidebar.
-- **Exec tool**: off by default; turning it on requires an explicit, informed confirmation.
+- Providers and keys: add your OpenRouter and Brave keys. They're stored encrypted.
+- Instances: create model setups (say, one local and one cloud) and switch the active one in the sidebar.
+- Exec (shell) tool: off by default; turning it on needs an explicit confirmation, and is at your own risk (see [Security and privacy](#security-and-privacy)).
 
-The only things that live in `gateway/.env` are first-boot defaults (provider + URL/keys). After that, your settings are the source of truth.
+`gateway/.env` is optional. It only sets first-boot defaults. After the first start, what you set in Settings wins.
 
----
+## Security and privacy
 
-## Security & privacy
+Mission Control is built to be safe to run on your own machine:
 
-Mission Control is built to be **safe to self-host**:
+- Your data stays local. Sessions, memory and artifacts live in a SQLite database on your computer.
+- The gateway only listens on `127.0.0.1` (this computer), unless you change `GATEWAY_HOST` yourself. Requests that name any other host are refused, which blocks DNS-rebinding tricks.
+- Every connection needs the gateway's key, checked together with where the request comes from, with replay protection. The browser never sees that key: `npm run open` proves it holds the key without sending it, gets a one-time sign-in link, and the page swaps that link for its own session.
+- The app runs under a strict Content-Security-Policy, and it loads nothing from other websites (even its font ships with it).
+- API keys are encrypted at rest, masked in the app and removed from logs. The encryption key sits next to them in `~/.missioncontrol`, so this protects a copied settings file, not someone with full access to your account.
+- The shell tool is opt-in and is not a sandbox. It's off by default and needs a confirmation. When it's on, commands start in your workspace folder, run without your API keys and are time-limited, but a command can still read any file the gateway can. On a normal install that means anything your user account can read. Turning it on is at your own risk: treat it like handing Dave a terminal on your computer. Running Mission Control in Docker narrows this to the folders shared with the container. (On Windows without WSL or Docker, the shell tool isn't available at all.) A properly locked room for it is on the roadmap.
+- Hardened throughout: parameterised database queries; web fetch refuses private and internal addresses (also after DNS lookup and on redirects); file tools can't leave the workspace or read credential files like `.env`; and every change is automatically checked for known vulnerable dependencies.
 
-- **Your data stays local.** Sessions, memory, and artifacts live in a SQLite database on your machine.
-- **Locked-down gateway.** Every connection is checked by origin + a required token, with replay protection. Nothing talks to it without permission. The gateway listens on `127.0.0.1` only, unless you set `GATEWAY_HOST` yourself.
-- **Encrypted secrets.** API keys are encrypted at rest, masked in the UI, and redacted from logs. The encryption key is stored next to them in `~/.missioncontrol`, so this protects against a copied settings file, not against someone with full access to your account.
-- **Shell is opt-in and not a sandbox.** The `exec` tool is off by default and gated behind an explicit confirmation. When on, commands start in your workspace folder, run without your API keys in their environment, and are time-limited, but a command can still read any file the gateway can. Treat it like handing Dave a terminal.
-- **Hardened by design.** Parameterised database queries; web-fetch protection against internal-network probing (private and reserved addresses are refused, including after DNS lookup and on redirects); file tools that can't leave the workspace or read credential files such as `.env`; and dependencies checked with `npm audit` (run `cd gateway && npm audit` yourself to see the current state).
-
-Run on a local model and leave the web tools unused, and **nothing leaves your machine.** (Web search sends your queries to Brave, and web fetch contacts the sites you ask for.)
-
----
-
-## Roadmap: what's coming
-
-Mission Control is actively developed. Planned updates include:
-
-- **Per-command approval for the shell tool**: a prompt to approve or reject each individual shell command in real time, for an extra layer of human control.
-- **Direct Anthropic support**: a native Claude adapter (today you can already reach Claude and other models via OpenRouter).
-- **Multiple local servers**: point different instances at different local model servers at the same time.
-- **Skills & Plugins**: extend Dave with reusable capabilities and third-party add-ons.
-- **Channel integrations**: talk to Dave from Telegram, Discord, Slack, WhatsApp, iMessage, and Signal.
-- **Visual pipeline builder**: design pipelines in the UI, no YAML required.
-- **Smarter automation**: self-healing retries, and automatic "escalation" from cheap models to powerful ones only when a task needs it.
-
-> Want something on this list sooner, or have an idea? Open an issue.
-
----
+Use a local model and leave the web tools alone, and nothing leaves your machine. (Web search sends your queries to Brave, and web fetch contacts the sites you ask for.)
 
 ## Troubleshooting
 
-**Model selector says "Loading…" and never shows any models.**
-Your local server isn't reachable at the URL in `gateway/.env`. Check:
-- Is LM Studio / Ollama / llama.cpp actually running?
-- Does `LOCAL_PROVIDER_URL` in `gateway/.env` match its port? (LM Studio = 1234, Ollama = 11434, llama.cpp = 8080 by default.)
-- Hover the model selector in the UI. The tooltip shows the exact URL the gateway tried and the error it got.
-- After changing `.env`, restart the gateway: `docker compose up -d --build`.
+The model list says "Loading…" and never shows any models.
+Mission Control can't reach your local model server. Check that LM Studio, Ollama or llama.cpp is running, and that the local server address in Settings matches its port (LM Studio 1234, Ollama 11434, llama.cpp 8080). Hover over the model selector to see the exact address it tried and the error it got.
 
-**`docker compose up` fails with "cannot connect to the Docker daemon".**
-Docker Desktop isn't running. Start it and wait for the whale icon to be steady in your system tray, then retry.
+The page says "This window isn't signed in yet".
+Run `npm run open` in the `gateway` folder. It opens a fresh, signed-in window.
 
-**`npm install` fails, or `npm run dev` doesn't launch.**
-Check your Node version: `node --version` must be v22 or higher. If it's older, install a current LTS from the Prerequisites section above.
+`npm start` says the port is already in use.
+Mission Control is probably already running in another window. Close that one first, or set a different port with `GATEWAY_PORT`.
 
-**On Windows, `docker compose` runs but can't reach my local model server.**
-Docker on Windows uses WSL2. If your WSL is on the older "NAT" networking mode, `127.0.0.1` inside the container won't reach Windows-side services. Enable "mirrored" networking in `%UserProfile%\.wslconfig` (add `[wsl2]` and `networkingMode=mirrored`), then `wsl --shutdown` and start Docker Desktop again.
+`npm ci` fails, or the app won't start.
+Check `node --version`. It needs to be v22 or higher.
 
----
+With Docker: "cannot connect to the Docker daemon".
+Docker Desktop isn't running. Start it, wait until it says it's running, then try again.
+
+With Docker on Windows: the gateway can't reach the model server on your PC.
+If WSL uses the older NAT networking, `127.0.0.1` inside the container doesn't reach Windows. Turn on mirrored networking in `%UserProfile%\.wslconfig` (add `[wsl2]` and `networkingMode=mirrored`), run `wsl --shutdown`, then start Docker Desktop again.
+
+## Roadmap
+
+Mission Control is actively developed. Coming up:
+
+- A one-line install for Windows, macOS and Linux, with a desktop icon (in progress).
+- A locked room for the shell tool: commands run with no network and no access outside a scratch folder.
+- Approving shell commands one at a time, as they come up.
+- Direct Anthropic support (Claude is already reachable through OpenRouter).
+- Several local model servers at once, one per instance.
+- Skills and plugins to extend Dave.
+- Talking to Dave from Telegram, Discord, Slack, WhatsApp, iMessage and Signal.
+- A visual pipeline builder, so you don't need YAML.
+- Smarter automation: self-healing retries, and moving up from a cheap model to a stronger one only when a task needs it.
+
+Want something sooner, or have an idea? Open an issue.
 
 ## License
 
-[MIT](LICENSE) © 2026 OldGenAI. Free to use, modify, and share. Just keep the copyright notice.
-
----
+[MIT](LICENSE) © 2026 OldGenAI. Free to use, change and share. Just keep the copyright notice.
 
 ## About
 
-Mission Control is built by **OldGenAI**, making powerful, self-hosted AI approachable for everyone, not just engineers.
+Mission Control is built by OldGenAI, to make powerful self-hosted AI approachable for everyone, not just engineers.

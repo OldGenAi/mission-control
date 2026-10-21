@@ -46,9 +46,6 @@ jobs:
           cache-dependency-path: |
             gateway/package-lock.json
             app/package-lock.json
-      # Same reason as ci.yml: npm scripts use mkdir -p, cp and globs.
-      - if: runner.os == 'Windows'
-        run: npm config set script-shell "C:\\Program Files\\Git\\bin\\bash.exe"
       - name: Build gateway
         working-directory: gateway
         run: npm ci --no-audit --no-fund && npm run build && npm test

@@ -44,10 +44,7 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
           cache-dependency-path: gateway/package-lock.json
-      # The build script uses mkdir -p and cp, and the test script a glob; Windows runs npm scripts
-      # in cmd.exe by default, so point npm at Git Bash there (the runner has it).
-      - if: runner.os == 'Windows'
-        run: npm config set script-shell "C:\\Program Files\\Git\\bin\\bash.exe"
+      # npm scripts run in cmd.exe on Windows here, as they do for users: they must not need a Unix shell.
       - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
       - run: npm run build
