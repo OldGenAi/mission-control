@@ -2,7 +2,9 @@
 import { createServer, type Server } from 'http';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import { validateOrigin, validateHost } from './auth.js';
-import { buildHttpApp, resolveUiDir } from './http-app.js';
+import { buildHttpApp } from './http-app.js';
+import { PID_FILE, resolveUiDir } from './paths.js';
+import { readFileSync, rmSync, writeFileSync } from 'fs';
 import { addClient, removeClient, sendResponse, sendEvent, broadcastEvent, getAllClients } from './broadcast.js';
 import { dispatch, registerMethod, listMethods } from './router.js';
 import type { ConnectedClient, GatewayRequest, GatewayResponse } from './types.js';
@@ -175,12 +177,25 @@ export async function startServer(): Promise<void> {
     httpServer!.listen(PORT, HOST, () => {
       console.log(`[gateway] listening on ws://${HOST}:${PORT}`);
       console.log(uiDir ? `[gateway] UI at http://127.0.0.1:${PORT} (from ${uiDir})` : '[gateway] no UI build found; use the Vite dev server');
+      writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, port: PORT }) + '\n', { mode: 0o600 });
+      process.on('exit', removePidFile);
       resolve();
     });
   });
 }
 
+// Only our own entry: a second gateway that failed to start must not delete the running one's.
+function removePidFile(): void {
+  try {
+    if ((JSON.parse(readFileSync(PID_FILE, 'utf-8')) as { pid?: number }).pid === process.pid) rmSync(PID_FILE);
+  } catch {
+    // Already gone or unreadable: nothing of ours to remove.
+  }
+}
+
 export async function stopServer(): Promise<void> {
+  removePidFile();
+
   // Broadcast shutdown event to all authed clients
   broadcastEvent('shutdown', {});
 

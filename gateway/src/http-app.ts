@@ -8,17 +8,11 @@
  * the UI is sent with a strict Content-Security-Policy.
  */
 
-import { existsSync } from 'fs'
-import { join, resolve } from 'path'
+import { join } from 'path'
 import express, { type Express, type Request, type Response, type NextFunction } from 'express'
 import { validateHost, isOwnOrigin } from './auth.js'
 import { issueLaunchChallenge, issueLaunchCode, redeemLaunchCode, issueSession } from './login.js'
-
-/** app/dist next to the gateway, or MC_UI_DIR. Null when no build exists (dev uses Vite). */
-export function resolveUiDir(): string | null {
-  const dir = process.env['MC_UI_DIR'] ?? resolve(__dirname, '..', '..', 'app', 'dist')
-  return existsSync(join(dir, 'index.html')) ? dir : null
-}
+import { GATEWAY_VERSION } from './version.js'
 
 function bodyField(req: Request, name: string): unknown {
   return (req.body as Record<string, unknown> | undefined)?.[name]
@@ -63,7 +57,8 @@ export function buildHttpApp(uiDir: string | null): Express {
   app.use('/auth', (_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next() })
 
   app.get('/health', (_req, res) => {
-    res.json({ ok: true, uptime: process.uptime() })
+    // pid lets `mc stop` confirm the process it is about to stop really is this gateway.
+    res.json({ ok: true, uptime: process.uptime(), version: GATEWAY_VERSION, pid: process.pid })
   })
 
   // Launcher only. Browsers always send Origin on a POST, so refusing any Origin keeps

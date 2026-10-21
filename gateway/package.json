@@ -8,6 +8,7 @@
     "build": "tsc && node scripts/copy-assets.mjs",
     "start": "node dist/index.js",
     "open": "node dist/cli/open.js",
+    "mc": "node dist/cli/mc.js",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "tsx --test test/*.test.ts"
   },
