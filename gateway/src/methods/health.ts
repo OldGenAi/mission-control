@@ -1,5 +1,6 @@
 import type { MethodHandler } from '../types.js'
 import type { SettingsStore } from '../store/settings.js'
+import { GATEWAY_VERSION } from '../version.js'
 
 const startTime = Date.now()
 
@@ -16,7 +17,7 @@ export function makeHealthHandler(settingsStore: SettingsStore): MethodHandler {
     return {
       status: 'ok',
       uptime: Math.floor((Date.now() - startTime) / 1000),
-      version: '0.1.0',
+      version: GATEWAY_VERSION,
       timestamp: Date.now(),
       provider: active?.provider ?? s.provider,
       model:    active?.model    ?? s.defaultModel,

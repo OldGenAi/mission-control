@@ -81,25 +81,26 @@ function requireBuilt(path, hint) {
   if (!existsSync(path)) throw new Error(`${path} is missing: ${hint}`)
 }
 
+// `mc` runs the mc command with the package's own Node; `mc-open` is what the desktop icon runs.
 const LAUNCHER_SH = `#!/bin/sh
-# Mission Control launcher. mc start: run Mission Control. mc open: open it in the browser, signed in.
+# Mission Control: run "mc help" for the commands.
 here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-node="$here/node/bin/node"
-case "$1" in
-  start) exec "$node" "$here/gateway/dist/index.js" ;;
-  open)  exec "$node" "$here/gateway/dist/cli/open.js" ;;
-  *) echo "usage: mc start | mc open" >&2; exit 2 ;;
-esac
+exec "$here/node/bin/node" "$here/gateway/dist/cli/mc.js" "$@"
+`
+
+const OPEN_SH = `#!/bin/sh
+# Starts Mission Control if needed and opens it, signed in (the desktop icon runs this).
+exec "$(dirname -- "$0")/mc" open
 `
 
 const LAUNCHER_CMD = `@echo off
-rem Mission Control launcher. mc start: run Mission Control. mc open: open it in the browser, signed in.
-setlocal
-set "HERE=%~dp0.."
-if "%~1"=="start" ( "%HERE%\\node\\node.exe" "%HERE%\\gateway\\dist\\index.js" & exit /b )
-if "%~1"=="open" ( "%HERE%\\node\\node.exe" "%HERE%\\gateway\\dist\\cli\\open.js" & exit /b )
-echo usage: mc start ^| mc open 1>&2
-exit /b 2
+rem Mission Control: run "mc help" for the commands.
+"%~dp0..\\node\\node.exe" "%~dp0..\\gateway\\dist\\cli\\mc.js" %*
+`
+
+const OPEN_CMD = `@echo off
+rem Starts Mission Control if needed and opens it, signed in (the desktop icon runs this).
+call "%~dp0mc.cmd" open
 `
 
 async function main() {
@@ -138,9 +139,12 @@ async function main() {
   mkdirSync(join(stage, 'bin'))
   if (isWindows) {
     writeFileSync(join(stage, 'bin', 'mc.cmd'), LAUNCHER_CMD.replace(/\n/g, '\r\n'))
+    writeFileSync(join(stage, 'bin', 'mc-open.cmd'), OPEN_CMD.replace(/\n/g, '\r\n'))
   } else {
-    writeFileSync(join(stage, 'bin', 'mc'), LAUNCHER_SH)
-    chmodSync(join(stage, 'bin', 'mc'), 0o755)
+    for (const [file, text] of [['mc', LAUNCHER_SH], ['mc-open', OPEN_SH]]) {
+      writeFileSync(join(stage, 'bin', file), text)
+      chmodSync(join(stage, 'bin', file), 0o755)
+    }
     chmodSync(nodeDest, 0o755)
   }
 
