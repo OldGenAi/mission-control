@@ -1,11 +1,11 @@
 {
   "name": "mission-control-gateway",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Mission Control — Node.js WebSocket gateway",
   "main": "dist/index.js",
   "scripts": {
     "dev": "node --env-file=.env node_modules/.bin/tsx watch src/index.ts",
-    "build": "tsc && mkdir -p dist/agents/specs && cp src/agents/specs/*.md dist/agents/specs/ && mkdir -p dist/pipelines && cp src/pipelines/*.yaml dist/pipelines/",
+    "build": "tsc && node scripts/copy-assets.mjs",
     "start": "node dist/index.js",
     "open": "node dist/cli/open.js",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
