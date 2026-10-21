@@ -12,7 +12,7 @@ on:
     tags: ["v*"]
   # A change to the packaging itself is proven on all four systems before it merges.
   pull_request:
-    paths: ["release/**", ".github/workflows/release.yml"]
+    paths: ["release/**", ".github/workflows/release.yml", "install.sh", "install.ps1", "gateway/src/cli/**", "gateway/src/install/**"]
   workflow_dispatch:
 
 permissions:
@@ -59,6 +59,47 @@ jobs:
           node release/build-package.mjs --platform "${{ matrix.platform }}" --version "$version"
       - name: Smoke test
         run: node release/smoke-test.mjs release/out/mission-control-*-${{ matrix.platform }}.${{ runner.os == 'Windows' && 'zip' || 'tar.gz' }}
+      # The real installers, run the way a user would (icons and PATH included), against the
+      # package just built. CI machines are thrown away afterwards.
+      - name: Install test (Linux and macOS)
+        if: runner.os != 'Windows'
+        run: |
+          from="$RUNNER_TEMP/install-from"
+          mkdir -p "$from"
+          cp release/out/*-${{ matrix.platform }}.tar.gz "$from/"
+          cat release/out/*.sha256 > "$from/SHA256SUMS"
+          MC_INSTALL_FROM="$from" MC_NO_OPEN=1 sh ./install.sh
+          "$HOME/.local/bin/mc" start
+          "$HOME/.local/bin/mc" doctor
+          "$HOME/.missioncontrol/app/bin/mc-stop"
+          if [ "$RUNNER_OS" = macOS ]; then
+            test -d "$HOME/Desktop/Mission Control.app" && test -d "$HOME/Desktop/Stop Mission Control.app"
+          else
+            test -f "$HOME/.local/share/applications/mission-control.desktop" && test -f "$HOME/.local/share/applications/stop-mission-control.desktop"
+          fi
+      - name: Install test (Windows)
+        if: runner.os == 'Windows'
+        # Windows PowerShell 5.1: what most people will paste the one line into.
+        shell: powershell
+        run: |
+          $from = Join-Path $env:RUNNER_TEMP 'install-from'
+          New-Item -ItemType Directory -Force $from | Out-Null
+          Copy-Item release/out/*-win-x64.zip $from
+          Get-Content release/out/*.sha256 | Set-Content -Encoding ascii (Join-Path $from 'SHA256SUMS')
+          $env:MC_INSTALL_FROM = $from
+          $env:MC_NO_OPEN = '1'
+          ./install.ps1
+          $bin = Join-Path $env:USERPROFILE '.missioncontrol\app\bin'
+          & (Join-Path $bin 'mc.cmd') start
+          if ($LASTEXITCODE -ne 0) { throw 'mc start failed' }
+          & (Join-Path $bin 'mc.cmd') doctor
+          & (Join-Path $bin 'mc-stop.cmd')
+          if ($LASTEXITCODE -ne 0) { throw 'mc stop failed' }
+          $desktop = [Environment]::GetFolderPath('Desktop')
+          foreach ($icon in 'Mission Control.lnk', 'Stop Mission Control.lnk') {
+            if (-not (Test-Path (Join-Path $desktop $icon))) { throw "desktop icon missing: $icon" }
+          }
+          if (-not (([Environment]::GetEnvironmentVariable('Path', 'User') -split ';') -contains $bin)) { throw 'PATH not updated' }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: package-${{ matrix.platform }}

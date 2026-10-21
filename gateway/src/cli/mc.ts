@@ -7,10 +7,12 @@
 // folder only this user can write) names the same pid. Something else listening on the
 // port can make up a pid in /health; it cannot write our pid file.
 
-import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
+import { chmodSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
-import { dirname, join } from 'node:path'
+import { homedir } from 'node:os'
+import { basename, dirname, join, resolve } from 'node:path'
+import { planShortcut, type ShortcutInput } from '../install/desktop-shortcut.js'
 import { openSignedIn } from './launch.js'
 import { formatDoctor, formatStatus, helpText } from './format.js'
 import type { DoctorCheck } from './report-types.js'
@@ -233,6 +235,77 @@ async function doctor(): Promise<boolean> {
   return checks.every((c) => c.status !== 'fail')
 }
 
+function desktopDir(): string {
+  if (process.platform === 'win32') {
+    // OneDrive and company policies can move the Desktop; ask Windows where it is.
+    return execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', "[Environment]::GetFolderPath('Desktop')"], { encoding: 'utf-8' }).trim()
+  }
+  if (process.platform === 'linux') {
+    try {
+      const localised = execFileSync('xdg-user-dir', ['DESKTOP'], { encoding: 'utf-8' }).trim()
+      if (localised) return localised
+    } catch {
+      // No xdg-user-dir (not a freedesktop system): fall back to ~/Desktop.
+    }
+  }
+  return join(homedir(), 'Desktop')
+}
+
+// An existing app bundle of ours is replaced; anything else with the same name is left alone.
+function clearOldMacApp(app: string, bundleId: string): boolean {
+  if (!existsSync(app)) return true
+  if (!readFileSync(join(app, 'Contents', 'Info.plist'), 'utf-8').includes(bundleId)) {
+    console.error(`${redact(app)} exists and is not one of ours, so it was left alone. Move it, then run: mc shortcuts`)
+    return false
+  }
+  rmSync(app, { recursive: true, force: true })
+  return true
+}
+
+// Adds (or puts back) the Mission Control and Stop Mission Control desktop icons. Works from
+// an installed package, where bin/ and icons/ sit next to gateway/.
+function shortcuts(): boolean {
+  const platform = process.platform
+  if (platform !== 'win32' && platform !== 'darwin' && platform !== 'linux') {
+    console.error(`Desktop icons are not supported on ${platform}.`)
+    return false
+  }
+  const root = resolve(__dirname, '..', '..', '..')
+  const launcher = (kind: string) => join(root, 'bin', platform === 'win32' ? `mc-${kind}.cmd` : `mc-${kind}`)
+  if (!existsSync(launcher('open'))) {
+    console.error('mc shortcuts works in an installed Mission Control (it needs bin/mc-open next to the gateway).')
+    return false
+  }
+  const iconExt = { win32: '.ico', darwin: '.icns', linux: '.png' }[platform]
+  const desktop = desktopDir()
+
+  for (const [kind, icon, bundleId] of [
+    ['open', 'mission-control', 'local.oldgenai.mission-control'],
+    ['stop', 'stop-mission-control', 'local.oldgenai.stop-mission-control'],
+  ] as const) {
+    const input: ShortcutInput = { kind, platform, home: homedir(), desktopDir: desktop, appDir: root, launcher: launcher(kind), icon: join(root, 'icons', icon + iconExt) }
+    const plan = planShortcut(input)
+    if (platform === 'darwin' && !clearOldMacApp(plan.created[0]!, bundleId)) return false
+    for (const file of plan.files) {
+      // A computer without a desktop folder (a server) still gets the app-menu entry.
+      if (dirname(file.path) === desktop && !existsSync(desktop)) continue
+      mkdirSync(dirname(file.path), { recursive: true })
+      writeFileSync(file.path, file.content)
+      if (file.mode !== undefined) chmodSync(file.path, file.mode)
+    }
+    for (const step of plan.commands) {
+      // No shell: every argument reaches the program exactly as planned.
+      const result = spawnSync(step.cmd, step.args, { stdio: 'ignore', windowsHide: true })
+      if (result.status !== 0 && !step.optional) {
+        console.error(`Could not create the ${basename(plan.created[0]!)} icon (${step.cmd} failed).`)
+        return false
+      }
+    }
+    console.log(`Added ${plan.created.map((p) => redact(p)).join(' and ')}`)
+  }
+  return true
+}
+
 async function main(): Promise<boolean> {
   if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
     console.error(`GATEWAY_PORT must be a port number (1-65535), got "${process.env['GATEWAY_PORT']}".`)
@@ -246,6 +319,7 @@ async function main(): Promise<boolean> {
     case 'open': return open()
     case 'logs': return logs(arg)
     case 'doctor': return doctor()
+    case 'shortcuts': return shortcuts()
     case 'version': console.log(GATEWAY_VERSION); return true
     case 'help': case undefined: console.log(helpText(GATEWAY_VERSION)); return true
     default:

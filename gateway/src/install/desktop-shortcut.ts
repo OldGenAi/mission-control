@@ -3,6 +3,7 @@
 import path from 'node:path'
 
 export interface ShortcutInput {
+  kind: 'open' | 'stop'
   platform: 'linux' | 'darwin' | 'win32'
   home: string
   desktopDir: string
@@ -44,12 +45,31 @@ function validatePaths(input: ShortcutInput): void {
   }
 }
 
-function desktopEntryContent(launcher: string, icon: string, appDir: string): string {
+const KIND_META = {
+  open: {
+    name: 'Mission Control',
+    linuxFile: 'mission-control.desktop',
+    macApp: 'Mission Control.app',
+    winLnk: 'Mission Control.lnk',
+    description: 'Start Mission Control and open it in your browser',
+    bundleId: 'local.oldgenai.mission-control',
+  },
+  stop: {
+    name: 'Stop Mission Control',
+    linuxFile: 'stop-mission-control.desktop',
+    macApp: 'Stop Mission Control.app',
+    winLnk: 'Stop Mission Control.lnk',
+    description: 'Stop Mission Control running in the background',
+    bundleId: 'local.oldgenai.stop-mission-control',
+  },
+} as const
+
+function desktopEntryContent(launcher: string, icon: string, appDir: string, name: string, comment: string): string {
   return [
     '[Desktop Entry]',
     'Type=Application',
-    'Name=Mission Control',
-    'Comment=Start Mission Control and open it in your browser',
+    `Name=${name}`,
+    `Comment=${comment}`,
     `Exec="${launcher}"`,
     `Icon=${icon}`,
     'Terminal=false',
@@ -60,9 +80,10 @@ function desktopEntryContent(launcher: string, icon: string, appDir: string): st
 
 function planLinux(input: ShortcutInput): ShortcutPlan {
   const p = path.posix
-  const appMenu = p.join(input.home, '.local/share/applications/mission-control.desktop')
-  const desktop = p.join(input.desktopDir, 'mission-control.desktop')
-  const content = desktopEntryContent(input.launcher, input.icon, input.appDir)
+  const meta = KIND_META[input.kind]
+  const appMenu = p.join(input.home, `.local/share/applications/${meta.linuxFile}`)
+  const desktop = p.join(input.desktopDir, meta.linuxFile)
+  const content = desktopEntryContent(input.launcher, input.icon, input.appDir, meta.name, meta.description)
   return {
     files: [
       { path: appMenu, content, mode: 0o755 },
@@ -81,7 +102,8 @@ function appleScriptEscape(s: string): string {
 
 function planMac(input: ShortcutInput): ShortcutPlan {
   const p = path.posix
-  const app = p.join(input.desktopDir, 'Mission Control.app')
+  const meta = KIND_META[input.kind]
+  const app = p.join(input.desktopDir, meta.macApp)
   const script = `do shell script quoted form of "${appleScriptEscape(input.launcher)}" & " >/dev/null 2>&1 &"`
   return {
     files: [],
@@ -90,7 +112,7 @@ function planMac(input: ShortcutInput): ShortcutPlan {
       { cmd: 'cp', args: [input.icon, `${app}/Contents/Resources/applet.icns`] },
       { cmd: 'rm', args: ['-f', `${app}/Contents/Resources/Assets.car`] },
       { cmd: 'plutil', args: ['-remove', 'CFBundleIconName', `${app}/Contents/Info.plist`], optional: true },
-      { cmd: 'plutil', args: ['-replace', 'CFBundleIdentifier', '-string', 'local.oldgenai.mission-control', `${app}/Contents/Info.plist`] },
+      { cmd: 'plutil', args: ['-replace', 'CFBundleIdentifier', '-string', meta.bundleId, `${app}/Contents/Info.plist`] },
       { cmd: 'codesign', args: ['--force', '--sign', '-', app] },
     ],
     created: [app],
@@ -100,18 +122,19 @@ function planMac(input: ShortcutInput): ShortcutPlan {
 // PowerShell also ends a single-quoted string at the typographic quotes ‘ ’ ‚ ‛,
 // so each of those is doubled too.
 function psEscape(s: string): string {
-  return s.replace(/['‘’‚‛]/g, (q) => q + q)
+  return s.replace(/['\u2018\u2019\u201A\u201B]/g, (q) => q + q)
 }
 
 function planWindows(input: ShortcutInput): ShortcutPlan {
   const p = path.win32
-  const lnk = p.join(input.desktopDir, 'Mission Control.lnk')
+  const meta = KIND_META[input.kind]
+  const lnk = p.join(input.desktopDir, meta.winLnk)
   const lines = [
     `$s = (New-Object -ComObject WScript.Shell).CreateShortcut('${psEscape(lnk)}')`,
     `$s.TargetPath = '${psEscape(input.launcher)}'`,
     `$s.WorkingDirectory = '${psEscape(input.appDir)}'`,
     `$s.IconLocation = '${psEscape(input.icon)}'`,
-    "$s.Description = 'Start Mission Control and open it in your browser'",
+    `$s.Description = '${meta.description}'`,
     '$s.WindowStyle = 7',
     '$s.Save()',
   ]

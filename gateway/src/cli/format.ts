@@ -52,6 +52,7 @@ const COMMANDS: Array<[string, string]> = [
   ['mc open', 'Open it in your browser, signed in (starts it first if needed)'],
   ['mc logs [lines]', 'Show the end of the log (default 50 lines)'],
   ['mc doctor', 'Check your setup and say what to fix'],
+  ['mc shortcuts', 'Add (or put back) the desktop icons'],
   ['mc version', 'Show the version'],
   ['mc help', 'Show this help'],
 ]
