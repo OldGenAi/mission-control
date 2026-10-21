@@ -7,6 +7,7 @@ import assert from 'node:assert/strict'
 import { planShortcut, type ShortcutInput } from '../src/install/desktop-shortcut.js'
 
 const linux: ShortcutInput = {
+  kind: 'open',
   platform: 'linux',
   home: '/home/jb',
   desktopDir: '/home/jb/Desktop',
@@ -16,6 +17,7 @@ const linux: ShortcutInput = {
 }
 
 const mac: ShortcutInput = {
+  kind: 'open',
   platform: 'darwin',
   home: '/Users/jb',
   desktopDir: '/Users/jb/Desktop',
@@ -25,6 +27,7 @@ const mac: ShortcutInput = {
 }
 
 const win: ShortcutInput = {
+  kind: 'open',
   platform: 'win32',
   home: 'C:\\Users\\jb',
   desktopDir: 'C:\\Users\\jb\\OneDrive\\Desktop',
@@ -135,4 +138,32 @@ test('relative paths are refused on every platform', () => {
   assert.throws(() => planShortcut({ ...linux, launcher: 'bin/mc-open' }), /absolute/i)
   assert.throws(() => planShortcut({ ...mac, desktopDir: 'Desktop' }), /absolute/i)
   assert.throws(() => planShortcut({ ...win, icon: 'icons\\mc.ico' }), /absolute/i)
+})
+
+test('stop icon: its own name, file, description and bundle id on every platform', () => {
+  const linuxStop = planShortcut({ ...linux, kind: 'stop', launcher: '/home/jb/.missioncontrol/app/bin/mc-stop', icon: '/home/jb/.missioncontrol/app/icons/stop-mission-control.png' })
+  assert.deepEqual(linuxStop.created, [
+    '/home/jb/.local/share/applications/stop-mission-control.desktop',
+    '/home/jb/Desktop/stop-mission-control.desktop',
+  ])
+  const entry = desktopEntry(linuxStop.files[0]!.content)
+  assert.equal(entry.get('Name'), 'Stop Mission Control')
+  assert.equal(entry.get('Comment'), 'Stop Mission Control running in the background')
+  assert.equal(entry.get('Exec'), '"/home/jb/.missioncontrol/app/bin/mc-stop"')
+
+  const macStop = planShortcut({ ...mac, kind: 'stop', launcher: '/Users/jb/.missioncontrol/app/bin/mc-stop' })
+  assert.deepEqual(macStop.created, ['/Users/jb/Desktop/Stop Mission Control.app'])
+  assert.deepEqual(macStop.commands[4], {
+    cmd: 'plutil',
+    args: ['-replace', 'CFBundleIdentifier', '-string', 'local.oldgenai.stop-mission-control', '/Users/jb/Desktop/Stop Mission Control.app/Contents/Info.plist'],
+  })
+
+  const winStop = planShortcut({ ...win, kind: 'stop', launcher: 'C:\\Users\\jb\\.missioncontrol\\app\\bin\\mc-stop.cmd' })
+  assert.deepEqual(winStop.created, ['C:\\Users\\jb\\OneDrive\\Desktop\\Stop Mission Control.lnk'])
+  assert.match(winStop.commands[0]!.args[5]!, /\$s\.Description = 'Stop Mission Control running in the background'/)
+})
+
+test('the open icon is unchanged by the stop icon work', () => {
+  assert.equal(desktopEntry(planShortcut(linux).files[0]!.content).get('Name'), 'Mission Control')
+  assert.deepEqual(planShortcut(mac).created, ['/Users/jb/Desktop/Mission Control.app'])
 })

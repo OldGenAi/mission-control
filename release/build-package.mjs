@@ -62,7 +62,10 @@ async function pinnedNodeArchive() {
 }
 
 function run(cmd, args, cwd) {
-  execFileSync(cmd, args, { cwd, stdio: 'inherit', shell: process.platform === 'win32' && cmd === 'npm' })
+  // npm is a .cmd script on Windows, which only cmd.exe can start; going through cmd.exe
+  // explicitly avoids Node's shell option (it would concatenate the arguments unescaped).
+  if (process.platform === 'win32' && cmd === 'npm') execFileSync('cmd.exe', ['/d', '/c', 'npm', ...args], { cwd, stdio: 'inherit' })
+  else execFileSync(cmd, args, { cwd, stdio: 'inherit' })
 }
 
 // better-sqlite3 ships its C sources and a prebuilt binary for every system (27 MB); a
@@ -77,6 +80,18 @@ function pruneSqlite(dir) {
   for (const sources of ['deps', 'src']) rmSync(join(dir, sources), { recursive: true, force: true })
 }
 
+// Desktop icons in each system's own format: .ico on Windows, .icns on macOS (made here with
+// Apple's iconutil from the PNG sets), .png on Linux.
+function copyIcons(dest) {
+  mkdirSync(dest, { recursive: true })
+  for (const icon of ['mission-control', 'stop-mission-control']) {
+    const from = join(ROOT, 'release', 'icons', icon)
+    if (isWindows) cpSync(`${from}.ico`, join(dest, `${icon}.ico`))
+    else if (platform.startsWith('darwin-')) run('iconutil', ['-c', 'icns', `${from}.iconset`, '-o', join(dest, `${icon}.icns`)])
+    else cpSync(`${from}.png`, join(dest, `${icon}.png`))
+  }
+}
+
 function requireBuilt(path, hint) {
   if (!existsSync(path)) throw new Error(`${path} is missing: ${hint}`)
 }
@@ -84,13 +99,27 @@ function requireBuilt(path, hint) {
 // `mc` runs the mc command with the package's own Node; `mc-open` is what the desktop icon runs.
 const LAUNCHER_SH = `#!/bin/sh
 # Mission Control: run "mc help" for the commands.
-here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+# Follow symlinks (the installer links this into ~/.local/bin) to find the package folder.
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case $link in
+    /*) self=$link ;;
+    *) self=$(dirname -- "$self")/$link ;;
+  esac
+done
+here=$(CDPATH= cd -- "$(dirname -- "$self")/.." && pwd)
 exec "$here/node/bin/node" "$here/gateway/dist/cli/mc.js" "$@"
 `
 
 const OPEN_SH = `#!/bin/sh
 # Starts Mission Control if needed and opens it, signed in (the desktop icon runs this).
 exec "$(dirname -- "$0")/mc" open
+`
+
+const STOP_SH = `#!/bin/sh
+# Stops Mission Control (the Stop Mission Control desktop icon runs this).
+exec "$(dirname -- "$0")/mc" stop
 `
 
 const LAUNCHER_CMD = `@echo off
@@ -101,6 +130,11 @@ rem Mission Control: run "mc help" for the commands.
 const OPEN_CMD = `@echo off
 rem Starts Mission Control if needed and opens it, signed in (the desktop icon runs this).
 call "%~dp0mc.cmd" open
+`
+
+const STOP_CMD = `@echo off
+rem Stops Mission Control (the Stop Mission Control desktop icon runs this).
+call "%~dp0mc.cmd" stop
 `
 
 async function main() {
@@ -138,15 +172,17 @@ async function main() {
 
   mkdirSync(join(stage, 'bin'))
   if (isWindows) {
-    writeFileSync(join(stage, 'bin', 'mc.cmd'), LAUNCHER_CMD.replace(/\n/g, '\r\n'))
-    writeFileSync(join(stage, 'bin', 'mc-open.cmd'), OPEN_CMD.replace(/\n/g, '\r\n'))
+    for (const [file, text] of [['mc.cmd', LAUNCHER_CMD], ['mc-open.cmd', OPEN_CMD], ['mc-stop.cmd', STOP_CMD]]) {
+      writeFileSync(join(stage, 'bin', file), text.replace(/\n/g, '\r\n'))
+    }
   } else {
-    for (const [file, text] of [['mc', LAUNCHER_SH], ['mc-open', OPEN_SH]]) {
+    for (const [file, text] of [['mc', LAUNCHER_SH], ['mc-open', OPEN_SH], ['mc-stop', STOP_SH]]) {
       writeFileSync(join(stage, 'bin', file), text)
       chmodSync(join(stage, 'bin', file), 0o755)
     }
     chmodSync(nodeDest, 0o755)
   }
+  copyIcons(join(stage, 'icons'))
 
   const commit = process.env['GITHUB_SHA'] ?? execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf-8' }).trim()
   writeFileSync(join(stage, 'manifest.json'), JSON.stringify({ name: 'mission-control', version, platform, node: pins.version, commit }, null, 2) + '\n')

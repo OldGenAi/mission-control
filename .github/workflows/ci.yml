@@ -68,6 +68,20 @@ jobs:
       - run: npm run lint
       - run: npm run build
 
+  # The one-line installers run on strangers' machines: lint them on every change.
+  installers:
+    name: Installer lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck --shell=sh install.sh
+      - shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.23.0 -Scope CurrentUser -Force
+          $problems = Invoke-ScriptAnalyzer -Path install.ps1 -Severity Error
+          $problems | Format-Table -AutoSize
+          if ($problems) { throw "install.ps1 has $(@($problems).Count) error(s)" }
+
   # Every run, not just nightly: a pull request must not merge with a known high-severity
   # advisory in a shipped dependency (dev-only tools are left out with --omit=dev).
   audit:
