@@ -265,6 +265,30 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_artifacts_deleted ON artifacts(deleted_at, created_at);
     `,
   },
+  // v9-v13 are taken: the (shelved) loops branch applied them to existing databases, so main
+  // must not reuse those numbers or those installs would silently skip the migration. Any
+  // future migration, including parts harvested from that branch, starts after v14.
+  {
+    version: 14,
+    sql: `
+      -- Videos made on the Video page. The file lives in ~/.missioncontrol/media/video/<id>.mp4
+      -- (never a path stored here). Soft delete like sessions and artifacts.
+      CREATE TABLE IF NOT EXISTS videos (
+        id           TEXT PRIMARY KEY,
+        recipe_id    TEXT NOT NULL,
+        params       TEXT NOT NULL,
+        status       TEXT NOT NULL,
+        error        TEXT,
+        prompt_id    TEXT,
+        file_bytes   INTEGER,
+        created_at   INTEGER NOT NULL,
+        started_at   INTEGER,
+        finished_at  INTEGER,
+        deleted_at   INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_videos_created ON videos(deleted_at, created_at);
+    `,
+  },
 ]
 
 function runMigrations(db: Database.Database): void {

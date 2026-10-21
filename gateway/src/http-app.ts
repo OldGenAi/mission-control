@@ -10,9 +10,16 @@
 
 import { join } from 'path'
 import express, { type Express, type Request, type Response, type NextFunction } from 'express'
-import { validateHost, isOwnOrigin } from './auth.js'
+import { validateHost, isOwnOrigin, getConfig } from './auth.js'
 import { issueLaunchChallenge, issueLaunchCode, redeemLaunchCode, issueSession } from './login.js'
 import { GATEWAY_VERSION } from './version.js'
+import { checkMediaLink } from './video/media-links.js'
+
+/** Finds a finished video's file by id; set by the gateway once the video queue exists. */
+let videoFile: (id: string) => string | null = () => null
+export function setVideoFileResolver(resolve: (id: string) => string | null): void {
+  videoFile = resolve
+}
 
 function bodyField(req: Request, name: string): unknown {
   return (req.body as Record<string, unknown> | undefined)?.[name]
@@ -27,6 +34,8 @@ function setUiSecurityHeaders(req: Request, res: Response): void {
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self'",
     "img-src 'self' data: blob:",
+    // Finished videos play from signed same-origin links (see video/media-links.ts).
+    "media-src 'self' blob:",
     `connect-src 'self' ws://${req.headers.host}`,
     "object-src 'none'",
     "base-uri 'none'",
@@ -90,6 +99,24 @@ export function buildHttpApp(uiDir: string | null): Express {
       return
     }
     res.json({ ok: true, ...issueSession() })
+  })
+
+  // A finished video, by signed link only: the <video> element cannot send the sign-in.
+  // The id picks a row in the videos table; no part of the URL is ever used as a path.
+  app.get('/media/video/:id', (req, res) => {
+    const { id } = req.params
+    const path = checkMediaLink(getConfig().sessionSecret, id, req.query['e'], req.query['s']) ? videoFile(id) : null
+    if (!path) {
+      res.status(404).end()
+      return
+    }
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+    res.setHeader('Referrer-Policy', 'no-referrer')
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin')
+    res.setHeader('Content-Disposition', 'inline')
+    // The path comes from the gateway (media folder + checked id), and that folder sits inside
+    // ~/.missioncontrol, so the dot-folder default must not apply.
+    res.sendFile(path, { headers: { 'Content-Type': 'video/mp4', 'Cache-Control': 'private, max-age=3600' }, dotfiles: 'allow' })
   })
 
   if (uiDir) {
