@@ -27,8 +27,11 @@ services:
       # and a required token (see gateway/src/auth.ts), but a port that is not on the network
       # cannot be probed from it in the first place.
       # To open it to your LAN, set GATEWAY_HOST=0.0.0.0 in your shell (or in a .env file next
-      # to this docker-compose.yml) before `docker compose up`. Only do that on a network you trust.
+      # to this docker-compose.yml) before `docker compose up`. Only do that on a network you trust,
+      # and list the address other machines will use in GATEWAY_ALLOWED_HOSTS (e.g. 192.168.4.29):
+      # requests naming any other host are refused.
       GATEWAY_HOST: "${GATEWAY_HOST:-127.0.0.1}"
+      GATEWAY_ALLOWED_HOSTS: "${GATEWAY_ALLOWED_HOSTS:-}"
       # LOCAL_PROVIDER_URL is deliberately NOT set here. Docker Compose's `environment:`
       # would override `env_file:`, silently blocking the value the user sets in
       # gateway/.env. Leave it to env_file so the user's choice (LM Studio, Ollama,

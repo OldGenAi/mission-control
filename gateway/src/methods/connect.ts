@@ -4,10 +4,12 @@
  * Security-sensitive. Do not modify without Claude review.
  *
  * Handles the `connect` method — the only method available to unauthenticated clients.
- * Validates the bearer token, marks the client as authed, returns feature list.
+ * Validates the bearer token or a browser session, marks the client as authed,
+ * returns feature list.
  */
 
 import { validateToken } from '../auth.js'
+import { validateSession, issueSession } from '../login.js'
 import { listMethods } from '../router.js'
 import type { MethodHandler } from '../types.js'
 
@@ -31,7 +33,8 @@ const AVAILABLE_EVENTS = [
  * connect handler
  *
  * Expected params:
- *   { token: string, nonce: string }
+ *   { token: string, nonce: string }     — CLI tools and the Vite dev server
+ *   { session: string, nonce: string }   — the built UI (see login.ts)
  *
  * The server sends a nonce in the connect.challenge event on connection open.
  * The client echoes it back here along with the auth token.
@@ -40,13 +43,16 @@ const AVAILABLE_EVENTS = [
  * server.ts where the nonce map lives — by the time this handler is called,
  * the server has already confirmed the nonce is valid and removed it.
  *
- * On success: marks client.authed = true and returns feature list.
+ * On success: marks client.authed = true and returns feature list. A session login
+ * also gets a renewed session, so a browser in regular use stays signed in.
  * On failure: throws AUTH_FAILED — server.ts sends the error response.
  */
 export const connectHandler: MethodHandler = async (params, client) => {
-  const { token } = params
+  const { token, session } = params
+  const byToken = validateToken(token)
+  const bySession = !byToken && validateSession(session)
 
-  if (!validateToken(token)) {
+  if (!byToken && !bySession) {
     throw { code: 'AUTH_FAILED', message: 'Invalid token' }
   }
 
@@ -59,5 +65,6 @@ export const connectHandler: MethodHandler = async (params, client) => {
       methods: listMethods(),
       events: AVAILABLE_EVENTS,
     },
+    ...(bySession ? { session: issueSession().session } : {}),
   }
 }

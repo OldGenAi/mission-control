@@ -24,6 +24,7 @@ interface GatewayConfig {
   token: string
   approvalSecret: string
   encryptionKey: string   // 32 bytes (hex) — AES-256-GCM key for at-rest encryption of provider keys
+  sessionSecret: string   // 32 bytes (hex) — HMAC key for browser sessions (login.ts)
   [key: string]: unknown
 }
 
@@ -49,6 +50,7 @@ function loadConfig(): GatewayConfig {
       token:          randomBytes(32).toString('hex'),
       approvalSecret: randomBytes(32).toString('hex'),
       encryptionKey:  randomBytes(32).toString('hex'),
+      sessionSecret:  randomBytes(32).toString('hex'),
     }
     writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), { encoding: 'utf-8', mode: 0o600 })
     console.log('[auth] Generated new gateway token + secrets. Stored at:', CONFIG_FILE)
@@ -71,6 +73,9 @@ function loadConfig(): GatewayConfig {
     }
     if (!config.encryptionKey || typeof config.encryptionKey !== 'string' || config.encryptionKey.length < 64) {
       config.encryptionKey = randomBytes(32).toString('hex'); backfilled = true
+    }
+    if (!config.sessionSecret || typeof config.sessionSecret !== 'string' || config.sessionSecret.length < 64) {
+      config.sessionSecret = randomBytes(32).toString('hex'); backfilled = true
     }
     if (backfilled) {
       writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), { encoding: 'utf-8', mode: 0o600 })
@@ -141,6 +146,50 @@ export function validateOrigin(origin: string | undefined): boolean {
     // Invalid URL — reject
     return false
   }
+}
+
+// ---------------------------------------------------------------------------
+// validateHost / isOwnOrigin
+// ---------------------------------------------------------------------------
+
+function loopbackHostname(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
+}
+
+// Extra names for a gateway deliberately opened to the LAN (GATEWAY_HOST=0.0.0.0),
+// e.g. GATEWAY_ALLOWED_HOSTS=192.168.4.29. Exact hostnames, comma-separated.
+const lanHosts = new Set(
+  (process.env['GATEWAY_ALLOWED_HOSTS'] ?? '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean),
+)
+
+/**
+ * Returns true only if the HTTP Host header names a loopback address (any port)
+ * or a name listed in GATEWAY_ALLOWED_HOSTS.
+ *
+ * Blocks DNS rebinding: a page on evil.com that re-points its name at 127.0.0.1
+ * still sends `Host: evil.com`, so it never gets the UI or the auth endpoints.
+ */
+export function validateHost(host: string | undefined): boolean {
+  if (!host) return false
+  try {
+    const url = new URL(`http://${host}`)
+    // Anything the URL parser reshapes (userinfo, paths, default ports) is not a plain host.
+    if (url.host !== host.toLowerCase()) return false
+    return loopbackHostname(url.hostname) || lanHosts.has(url.hostname)
+  } catch {
+    // Unparseable Host — reject
+    return false
+  }
+}
+
+/**
+ * Returns true only if `origin` is exactly the page this server itself served
+ * (`http://` + the request's Host). Stricter than validateOrigin: another local
+ * server on a different port does not pass.
+ */
+export function isOwnOrigin(origin: string | undefined, host: string | undefined): boolean {
+  if (!origin || !host || !validateHost(host)) return false
+  return origin === `http://${host.toLowerCase()}`
 }
 
 // ---------------------------------------------------------------------------
