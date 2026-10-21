@@ -77,6 +77,10 @@ jobs:
           else
             test -f "$HOME/.local/share/applications/mission-control.desktop" && test -f "$HOME/.local/share/applications/stop-mission-control.desktop"
           fi
+          "$HOME/.local/bin/mc" uninstall
+          test ! -e "$HOME/.missioncontrol/app" && test ! -e "$HOME/.local/bin/mc"
+          test ! -e "$HOME/Desktop/Mission Control.app" && test ! -e "$HOME/.local/share/applications/mission-control.desktop"
+          test -f "$HOME/.missioncontrol/config.json"   # data kept
       - name: Install test (Windows)
         if: runner.os == 'Windows'
         # Windows PowerShell 5.1: what most people will paste the one line into.
@@ -100,6 +104,15 @@ jobs:
             if (-not (Test-Path (Join-Path $desktop $icon))) { throw "desktop icon missing: $icon" }
           }
           if (-not (([Environment]::GetEnvironmentVariable('Path', 'User') -split ';') -contains $bin)) { throw 'PATH not updated' }
+          & (Join-Path $bin 'mc.cmd') uninstall
+          if ($LASTEXITCODE -ne 0) { throw 'mc uninstall failed' }
+          Start-Sleep -Seconds 6
+          if (Test-Path (Join-Path $env:USERPROFILE '.missioncontrol\app')) { throw 'app folder still there after uninstall' }
+          foreach ($icon in 'Mission Control.lnk', 'Stop Mission Control.lnk') {
+            if (Test-Path (Join-Path $desktop $icon)) { throw "desktop icon still there: $icon" }
+          }
+          if (([Environment]::GetEnvironmentVariable('Path', 'User') -split ';') -contains $bin) { throw 'PATH entry still there' }
+          if (-not (Test-Path (Join-Path $env:USERPROFILE '.missioncontrol\config.json'))) { throw 'data folder was removed' }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: package-${{ matrix.platform }}
