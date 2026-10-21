@@ -12,6 +12,8 @@ node_modules/
 dist/
 dist-ssr/
 build/
+release/out/
+release/.cache/
 *.tsbuildinfo
 
 # --- Runtime data ----------------------------------------------------------

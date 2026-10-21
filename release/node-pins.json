@@ -1,0 +1,13 @@
+{
+  "_comment": "The Node runtime bundled into every release package. The SHA-256 of each archive is copied from nodejs.org/dist/<version>/SHASUMS256.txt after checking that file's signature against the Node release team's keyring (github.com/nodejs/release-keys, gpg/pubring.kbx). The build refuses any download that does not match. To update: change the version, re-verify the signature, copy the new hashes.",
+  "version": "v24.22.0",
+  "verifiedBy": "C82FA3AE1CBEDC6BE46B9360C43CEC45C17AB93C (Richard Lau), 2026-10-21",
+  "archives": {
+    "linux-x64": { "file": "node-v24.22.0-linux-x64.tar.xz", "sha256": "cc2f601cee82d9a5a233302fe307abc600727035fd7d2c3a3571755989e95008" },
+    "linux-arm64": { "file": "node-v24.22.0-linux-arm64.tar.xz", "sha256": "fef00bb4d36e1c50104a9775a10359beee98f162b4104dd12472c75065c6a143" },
+    "darwin-arm64": { "file": "node-v24.22.0-darwin-arm64.tar.gz", "sha256": "6a9724d9b50a5f22b4816cded441b5a8d9ddae546191a5e5b7efa5a5e2ee26d5" },
+    "darwin-x64": { "file": "node-v24.22.0-darwin-x64.tar.gz", "sha256": "495e3f273c645f3c4677d438304cdfc701729ea5dec5728f5c8e76a2dece4b91" },
+    "win-x64": { "file": "node-v24.22.0-win-x64.zip", "sha256": "f9683a19877e12a9b167305c8db71040d812876359de21f0d2e97c3f321f80c3" },
+    "win-arm64": { "file": "node-v24.22.0-win-arm64.zip", "sha256": "3a5c209a5bc59e65b3bc0fa13ed5e166a26bd3d55332847f498b76b037408d61" }
+  }
+}

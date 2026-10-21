@@ -196,6 +196,7 @@ test('HTTP: the UI is served with a strict policy, and nothing outside its folde
   const csp = shell.headers.get('content-security-policy') ?? ''
   assert.match(csp, /script-src 'self'(;|$)/)
   assert.match(csp, /frame-ancestors 'none'/)
+  assert.doesNotMatch(csp, /https?:/, 'the UI loads nothing from other sites')
   assert.match(csp, new RegExp(`connect-src 'self' ws://${host.replace(/[.]/g, '\\.')}`))
   assert.equal(shell.headers.get('x-frame-options'), 'DENY')
   assert.equal(shell.headers.get('x-powered-by'), null)
