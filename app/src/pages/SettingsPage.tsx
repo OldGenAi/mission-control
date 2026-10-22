@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react"
 import { gateway } from "../lib/gateway-client"
 import { mcConfig } from "../lib/mc-config"
-import { useSettings, updateSettings, updateInstance } from "../lib/settings"
+import { useSettings, updateSettings, updateInstance, fetchShellAvailability, type ShellAvailability } from "../lib/settings"
 import { getPerfMode, setPerfMode, type PerfMode } from "../lib/perf"
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
@@ -261,6 +261,26 @@ function ExecConfirmModal({ onConfirm, onCancel }: { onConfirm: () => void; onCa
 
 function GatedExecToggle({ checked }: { checked: boolean }) {
   const [confirming, setConfirming] = useState(false)
+  const [shell, setShell] = useState<ShellAvailability | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    void fetchShellAvailability().then(s => { if (alive) setShell(s) })
+    return () => { alive = false }
+  }, [])
+
+  if (shell && !shell.available) {
+    return (
+      <span title={shell.reason} style={{
+        display: "inline-flex", alignItems: "center", gap: 4,
+        fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", color: T.muted,
+        background: "rgba(255,255,255,0.05)", border: `1px solid ${T.border}`,
+        borderRadius: 5, padding: "2px 7px",
+      }}>
+        LOCKED
+      </span>
+    )
+  }
 
   const handleToggle = (next: boolean) => {
     if (next) setConfirming(true)                      // enabling → confirm first
@@ -381,7 +401,7 @@ function QuickTab() {
 
       <Card>
         <SectionTitle>Storage</SectionTitle>
-        {[["DB", "~/.missioncontrol/gateway.sqlite"], ["Config", "~/.missioncontrol/"], ["App", "v0.2.0"]].map(([k, v]) => (
+        {[["DB", "~/.missioncontrol/gateway.sqlite"], ["Config", "~/.missioncontrol/"], ["App", "v0.2.1"]].map(([k, v]) => (
           <div key={k} style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
             <span style={{ fontSize: 12, color: T.muted }}>{k}</span>
             <span style={{ fontSize: 11, color: T.text, fontFamily: "monospace" }}>{v}</span>
@@ -717,7 +737,7 @@ function InfrastructureTab() {
               <span style={{ fontSize: 13, color: T.text }}>Allow Dave to run shell commands (exec tool)</span>
               <GatedExecToggle checked={execEnabled} />
             </div>
-            <p style={{ fontSize: 11, color: T.muted, margin: "6px 0 0" }}>Off by default. Enabling asks for confirmation first. Commands start in your workspace (this is not a sandbox), run without your API keys in their environment, and have a 30-second timeout and a 64 KB output cap. Same toggle as Quick → Exec tool.</p>
+            <p style={{ fontSize: 11, color: T.muted, margin: "6px 0 0" }}>Locked until Mission Control can run commands in a sandbox, because a command can reach anything your user account can. When it can be switched on, it is off by default and asks for confirmation first. Same toggle as Quick → Exec tool.</p>
           </Field>
         </div>
 
@@ -862,7 +882,7 @@ function DebugTab() {
 
   const copyDebug = () => {
     const info = {
-      appVersion: "v0.2.0", gateway: "ws://127.0.0.1:4747",
+      appVersion: "v0.2.1", gateway: "ws://127.0.0.1:4747",
       selectedModel: mcConfig.getSelectedModel(), thinking: mcConfig.getThinking(),
       localStorageKeys: Object.keys(localStorage).filter(k => k.startsWith("mc:")),
       healthRaw: healthRaw || "not fetched",
@@ -908,7 +928,7 @@ function DebugTab() {
 
       <Card>
         <SectionTitle>Build info</SectionTitle>
-        {[["App version", "v0.2.0"], ["Gateway WS", "ws://127.0.0.1:4747"], ["DB", "~/.missioncontrol/gateway.sqlite"], ["Runtime", "Node.js v22 (WSL2)"]].map(([k, v]) => (
+        {[["App version", "v0.2.1"], ["Gateway WS", "ws://127.0.0.1:4747"], ["DB", "~/.missioncontrol/gateway.sqlite"], ["Runtime", "Node.js v22 (WSL2)"]].map(([k, v]) => (
           <div key={k} style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
             <span style={{ fontSize: 12, color: T.muted }}>{k}</span>
             <span style={{ fontSize: 12, color: T.text, fontFamily: "monospace" }}>{v}</span>

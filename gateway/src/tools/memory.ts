@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import type { RegisteredTool, ToolContext, ToolResult } from './types.js'
 import { checkCap } from '../memory/store.js'
+import { PROTECTED_KEYS } from '../memory/starter-entries.js'
 
 interface MemoryRow {
   id: string
@@ -37,6 +38,14 @@ export function makeMemoryTools(db: Database.Database): RegisteredTool[] {
   function err(ctx: ToolContext, toolName: string, msg: string, start: number): ToolResult {
     return { correlationId: ctx.correlationId, toolName, status: 'error', output: '', error: msg, durationMs: Date.now() - start }
   }
+  // The instruction entries (soul, agents, identity, user) are the person's to change, on the
+  // Agents page. An agent that could rewrite them could be talked into rewriting its own rules
+  // by something it read. Compared case-insensitively so "Soul" is refused too.
+  function protectedKey(key: string): string | null {
+    return PROTECTED_KEYS.has(key.trim().toLowerCase())
+      ? `MEMORY_KEY_PROTECTED: "${key}" holds your instructions and only the person can change it, on the Agents page. Suggest the change to them instead.`
+      : null
+  }
 
   const memory_write: RegisteredTool = {
     schema: {
@@ -59,6 +68,8 @@ export function makeMemoryTools(db: Database.Database): RegisteredTool[] {
       const entryType = typeof args['type'] === 'string' ? args['type'] : 'fact'
       if (typeof key !== 'string' || !key.trim()) return err(ctx, 'memory_write', 'key must be a non-empty string', start)
       if (typeof content !== 'string') return err(ctx, 'memory_write', 'content must be a string', start)
+      const lockErr = protectedKey(key)
+      if (lockErr) return err(ctx, 'memory_write', lockErr, start)
       const capErr = checkCap(key, content)
       if (capErr) return err(ctx, 'memory_write', capErr, start)
       try {
@@ -132,6 +143,8 @@ export function makeMemoryTools(db: Database.Database): RegisteredTool[] {
       const content = args['content']
       if (typeof key !== 'string' || !key.trim()) return err(ctx, toolName, 'key must be a non-empty string', start)
       if (typeof content !== 'string') return err(ctx, toolName, 'content must be a string', start)
+      const lockErr = protectedKey(key)
+      if (lockErr) return err(ctx, toolName, lockErr, start)
       const capErr = checkCap(key, content)
       if (capErr) return err(ctx, toolName, capErr, start)
       try {
@@ -182,6 +195,8 @@ export function makeMemoryTools(db: Database.Database): RegisteredTool[] {
       const start = Date.now()
       const key = args['key']
       if (typeof key !== 'string' || !key.trim()) return err(ctx, 'memory_remove', 'key must be a non-empty string', start)
+      const lockErr = protectedKey(key)
+      if (lockErr) return err(ctx, 'memory_remove', lockErr, start)
       try {
         const existing = currentEntryStmt.get(ctx.agentId, key)
         if (!existing) return err(ctx, 'memory_remove', `No current entry for key "${key}"`, start)
@@ -225,6 +240,8 @@ export function makeMemoryTools(db: Database.Database): RegisteredTool[] {
       const start = Date.now()
       const key = args['key']
       if (typeof key !== 'string' || !key.trim()) return err(ctx, 'memory_promote', 'MEMORY_KEY_REQUIRED: key must be a non-empty string', start)
+      const lockErr = protectedKey(key)
+      if (lockErr) return err(ctx, 'memory_promote', lockErr, start)
       try {
         const existing = currentEntryStmt.get(ctx.agentId, key)
         if (!existing) return err(ctx, 'memory_promote', `MEMORY_ENTRY_NOT_FOUND: no current entry for key "${key}"`, start)

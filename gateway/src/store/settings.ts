@@ -28,6 +28,7 @@ export interface SettingsSnapshot {
   searchApiKey:     string   // Brave Search key for web_search (was env-only)
   instances:        Instance[]
   activeInstanceId: string | null
+  welcomeDone:      boolean  // the first-run "tell Dave about you" form was saved or skipped
 }
 
 interface SettingsFile {
@@ -47,6 +48,7 @@ const DEFAULTS: SettingsSnapshot = {
   searchApiKey:     '',
   instances:        [],
   activeInstanceId: null,
+  welcomeDone:      false,
 }
 
 // ── At-rest encryption for the secret fields ──────────────────────────────────
