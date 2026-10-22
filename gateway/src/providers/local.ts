@@ -22,7 +22,10 @@ import { toOpenAIMessages, createStallGuard, parseToolArguments } from './utils.
 // Abort a stalled stream after this long with no chunk. Generous headroom for local
 // cold-start (model load can take tens of seconds), but bounded so a wedged local server
 // fails the turn instead of hanging it forever. The clock resets on every chunk received.
-const STALL_MS = 120_000
+// LM Studio sends nothing while a model writes a tool call (it parses the whole call first), so a long report
+// saved through artifact_write is silent for the whole time it takes to write: at 15 tokens/s a 4,000-token report is
+// over four minutes. Two minutes aborted those mid-write and the report was lost.
+const STALL_MS = 420_000
 
 // ---------------------------------------------------------------------------
 // SSRF protection — loopback-only validation
@@ -75,17 +78,20 @@ export interface LocalProviderConfig {
   name?: string    // display name — defaults to 'local'
   baseUrl: string  // e.g. 'http://127.0.0.1:1234/v1' — must be loopback
   apiKey?: string  // only needed when the server requires one; otherwise a placeholder is sent and ignored
+  stallMs?: number // how long a silent stream is tolerated (tests use a short one); defaults to STALL_MS
 }
 
 export class LocalProvider implements ProviderAdapter {
   readonly name: string
   private readonly client: OpenAI
+  private readonly stallMs: number
 
   constructor(config: LocalProviderConfig) {
     // SSRF check — hard error at construction, before any request is made
     assertLoopbackUrl(config.baseUrl)
 
     this.name = config.name ?? 'local'
+    this.stallMs = config.stallMs ?? STALL_MS
     this.client = new OpenAI({
       baseURL: config.baseUrl,
       apiKey: config.apiKey ?? 'local-no-key',
@@ -121,7 +127,7 @@ export class LocalProvider implements ProviderAdapter {
     // carrying `error`, so the agent loop logs it and fails the turn cleanly
     // instead of an unhandled rejection tearing the run down. Text already
     // streamed before the failure stays valid.
-    const guard = createStallGuard(request.signal, STALL_MS)
+    const guard = createStallGuard(request.signal, this.stallMs)
     try {
       const stream = await this.client.chat.completions.create({
         model: request.model,
@@ -185,6 +191,15 @@ export class LocalProvider implements ProviderAdapter {
           toolAccumulator.clear()
         }
       }
+
+      // The stall abort can end the stream quietly rather than throw. Without this check that looked like an empty, successful reply
+      // (no text, no tool call, no error), and a worker was told it had simply finished without saving its report.
+      if (guard.timedOut && !request.signal?.aborted) {
+        const msg = `local model did not send a token within ${this.stallMs / 1000}s — the server may be loading the model or wedged. Try again or check the local provider.`
+        console.error(`[local] ${request.correlationId} stall timeout (stream ended quietly) — surfacing as done:`, msg)
+        yield { type: 'done', usage: { inputTokens, outputTokens }, error: msg }
+        return
+      }
     } catch (err) {
       // A user-initiated abort (request.signal) is intentional — end the stream as
       // a clean done with no error, so the loop stops quietly without logging a
@@ -194,7 +209,7 @@ export class LocalProvider implements ProviderAdapter {
         return
       }
       if (guard.timedOut) {
-        const msg = `local model did not send a token within ${STALL_MS / 1000}s — the server may be loading the model or wedged. Try again or check the local provider.`
+        const msg = `local model did not send a token within ${this.stallMs / 1000}s — the server may be loading the model or wedged. Try again or check the local provider.`
         console.error(`[local] ${request.correlationId} stall timeout — surfacing as done:`, msg)
         yield { type: 'done', usage: { inputTokens, outputTokens }, error: msg }
         return
