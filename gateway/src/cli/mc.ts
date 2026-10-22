@@ -20,6 +20,8 @@ import type { DoctorCheck } from './report-types.js'
 import { DATA_DIR, LOG_FILE, PID_FILE, SETTINGS_FILE, gatewayPort, resolveUiDir } from '../paths.js'
 import { GATEWAY_VERSION } from '../version.js'
 import { redact } from '../store/redact.js'
+import { shellAvailability } from '../tools/shell-policy.js'
+import { networkChecks, type WatchedServer } from './network-exposure.js'
 
 const PORT = gatewayPort()
 const BASE = `http://127.0.0.1:${PORT}`
@@ -192,6 +194,26 @@ async function modelCheck(settings: SettingsView): Promise<DoctorCheck> {
   }
 }
 
+// Mission Control itself, the model server it is set to use, and the usual local AI servers.
+function watchedServers(settings: SettingsView): WatchedServer[] {
+  const servers: WatchedServer[] = [
+    { name: 'Mission Control', port: PORT, fix: 'Remove GATEWAY_HOST and GATEWAY_ALLOWED_HOSTS unless you meant to share it on your network' },
+    // Not "Require Authentication": Mission Control can't send an LM Studio key yet, so chat would stop working.
+    { name: 'LM Studio', port: 1234, fix: "In LM Studio's Developer tab, turn off Serve on Local Network" },
+    { name: 'Ollama', port: 11434, fix: 'Set OLLAMA_HOST to 127.0.0.1 (or remove it) and restart Ollama' },
+    { name: 'ComfyUI', port: 8188, fix: 'Start ComfyUI without --listen' },
+  ]
+  try {
+    const port = Number(new URL(settings.localProviderUrl ?? '').port)
+    if (port && !servers.some((s) => s.port === port)) {
+      servers.push({ name: 'Your model server', port, fix: 'Set it to listen on 127.0.0.1 only' })
+    }
+  } catch {
+    // No local server address set: the defaults above cover the usual ports.
+  }
+  return servers
+}
+
 async function doctor(): Promise<boolean> {
   const checks: DoctorCheck[] = []
 
@@ -228,9 +250,15 @@ async function doctor(): Promise<boolean> {
 
   const settings = readSettings()
   checks.push(await modelCheck(settings))
-  checks.push(settings.execEnabled
-    ? { name: 'Shell tool', status: 'warn', detail: 'on: commands can read anything your user account can', fix: 'Turn it off in Settings unless you need it' }
-    : { name: 'Shell tool', status: 'ok', detail: 'off' })
+  checks.push(...await networkChecks(watchedServers(settings)))
+  const shell = shellAvailability()
+  if (!shell.available) {
+    checks.push({ name: 'Shell tool', status: 'ok', detail: `locked. ${shell.reason}` })
+  } else {
+    checks.push(settings.execEnabled
+      ? { name: 'Shell tool', status: 'warn', detail: 'on, without a sandbox: commands can read anything your user account can', fix: 'Turn it off in Settings unless you need it' }
+      : { name: 'Shell tool', status: 'ok', detail: 'off' })
+  }
 
   console.log(formatDoctor(checks))
   return checks.every((c) => c.status !== 'fail')

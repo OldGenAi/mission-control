@@ -1,6 +1,7 @@
 import { useEffect } from "react"
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom"
 import { Sidebar } from "./components/Sidebar"
+import { WelcomeForm } from "./components/WelcomeForm"
 import { ChatPage } from "./pages/ChatPage"
 import { SettingsPage } from "./pages/SettingsPage"
 import { AgentsPage } from "./pages/AgentsPage"
@@ -59,6 +60,7 @@ function TopBar() {
 function Shell() {
   return (
     <div className="shell">
+      <WelcomeForm />
       <Sidebar />
       <div className="main-content">
         <TopBar />

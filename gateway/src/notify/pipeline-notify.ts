@@ -23,6 +23,7 @@ import { acquireSessionLock } from '../session-lock.js'
 import { broadcastEvent } from '../broadcast.js'
 import type { PipelineRun } from '../pipeline/types.js'
 import type { SettingsStore } from '../store/settings.js'
+import { execAllowed } from '../tools/shell-policy.js'
 import type { ProviderRegistry } from '../providers/registry.js'
 import type { AgentRegistry } from '../agents/registry.js'
 import type { MonitorBuffer } from '../store/monitor-buffer.js'
@@ -118,7 +119,7 @@ export class PipelineNotifier {
         db: this.cfg.db,
         monitorBuffer: this.cfg.monitorBuffer,
         tools: this.cfg.tools,
-        execEnabled: settings.execEnabled,
+        execEnabled: execAllowed(settings.execEnabled),
         // For proactive notifications, broadcast to all connected clients (any tab
         // viewing this session sees the new message).
         broadcast: (_clientId, event, payload) => {

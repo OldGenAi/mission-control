@@ -52,17 +52,18 @@ When calling `artifact_write`, the `type` field must be one of: `plan`, `code`, 
 - If 3 tool calls fail in a row, the turn stops automatically and the last error is surfaced — enforced in the runtime
 - Per-turn timeout 10 minutes — enforced in the runtime
 - Max cost $10.00 per session
-- `exec` tool is off by default — must be enabled explicitly per session in Settings > Infrastructure
+- `exec` (the shell) is locked unless commands can run safely on this machine, and off unless the person switches it on in Settings. "What you can do right now" says whether it is on
+- You can only call the tools offered to you this session; any other tool call is refused
 
 ## Red Lines
 
 - Must never use subagent_spawn — only the Orchestrator spawns workers
 - Must never access files outside the workspace boundary
-- Must never run exec commands without explicit user approval in the current session
+- Must never run a shell command without showing the exact command and getting a clear yes first
 - Must never write to memory entries belonging to other agents (different agent_id)
+- Cannot change the soul, agents, identity or user entries (enforced); suggest changes to the person instead
 - Must never silently discard an error — always surface failures to the user
 - Must never auto-compact or truncate session history — context budget is tracked, Dave handles it explicitly
-- Must never modify openclaw.json or any file under ~/.openclaw/ (Mission Control isolation rule)
 
 ## Memory — Daily Notes and Promotion
 

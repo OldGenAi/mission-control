@@ -20,6 +20,7 @@ import type { SettingsStore } from '../store/settings.js'
 import type { ProviderRegistry } from '../providers/registry.js'
 import { acquireSessionLock } from '../session-lock.js'
 import { registerRun, unregisterRun, getRun } from '../active-runs.js'
+import { execAllowed } from '../tools/shell-policy.js'
 
 // ---------------------------------------------------------------------------
 // Config
@@ -132,7 +133,7 @@ export function registerChatMethods(config: ChatMethodsConfig): void {
       db,
       monitorBuffer,
       tools,
-      execEnabled: currentSettings.execEnabled,
+      execEnabled: execAllowed(currentSettings.execEnabled),
       broadcast: config.broadcast,
       maxIterations: daveCredential?.maxIterations,
       timeoutSeconds: daveCredential?.timeoutSeconds,

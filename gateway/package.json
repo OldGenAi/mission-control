@@ -1,6 +1,6 @@
 {
   "name": "mission-control-gateway",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Mission Control — Node.js WebSocket gateway",
   "main": "dist/index.js",
   "scripts": {
