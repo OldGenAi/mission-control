@@ -2,7 +2,7 @@ import { registerMethod } from '../router.js'
 import type { MethodHandler } from '../types.js'
 
 export type ModelsConfig =
-  | { mode: 'local'; baseUrl: string }
+  | { mode: 'local'; baseUrl: string; apiKey?: string }
   | { mode: 'openrouter' }
 
 /**
@@ -17,10 +17,15 @@ export function registerModelsMethods(resolve: (provider?: string) => ModelsConf
     const provider = typeof params['provider'] === 'string' ? params['provider'] : undefined
     const config = resolve(provider)
     if (config.mode === 'openrouter') return listOpenRouterModels()
-    return listLocalModels(config.baseUrl)
+    return listLocalModels(config.baseUrl, config.apiKey)
   }
 
   registerMethod('models.list', listModels)
+}
+
+/** The Authorization header for a local server that requires a key; none when no key is set. */
+export function localAuthHeaders(apiKey: string | undefined): Record<string, string> {
+  return apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
 }
 
 // Return shape carries diagnostic fields (probedUrl + optional error) so the UI can
@@ -36,12 +41,14 @@ export type ModelsListResponse = {
   error?: string
 }
 
-async function listLocalModels(baseUrl: string): Promise<ModelsListResponse> {
+export async function listLocalModels(baseUrl: string, apiKey?: string): Promise<ModelsListResponse> {
   const probedUrl = `${baseUrl}/models`
   try {
-    const res = await fetch(probedUrl)
+    const res = await fetch(probedUrl, { headers: localAuthHeaders(apiKey) })
     if (!res.ok) {
-      const error = `local models endpoint at ${probedUrl} returned HTTP ${res.status}`
+      const needsKey = res.status === 401 || res.status === 403
+      const error = `local models endpoint at ${probedUrl} returned HTTP ${res.status}` +
+        (needsKey ? ' — the server wants an API key: add it in Settings, Providers, Local provider' : '')
       console.warn(`[models] ${error}`)
       return { models: [], probedUrl, error }
     }

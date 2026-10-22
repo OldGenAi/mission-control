@@ -59,13 +59,14 @@ export async function refreshPricing(): Promise<void> {
  * the model with), then falls back to Ollama's /api/ps. If neither answers (no
  * local server up, or no model loaded), the defaults apply.
  */
-export async function refreshLocalContext(localBaseUrl: string | undefined): Promise<void> {
+export async function refreshLocalContext(localBaseUrl: string | undefined, apiKey?: string): Promise<void> {
   if (!localBaseUrl) return
   const root = localBaseUrl.replace(/\/v1\/?$/, '')   // strip the OpenAI-compat suffix
+  const headers: Record<string, string> = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
 
   // LM Studio — native /api/v0/models reports loaded_context_length per model.
   try {
-    const res = await fetch(`${root}/api/v0/models`)
+    const res = await fetch(`${root}/api/v0/models`, { headers })
     if (res.ok) {
       const data = await res.json() as {
         data?: Array<{ id: string; loaded_context_length?: number; max_context_length?: number }>
@@ -81,7 +82,7 @@ export async function refreshLocalContext(localBaseUrl: string | undefined): Pro
 
   // Ollama — /api/ps lists running models with their loaded context_length.
   try {
-    const res = await fetch(`${root}/api/ps`)
+    const res = await fetch(`${root}/api/ps`, { headers })
     if (res.ok) {
       const data = await res.json() as {
         models?: Array<{ name?: string; model?: string; context_length?: number }>
@@ -121,11 +122,11 @@ export function contextPercent(model: string, inputTokens: number): number {
  * Refresh on startup, then keep both fresh: pricing hourly (rarely changes),
  * local context every 90s (changes when the user loads a different model).
  */
-export function startPricingRefresh(getLocalBaseUrl: () => string | undefined): void {
+export function startPricingRefresh(getLocalBaseUrl: () => string | undefined, getLocalApiKey: () => string | undefined = () => undefined): void {
   void refreshPricing()
-  void refreshLocalContext(getLocalBaseUrl())
+  void refreshLocalContext(getLocalBaseUrl(), getLocalApiKey())
   const priceTimer = setInterval(() => void refreshPricing(), 60 * 60 * 1000)
-  const ctxTimer = setInterval(() => void refreshLocalContext(getLocalBaseUrl()), 90 * 1000)
+  const ctxTimer = setInterval(() => void refreshLocalContext(getLocalBaseUrl(), getLocalApiKey()), 90 * 1000)
   if (priceTimer.unref) priceTimer.unref()
   if (ctxTimer.unref) ctxTimer.unref()
 }

@@ -74,7 +74,7 @@ function assertLoopbackUrl(baseUrl: string): void {
 export interface LocalProviderConfig {
   name?: string    // display name — defaults to 'local'
   baseUrl: string  // e.g. 'http://127.0.0.1:1234/v1' — must be loopback
-  apiKey?: string  // LM Studio ignores this — any string works
+  apiKey?: string  // only needed when the server requires one; otherwise a placeholder is sent and ignored
 }
 
 export class LocalProvider implements ProviderAdapter {

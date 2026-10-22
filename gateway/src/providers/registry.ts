@@ -25,8 +25,8 @@ export class ProviderRegistry {
    */
   rebuild(settings: SettingsSnapshot): void {
     this.providers.clear()
-    // Local provider always available — has no auth requirement.
-    this.providers.set('local', new LocalProvider({ baseUrl: settings.localProviderUrl }))
+    // Local provider always available. The key is optional: only a server that requires one (LM Studio's "Require Authentication") needs it.
+    this.providers.set('local', new LocalProvider({ baseUrl: settings.localProviderUrl, apiKey: settings.providerKeys.local || undefined }))
 
     if (settings.providerKeys.openrouter) {
       this.providers.set('openrouter', new OpenRouterProvider({ apiKey: settings.providerKeys.openrouter }))

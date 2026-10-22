@@ -14,6 +14,7 @@ function maskKeys(s: SettingsSnapshot): SettingsSnapshot {
     providerKeys: {
       openrouter: s.providerKeys.openrouter ? maskKey(s.providerKeys.openrouter) : '',
       anthropic:  s.providerKeys.anthropic  ? maskKey(s.providerKeys.anthropic)  : '',
+      local:      s.providerKeys.local      ? maskKey(s.providerKeys.local)      : '',
     },
     searchApiKey: s.searchApiKey ? maskKey(s.searchApiKey) : '',
   }
@@ -64,10 +65,14 @@ function coercePatch(input: Record<string, unknown>, current: SettingsSnapshot):
     if (typeof k['anthropic'] === 'string' && k['anthropic'] !== maskKey(current.providerKeys.anthropic)) {
       keyPatch.anthropic = k['anthropic']
     }
+    if (typeof k['local'] === 'string' && k['local'] !== maskKey(current.providerKeys.local)) {
+      keyPatch.local = k['local'].trim()
+    }
     if (Object.keys(keyPatch).length > 0) {
       patch.providerKeys = {
         openrouter: keyPatch.openrouter ?? current.providerKeys.openrouter,
         anthropic:  keyPatch.anthropic  ?? current.providerKeys.anthropic,
+        local:      keyPatch.local      ?? current.providerKeys.local,
       }
     }
   }
