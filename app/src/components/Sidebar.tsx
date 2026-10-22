@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { NavLink, useNavigate, useLocation } from "react-router-dom"
 import { gateway } from "../lib/gateway-client"
+import { useAssistantName } from '../lib/assistant'
 import { listInstances, createInstance, setActiveInstance, deleteInstance, type Instance, type ProviderName } from "../lib/settings"
 
 // SVG icon helper
@@ -174,7 +175,7 @@ export function Sidebar() {
       {/* Footer */}
       <div className="sidebar-footer">
         <a href="#" className="nav-item" style={{ color: 'inherit', textDecoration: 'none' }}>Docs</a>
-        <span className="sidebar-version">v0.2.1</span>
+        <span className="sidebar-version">v0.2.2</span>
         <span className="sidebar-status-dot" title="Gateway online" />
       </div>
     </aside>
@@ -294,6 +295,7 @@ function InstancesPanel() {
 }
 
 function AddInstanceModal({ available, onClose, onCreated }: { available: ProviderName[]; onClose: () => void; onCreated: () => void }) {
+  const assistant = useAssistantName()
   const [name, setName]         = useState('')
   const [provider, setProvider] = useState<ProviderName>(available[0] ?? 'local')
   const [model, setModel]       = useState('')
@@ -328,7 +330,7 @@ function AddInstanceModal({ available, onClose, onCreated }: { available: Provid
         <label className="block text-[11px] uppercase tracking-wider text-gray-500 mb-1">Workspace</label>
         <select value={type} onChange={e => setType(e.target.value as 'chat' | 'pipeline')}
           className="w-full mb-3 px-3 py-1.5 text-xs rounded bg-black/40 border border-white/10 text-gray-200 focus:outline-none focus:border-cyan-500/50">
-          <option value="chat">Chat (Dave)</option>
+          <option value="chat">Chat ({assistant})</option>
           <option value="pipeline">Pipeline (Runs)</option>
         </select>
         <label className="block text-[11px] uppercase tracking-wider text-gray-500 mb-1">Model</label>

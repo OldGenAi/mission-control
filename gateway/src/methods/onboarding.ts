@@ -127,7 +127,11 @@ export function registerOnboardingMethods(db: Database.Database, settings: Setti
     const parsed = parseWelcome(params as Record<string, unknown>)
     if (!parsed.ok) return parsed
     saveWelcome(db, parsed.answers)
-    settings.update({ welcomeDone: true })
+    // The first model setup is named after the assistant, so it follows a new name too (only
+    // while it still has the starter name: one the person chose is left alone).
+    const name = parsed.answers.assistantName
+    const instances = settings.get().instances.map((i) => (i.id === 'default' && i.name === DEFAULT_ASSISTANT_NAME ? { ...i, name } : i))
+    settings.update({ welcomeDone: true, instances })
     return { ok: true }
   })
 

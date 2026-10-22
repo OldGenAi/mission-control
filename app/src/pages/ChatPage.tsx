@@ -2,6 +2,7 @@ import { Component, useCallback, useEffect, useRef, useState } from "react"
 import Markdown from "react-markdown"
 import { gateway } from "../lib/gateway-client"
 import { mcConfig } from "../lib/mc-config"
+import { useAssistantName } from "../lib/assistant"
 import { useSettings, updateSettings, updateInstance } from "../lib/settings"
 
 // ---------- types --------------------------------------------------
@@ -281,14 +282,15 @@ function MsgMeta({
 
   const hasStats = !isUser && (inputTok || outputTok || tps)
 
+  const assistant = useAssistantName()
   const isAuto = !isUser && (message.autoNotify === 1 || message.autoNotify === true)
 
   return (
     <div className="msg-meta-row" style={{ flexDirection: isUser ? "row-reverse" : "row" }}>
-      <span className="chat-sender-name">{isUser ? "You" : "Dave"}</span>
+      <span className="chat-sender-name">{isUser ? "You" : assistant}</span>
       {isAuto && (
         <span
-          title="Dave sent this proactively when a pipeline he launched finished — not in response to your message."
+          title={`${assistant} sent this on their own when a pipeline they launched finished, not in reply to your message.`}
           style={{ marginLeft: 6, fontSize: 9, fontWeight: 600, letterSpacing: "0.06em", padding: "1px 6px", borderRadius: 4, border: "1px solid rgba(0,200,255,0.35)", background: "rgba(0,200,255,0.08)", color: "#67e8f9", textTransform: "uppercase" }}>
           Auto-notify
         </span>
@@ -485,6 +487,7 @@ function getSRCtor(): SpeechRecognitionCtor | null {
 // ---------- main page ----------------------------------------
 
 export function ChatPage() {
+  const assistant = useAssistantName()
   const { settings } = useSettings()
   const [sessions, setSessions] = useState<Session[]>([])
   const [selectedId, setSelectedId] = useState<string>(
@@ -791,7 +794,7 @@ export function ChatPage() {
   const exportChat = () => {
     const lines: string[] = [`# Chat Export\n`]
     for (const m of messages) {
-      const role = m.role === "user" ? "You" : "Dave"
+      const role = m.role === "user" ? "You" : assistant
       const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "")
       const ts = typeof m.createdAt === "number" ? `  [${formatTime(m.createdAt)}]` : ""
       lines.push(`**${role}**${ts}\n${content}\n`)
@@ -855,7 +858,7 @@ export function ChatPage() {
   // Placeholder always uses the AGENT's display name (instance name), never the
   // session title — a session named "no, all good" would otherwise yield
   // "Message no, all good (Enter to send)" which reads as nonsense.
-  const agentName = activeInstance?.name || "Dave"
+  const agentName = activeInstance?.name || assistant
   const contextWindow = models.find(m => m.id === selectedModel)?.contextLength ?? 32768
 
   // Real inputTokens from the model response — the only accurate source.

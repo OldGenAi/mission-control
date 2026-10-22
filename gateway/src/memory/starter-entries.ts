@@ -64,6 +64,18 @@ Made by: OldGenAI. Mission Control is open source.
 Model: whichever AI model the person has chosen. You can say which if asked. Never pretend to be a different one.`
 }
 
+/**
+ * The assistant's name, as the person set it: the "Name:" line of the identity entry (the
+ * welcome form writes it, and the person can edit it on the Agents page). Dave if there is none.
+ */
+export function assistantName(identity: string | null): string {
+  // Matches "Name: Cherry" and the markdown "- **Name:** Cherry" older identities use.
+  const line = identity?.match(/^\s*[-*]?\s*\**Name\**:?\**\s*(.+)$/im)?.[1] ?? ''
+  // Shown in the app, so: no control characters, no markdown emphasis, a sensible length.
+  const name = line.replace(/[\u0000-\u001f\u007f*_`]/g, '').trim().slice(0, 30)
+  return name || DEFAULT_ASSISTANT_NAME
+}
+
 export function currentEntry(db: Database.Database, agentId: string, key: string): string | null {
   const row = db.prepare<[string, string], { content: string }>(
     `SELECT content FROM memory_entries WHERE agent_id = ? AND key = ? AND valid_until IS NULL LIMIT 1`,

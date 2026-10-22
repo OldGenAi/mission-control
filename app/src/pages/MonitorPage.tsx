@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react'
 import type { FC } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { gateway } from '../lib/gateway-client'
+import { useAssistantName } from '../lib/assistant'
 import type { GatewayEvent } from '../lib/gateway-client'
 import { getPerfMode, hudFps } from '../lib/perf'
 
@@ -708,6 +709,7 @@ const CostArc: FC<{ cost: number }> = ({ cost }) => {
   )
 }
 const CtxRing: FC<{ label: string; pct: number; model?: string }> = ({ label, pct, model }) => {
+  const assistant = useAssistantName()
   const r = 14, circ = 2 * Math.PI * r
   const col = pct > 80 ? C.error : pct > 60 ? C.amber : C.cyan
   const shortModel = model ? (model.includes('/') ? model.split('/').pop()! : model) : ''
@@ -722,7 +724,7 @@ const CtxRing: FC<{ label: string; pct: number; model?: string }> = ({ label, pc
         <text x="18" y="22" textAnchor="middle" fill={col} fontSize="7" fontFamily="monospace">{pct}%</text>
       </svg>
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-        <span style={{ fontSize: 9, color: C.muted, fontFamily: 'monospace' }}>{(label === 'tier1_agent' ? 'Dave' : label).slice(0, 10).toUpperCase()}</span>
+        <span style={{ fontSize: 9, color: C.muted, fontFamily: 'monospace' }}>{(label === 'tier1_agent' ? assistant : label).slice(0, 10).toUpperCase()}</span>
         {shortModel && <span style={{ fontSize: 8, color: C.muted, opacity: 0.65, fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 116 }}>{shortModel}</span>}
       </div>
     </div>
@@ -741,6 +743,10 @@ const PipeBlock: FC<{ label: string; s: string }> = ({ label, s }) => {
 // MAIN PAGE
 // ─────────────────────────────────────────────────────────────────────────────
 export const MonitorPage: FC = () => {
+  const assistant = useAssistantName()
+  // Event handlers are set up once; they read the latest name from here.
+  const assistantRef = useRef(assistant)
+  useEffect(() => { assistantRef.current = assistant }, [assistant])
   // Tab is driven by the route (/monitor/<view>) so the sidebar's History/Errors
   // links deep-link straight in, instead of always landing on Live.
   const location = useLocation()
@@ -800,7 +806,7 @@ export const MonitorPage: FC = () => {
         setToolCount(t.activePipelineToolCalls ?? 0)
         setToolErrors(t.activePipelineErrors ?? 0)
         if (t.memory) setMemStats(t.memory)
-        const agentLabel = (id: string) => id === 'tier1_agent' ? 'Dave' : id
+        const agentLabel = (id: string) => id === 'tier1_agent' ? assistantRef.current : id
         for (const a of t.agents) push({ time: fmtHMS(a.lastUpdated), type: 'agent_status', agentId: agentLabel(a.agentId), detail: a.detail ?? a.status, correlationId: a.correlationId, raw: a })
       }
       if (ev.event === 'session.tool' && ev.payload) {

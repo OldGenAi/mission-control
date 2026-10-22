@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { gateway } from '../lib/gateway-client'
+import { useAssistantName } from '../lib/assistant'
 
 interface Milestone {
   id: string
@@ -50,6 +51,7 @@ const MilestoneCard: React.FC<{ milestone: Milestone }> = ({ milestone }) => {
 }
 
 export const MemoryPage: React.FC = () => {
+  const assistant = useAssistantName()
   const [milestones, setMilestones] = useState<Milestone[]>([])
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
@@ -98,7 +100,7 @@ export const MemoryPage: React.FC = () => {
           <div className="flex flex-col items-center justify-center h-48 text-gray-600">
             <p className="font-medium">No milestones yet</p>
             <p className="text-xs mt-2 max-w-xs text-center">
-              Dave writes milestones here using{' '}
+              {assistant} writes milestones here using{' '}
               <code className="text-gray-500">memory_write</code> with{' '}
               <code className="text-gray-500">type: milestone</code>.
               Only important checkpoints appear — not the full session history.

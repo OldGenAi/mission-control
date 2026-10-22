@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { registerMethod } from '../router.js'
 import type Database from 'better-sqlite3'
+import { assistantName } from '../memory/starter-entries.js'
 
 interface EntryRow {
   id: string
@@ -26,6 +27,9 @@ export function registerMemoryIdentityMethods(db: Database.Database): void {
   const supersedeStmt = db.prepare(
     `UPDATE memory_entries SET valid_until = ? WHERE id = ?`
   )
+
+  // assistant.name — the name the person gave the assistant, for the app's labels
+  registerMethod('assistant.name', async () => ({ name: assistantName(getStmt.get('tier1_agent', 'identity')?.content ?? null) }))
 
   // memory.identity — read soul, agents, identity, daily note for an agent
   registerMethod('memory.identity', async (params) => {
