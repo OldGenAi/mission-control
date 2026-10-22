@@ -92,7 +92,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm audit --omit=dev --audit-level=high
+      # The registry's audit endpoint sometimes hangs for minutes: give each try 90 s and make up to 3 tries.
+      # A real advisory still fails all three, so a vulnerable dependency cannot slip through.
+      - run: |
+          for try in 1 2 3; do
+            timeout 90 npm audit --omit=dev --audit-level=high && exit 0
+            echo "audit try $try failed"
+          done
+          exit 1
         working-directory: gateway
-      - run: npm audit --omit=dev --audit-level=high
+      - run: |
+          for try in 1 2 3; do
+            timeout 90 npm audit --omit=dev --audit-level=high && exit 0
+            echo "audit try $try failed"
+          done
+          exit 1
         working-directory: app
