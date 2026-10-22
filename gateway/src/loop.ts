@@ -89,6 +89,9 @@ export class AgentLoop {
       const enabledOverride = toolOverrides.get(this.config.agentId)
       const toolDefs: ToolDefinition[] = []
       for (const [name, tool] of this.config.tools) {
+        // A proactive pipeline notice only reports what the pipeline wrote. Its message carries report text from the web and from worker
+        // agents (untrusted), so that turn is offered no tools: nothing written in a report can make Dave act.
+        if (params.autoNotify) break
         if (tool.requiresExplicitEnable && !this.config.execEnabled) continue
         if (!this.config.registry.hasCapability(this.config.agentId, name)) continue
         if (enabledOverride !== undefined && !enabledOverride.has(name)) continue
