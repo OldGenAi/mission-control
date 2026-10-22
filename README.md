@@ -206,9 +206,30 @@ The recipes, timed on a mini PC with an NVIDIA RTX 5070 Ti (16 GB) in an externa
 | Wan 2.2 (5B) text to video | NVIDIA with 8 GB or more | about 100 seconds, 832x480, silent (not yet timed on a smaller card) |
 
 Setting it up:
-1. Install ComfyUI and download the model files the recipe needs. The Video page lists any file that's missing.
-2. Start ComfyUI with `--preview-method auto --disable-metadata`, for example `python main.py --preview-method auto --disable-metadata`. Don't add `--listen`: ComfyUI has no sign-in, so anyone who can reach it could use your graphics card and see what you make.
-3. On the Video page, check the ComfyUI address (normally `http://127.0.0.1:8188`). `mc doctor` checks ComfyUI too.
+1. Install [ComfyUI](https://github.com/comfyanonymous/ComfyUI). On Windows, the portable download from its releases page is the simplest way.
+2. Download the model files for the recipe you want (listed below) and put each one in the named folder inside `ComfyUI/models`. The Video page also lists any file that's missing.
+3. Start ComfyUI with `--preview-method auto --disable-metadata`, for example `python main.py --preview-method auto --disable-metadata`. Don't add `--listen`: ComfyUI has no sign-in, so anyone who can reach it could use your graphics card and see what you make.
+4. On the Video page, check the ComfyUI address (normally `http://127.0.0.1:8188`). `mc doctor` checks ComfyUI too.
+
+Model files for both LTX-2.5 recipes (about 37 GB, all from [Lightricks/LTX-2.5](https://huggingface.co/Lightricks/LTX-2.5)):
+
+| File | Folder in `ComfyUI/models` | Size |
+|---|---|---|
+| [ltx-2.5-22b-distilled-transformer-nvfp4.safetensors](https://huggingface.co/Lightricks/LTX-2.5/resolve/main/diffusion_models/ltx-2.5-22b-distilled-transformer-nvfp4.safetensors) | `diffusion_models` | 18.7 GB |
+| [gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors](https://huggingface.co/Lightricks/LTX-2.5/resolve/main/text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors) | `text_encoders` | 15.4 GB |
+| [ltx-2.5-video-vae-conv-bf16.safetensors](https://huggingface.co/Lightricks/LTX-2.5/resolve/main/vae/ltx-2.5-video-vae-conv-bf16.safetensors) | `vae` | 1.5 GB |
+| [ltx-2.5-audio-vae-bf16.safetensors](https://huggingface.co/Lightricks/LTX-2.5/resolve/main/vae/ltx-2.5-audio-vae-bf16.safetensors) | `vae` | 0.4 GB |
+| [ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors](https://huggingface.co/Lightricks/LTX-2.5/resolve/main/latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors) | `latent_upscale_models` | 1.0 GB |
+
+Before these links work you need a free Hugging Face account, and you need to accept the LTX-2 community licence on the [model page](https://huggingface.co/Lightricks/LTX-2.5) while signed in (it's approved straight away). The NVFP4 model file is made for RTX 50-series cards. On older cards it hasn't been tested yet.
+
+Model files for Wan 2.2 (5B) (about 18 GB, from Comfy-Org's repackaged files):
+
+| File | Folder in `ComfyUI/models` | Size |
+|---|---|---|
+| [wan2.2_ti2v_5B_fp16.safetensors](https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors) | `diffusion_models` | 10.0 GB |
+| [umt5_xxl_fp8_e4m3fn_scaled.safetensors](https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors) | `text_encoders` | 6.7 GB |
+| [wan2.2_vae.safetensors](https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan2.2_vae.safetensors) | `vae` | 1.4 GB |
 
 How it's kept safe:
 - The page and Dave can only pick a recipe and fill in its settings. Neither can send ComfyUI a workflow of its own.
