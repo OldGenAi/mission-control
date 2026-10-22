@@ -529,6 +529,8 @@ export function ChatPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   // correlationId of the in-flight turn, captured from chat.send — used by Stop.
   const activeCorrelationRef = useRef<string | null>(null)
+  // The turn whose first words have already reloaded the history (see the chat.delta handler).
+  const deltaTurnRef = useRef<string | null>(null)
 
   // Reset per-session state when the selected session changes. Done while rendering rather
   // than in an effect, so the old session's text never shows for a frame under the new one.
@@ -574,8 +576,16 @@ export function ChatPage() {
           setIsGenerating(false)
         }
       } else if (e.event === "chat.delta") {
-        const p = e.payload as { delta?: string }
+        // Turns started elsewhere (the voice window, say) are mirrored to this page too, so only show this chat's text.
+        const p = e.payload as { delta?: string; sessionId?: string; correlationId?: string }
+        if (p.sessionId && p.sessionId !== selectedId) return
         setStreamingText(prev => (prev ?? "") + (p.delta ?? ""))
+        if (p.correlationId && p.correlationId !== deltaTurnRef.current) {
+          // First words of a new turn: by now the question is saved, so load it (a turn started elsewhere has no optimistic copy here).
+          deltaTurnRef.current = p.correlationId
+          void gateway.request<ChatHistoryResponse>("sessions.history", { sessionId: selectedId })
+            .then(setHistory).catch(() => { /* the final event reloads it anyway */ })
+        }
       } else if (e.event === "chat.final") {
         const p = e.payload as {
           sessionId?: string
@@ -583,8 +593,8 @@ export function ChatPage() {
           outputTokens?: number
           tokensPerSecond?: number
         }
-        setIsGenerating(false)
         if (p.sessionId !== selectedId) return
+        setIsGenerating(false)
         if (p.inputTokens !== undefined) {
           setStreamStats({
             inputTokens: p.inputTokens ?? 0,
@@ -669,6 +679,12 @@ export function ChatPage() {
       })
     return () => { cancelled = true }
   }, [activeProvider])
+
+  // Tell the gateway which chat is on screen, so the voice window talks to Dave in this one and its words show up here.
+  useEffect(() => {
+    if (!selectedId) return
+    gateway.request("sessions.focus", { sessionId: selectedId }).catch(() => { /* an older gateway has no such method */ })
+  }, [selectedId])
 
   // Load history when session changes (the reset to "loading, empty" happens in the
   // render-time block above, so nothing is set synchronously here).

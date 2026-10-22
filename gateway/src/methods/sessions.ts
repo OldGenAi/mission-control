@@ -3,6 +3,7 @@ import type { MethodHandler } from '../types.js'
 import type Database from 'better-sqlite3'
 import { registerMethod } from '../router.js'
 import { abortRunsForSession, getRunBySession } from '../active-runs.js'
+import { getFocusedSession, setFocusedSession } from '../session-focus.js'
 
 // ---------------------------------------------------------------------------
 // Row shapes returned by better-sqlite3
@@ -62,6 +63,8 @@ export function registerSessionMethods(db: Database.Database): void {
     SELECT id, agent_id AS agentId, title, created_at AS createdAt, updated_at AS updatedAt
     FROM sessions WHERE id = ?
   `)
+
+  const stmtActiveById = db.prepare<[string], { id: string }>(`SELECT id FROM sessions WHERE id = ? AND deleted_at IS NULL`)
 
   const stmtMessages = db.prepare<[string], MessageRow>(`
     SELECT id, session_id AS sessionId, role, content,
@@ -180,6 +183,23 @@ export function registerSessionMethods(db: Database.Database): void {
     return { ok: true, abortedRuns: aborted }
   }
 
+  // The chat page reports which session it is showing; the voice bridge asks, so voice joins the chat in front of the person.
+  const focusSession: MethodHandler = async (params) => {
+    const sessionId = params['sessionId']
+    if (typeof sessionId !== 'string' || !sessionId.trim()) return { error: 'sessionId is required' }
+    if (!stmtActiveById.get(sessionId)) return { error: 'no such session' }
+    setFocusedSession(sessionId)
+    return { ok: true }
+  }
+
+  const focusedSession: MethodHandler = async () => {
+    const sessionId = getFocusedSession()
+    // Gone since it was reported (moved to Trash): not a chat anyone is looking at.
+    return { sessionId: sessionId && stmtActiveById.get(sessionId) ? sessionId : null }
+  }
+
+  registerMethod('sessions.focus', focusSession)
+  registerMethod('sessions.focused', focusedSession)
   registerMethod('sessions.list', listSessions)
   registerMethod('sessions.listDeleted', listDeletedSessions)
   registerMethod('sessions.create', createSession)

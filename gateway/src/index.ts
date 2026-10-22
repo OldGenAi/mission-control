@@ -4,7 +4,7 @@ import { startServer, stopServer } from './server.js'
 import { openDatabase, installFtsTriggers } from './store/db.js'
 import { MonitorBuffer } from './store/monitor-buffer.js'
 import { AgentRegistry } from './agents/registry.js'
-import { getClient, sendEvent, broadcastEvent } from './broadcast.js'
+import { getClient, sendEvent, broadcastEvent, mirrorToOtherClients } from './broadcast.js'
 import { registerSessionMethods } from './methods/sessions.js'
 import { registerToolsMethods } from './methods/tools.js'
 import { registerArtifactsMethods } from './methods/artifacts.js'
@@ -81,7 +81,10 @@ const registry = AgentRegistry.loadFromDirectory(SPECS_DIR)
 
 function broadcast(clientId: string, event: string, payload: Record<string, unknown>): void {
   const client = getClient(clientId)
-  if (client) sendEvent(client, event as Parameters<typeof sendEvent>[1], payload)
+  if (client) {
+    sendEvent(client, event as Parameters<typeof sendEvent>[1], payload)
+    mirrorToOtherClients(clientId, event as Parameters<typeof sendEvent>[1], payload)   // a run someone started: other windows can watch it
+  }
   if (event === 'agent.status') monitorTracker.updateAgentState(payload)
 }
 
