@@ -198,7 +198,8 @@ async function modelCheck(settings: SettingsView): Promise<DoctorCheck> {
 function watchedServers(settings: SettingsView): WatchedServer[] {
   const servers: WatchedServer[] = [
     { name: 'Mission Control', port: PORT, fix: 'Remove GATEWAY_HOST and GATEWAY_ALLOWED_HOSTS unless you meant to share it on your network' },
-    { name: 'LM Studio', port: 1234, fix: "In LM Studio's Developer tab, turn off Serve on Local Network and turn on Require Authentication" },
+    // Not "Require Authentication": Mission Control can't send an LM Studio key yet, so chat would stop working.
+    { name: 'LM Studio', port: 1234, fix: "In LM Studio's Developer tab, turn off Serve on Local Network" },
     { name: 'Ollama', port: 11434, fix: 'Set OLLAMA_HOST to 127.0.0.1 (or remove it) and restart Ollama' },
     { name: 'ComfyUI', port: 8188, fix: 'Start ComfyUI without --listen' },
   ]
