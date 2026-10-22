@@ -168,7 +168,7 @@ export class AgentLoop {
         for await (const chunk of stream) {
           if (chunk.type === 'text_delta') {
             responseText += chunk.delta
-            this.broadcast(clientId, 'chat.delta', { delta: chunk.delta, correlationId })
+            this.broadcast(clientId, 'chat.delta', { delta: chunk.delta, correlationId, sessionId })
           }
           if (chunk.type === 'tool_call') {
             pendingToolCalls.push(chunk.toolCall)
