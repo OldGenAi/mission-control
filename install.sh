@@ -13,7 +13,7 @@
 # Your data in ~/.missioncontrol (settings, chats, memory) is never touched.
 #
 # Options, as environment variables in front of `sh`:
-#   MC_VERSION=v0.2.2       install that release instead of the latest
+#   MC_VERSION=v0.2.3       install that release instead of the latest
 #   MC_NO_ICONS=1           skip the desktop icons
 #   MC_NO_PATH=1            don't link mc into ~/.local/bin
 #   MC_NO_OPEN=1            don't start and open it at the end

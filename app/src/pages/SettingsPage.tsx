@@ -448,7 +448,7 @@ function QuickTab() {
 
       <Card>
         <SectionTitle>Storage</SectionTitle>
-        {[["DB", "~/.missioncontrol/gateway.sqlite"], ["Config", "~/.missioncontrol/"], ["App", "v0.2.2"]].map(([k, v]) => (
+        {[["DB", "~/.missioncontrol/gateway.sqlite"], ["Config", "~/.missioncontrol/"], ["App", "v0.2.3"]].map(([k, v]) => (
           <div key={k} style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
             <span style={{ fontSize: 12, color: T.muted }}>{k}</span>
             <span style={{ fontSize: 11, color: T.text, fontFamily: "monospace" }}>{v}</span>
@@ -935,7 +935,7 @@ function DebugTab() {
 
   const copyDebug = () => {
     const info = {
-      appVersion: "v0.2.2", gateway: "ws://127.0.0.1:4747",
+      appVersion: "v0.2.3", gateway: "ws://127.0.0.1:4747",
       selectedModel: mcConfig.getSelectedModel(), thinking: mcConfig.getThinking(),
       localStorageKeys: Object.keys(localStorage).filter(k => k.startsWith("mc:")),
       healthRaw: healthRaw || "not fetched",
@@ -981,7 +981,7 @@ function DebugTab() {
 
       <Card>
         <SectionTitle>Build info</SectionTitle>
-        {[["App version", "v0.2.2"], ["Gateway WS", "ws://127.0.0.1:4747"], ["DB", "~/.missioncontrol/gateway.sqlite"], ["Runtime", "Node.js v22 (WSL2)"]].map(([k, v]) => (
+        {[["App version", "v0.2.3"], ["Gateway WS", "ws://127.0.0.1:4747"], ["DB", "~/.missioncontrol/gateway.sqlite"], ["Runtime", "Node.js v22 (WSL2)"]].map(([k, v]) => (
           <div key={k} style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
             <span style={{ fontSize: 12, color: T.muted }}>{k}</span>
             <span style={{ fontSize: 12, color: T.text, fontFamily: "monospace" }}>{v}</span>
