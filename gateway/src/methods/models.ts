@@ -1,5 +1,6 @@
 import { registerMethod } from '../router.js'
 import type { MethodHandler } from '../types.js'
+import { isLocalServerUrl } from '../providers/local.js'
 
 export type ModelsConfig =
   | { mode: 'local'; baseUrl: string; apiKey?: string }
@@ -44,7 +45,8 @@ export type ModelsListResponse = {
 export async function listLocalModels(baseUrl: string, apiKey?: string): Promise<ModelsListResponse> {
   const probedUrl = `${baseUrl}/models`
   try {
-    const res = await fetch(probedUrl, { headers: localAuthHeaders(apiKey) })
+    // The key is secret: it is only ever sent to an address the local provider itself would accept, never to whatever the setting says.
+    const res = await fetch(probedUrl, { headers: isLocalServerUrl(baseUrl) ? localAuthHeaders(apiKey) : {} })
     if (!res.ok) {
       const needsKey = res.status === 401 || res.status === 403
       const error = `local models endpoint at ${probedUrl} returned HTTP ${res.status}` +

@@ -21,6 +21,7 @@ const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1'
 // default so a saturated free-tier queue fails fast instead of hanging the turn
 // for 5 minutes; comfortably above any healthy cloud time-to-first-token.
 const STALL_MS = 120_000
+const STALL_MESSAGE = `model did not respond within ${STALL_MS / 1000}s — the provider may be busy (common on free tiers). Try again or switch model.`
 
 // ---------------------------------------------------------------------------
 // OpenRouterProvider
@@ -133,7 +134,7 @@ export class OpenRouterProvider implements ProviderAdapter {
 
       // The stall abort can end the stream quietly rather than throw: report it as the failure it is, not as an empty reply.
       if (guard.timedOut && !request.signal?.aborted) {
-        const msg = `model did not respond within ${STALL_MS / 1000}s — the provider may be busy (common on free tiers). Try again or switch model.`
+        const msg = STALL_MESSAGE
         console.error(`[openrouter] ${request.correlationId} stall timeout (stream ended quietly) — surfacing as done:`, msg)
         yield { type: 'done', usage: { inputTokens, outputTokens }, error: msg }
         return
@@ -147,7 +148,7 @@ export class OpenRouterProvider implements ProviderAdapter {
         return
       }
       if (guard.timedOut) {
-        const msg = `model did not respond within ${STALL_MS / 1000}s — the provider may be busy (common on free tiers). Try again or switch model.`
+        const msg = STALL_MESSAGE
         console.error(`[openrouter] ${request.correlationId} stall timeout — surfacing as done:`, msg)
         yield { type: 'done', usage: { inputTokens, outputTokens }, error: msg }
         return

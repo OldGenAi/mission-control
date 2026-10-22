@@ -3,6 +3,7 @@ import { broadcastEvent } from '../broadcast.js'
 import type { SettingsStore, SettingsSnapshot, ReasoningEffort } from '../store/settings.js'
 import { checkComfyUrl } from '../video/comfyui.js'
 import { shellAvailability } from '../tools/shell-policy.js'
+import { isLocalServerUrl } from '../providers/local.js'
 
 /**
  * Mask provider API keys in any settings payload that crosses the wire.
@@ -43,7 +44,8 @@ function coercePatch(input: Record<string, unknown>, current: SettingsSnapshot):
   const patch: Partial<SettingsSnapshot> = {}
   if (isValidProvider(input['provider']))             patch.provider         = input['provider']
   if (typeof input['defaultModel']     === 'string')  patch.defaultModel     = input['defaultModel']
-  if (typeof input['localProviderUrl'] === 'string')  patch.localProviderUrl = input['localProviderUrl']
+  // Only an address the local provider accepts is stored: anything else would stop the gateway starting (and must never be sent the key).
+  if (typeof input['localProviderUrl'] === 'string' && isLocalServerUrl(input['localProviderUrl'])) patch.localProviderUrl = input['localProviderUrl']
   if (typeof input['execEnabled']      === 'boolean') patch.execEnabled      = input['execEnabled']
   if (typeof input['thinkingDefault']  === 'boolean') patch.thinkingDefault  = input['thinkingDefault']
   if (isValidEffort(input['reasoningEffort']))        patch.reasoningEffort  = input['reasoningEffort']
