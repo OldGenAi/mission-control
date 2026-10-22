@@ -87,6 +87,25 @@ export function parseComfyJson(text: string): ComfyMessage | null {
   }
 }
 
+/** True when ComfyUI's start-up flags make it reachable from other machines. */
+export function listensBeyondThisComputer(argv: readonly string[]): boolean {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!
+    let hosts: string | undefined
+    if (arg === '--listen') {
+      const next = argv[i + 1]
+      // A bare --listen means every address.
+      hosts = next === undefined || next.startsWith('-') ? '0.0.0.0' : next
+    } else if (arg.startsWith('--listen=')) {
+      hosts = arg.slice('--listen='.length)
+    } else {
+      continue
+    }
+    if (hosts.split(',').some((h) => !['127.0.0.1', 'localhost', '::1'].includes(h.trim()))) return true
+  }
+  return false
+}
+
 export class ComfyClient {
   constructor(readonly base: URL) {}
 

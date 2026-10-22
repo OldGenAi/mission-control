@@ -8,7 +8,7 @@ import { mkdirSync, writeFileSync, existsSync, statSync, readdirSync, readFileSy
 import { join } from 'path'
 import type Database from 'better-sqlite3'
 import type WebSocket from 'ws'
-import { ComfyClient, checkComfyUrl, type ComfyMessage } from './comfyui.js'
+import { ComfyClient, checkComfyUrl, listensBeyondThisComputer, type ComfyMessage } from './comfyui.js'
 import { ImageInputs, type ImageInfo } from './image-input.js'
 import { stripMp4Metadata } from './mp4-strip.js'
 import { validateParams } from './params.js'
@@ -48,24 +48,7 @@ export interface VideoRow {
 
 export interface VideoSettings { comfyUrl: string; freeAfterJob: boolean }
 
-/** True when ComfyUI's start-up flags make it reachable from other machines. */
-export function listensBeyondThisComputer(argv: readonly string[]): boolean {
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]!
-    let hosts: string | undefined
-    if (arg === '--listen') {
-      const next = argv[i + 1]
-      // A bare --listen means every address.
-      hosts = next === undefined || next.startsWith('-') ? '0.0.0.0' : next
-    } else if (arg.startsWith('--listen=')) {
-      hosts = arg.slice('--listen='.length)
-    } else {
-      continue
-    }
-    if (hosts.split(',').some((h) => !['127.0.0.1', 'localhost', '::1'].includes(h.trim()))) return true
-  }
-  return false
-}
+export { listensBeyondThisComputer }
 
 /** A user-facing refusal (bad parameters, queue full); anything else is a bug. */
 export class VideoRequestError extends Error {}
