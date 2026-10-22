@@ -89,6 +89,8 @@ export const VideoPage: React.FC = () => {
   const [now, setNow] = useState(() => Date.now())
   const [pictures, setPictures] = useState<Record<string, string>>({}) // uploaded picture id -> data: URL shown as a thumbnail
   const [uploading, setUploading] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)   // the Refresh button is working
+  const [checkedAt, setCheckedAt] = useState<number | null>(null)   // when ComfyUI was last asked
   const refreshTimer = useRef<number | null>(null)
   // Signed links change on every list call; keeping the one a player already has stops the
   // browser reloading every finished video each time the list refreshes. Links last an hour.
@@ -118,6 +120,13 @@ export const VideoPage: React.FC = () => {
     } catch (err) {
       setStatus({ reachable: false, url: '', problem: `Could not ask Mission Control about ComfyUI: ${err instanceof Error ? err.message : 'no answer'}` })
     }
+    setCheckedAt(Date.now())
+  }
+  // The Refresh button shows that it is working (a check can be quick enough to look like nothing happened), then when it last looked.
+  const refresh = async () => {
+    setRefreshing(true)
+    await Promise.all([loadStatus(), loadVideos(), new Promise((resolve) => window.setTimeout(resolve, 600))])
+    setRefreshing(false)
   }
 
   useEffect(() => {
@@ -160,6 +169,14 @@ export const VideoPage: React.FC = () => {
     })
     return () => { off(); window.clearInterval(clock) }
   }, [])
+
+  // While ComfyUI can't be reached, look again every few seconds: starting it then needs no Refresh press.
+  const comfyReachable = Boolean(status?.reachable)
+  useEffect(() => {
+    if (comfyReachable) return
+    const again = window.setInterval(() => void loadStatus(), 8000)
+    return () => window.clearInterval(again)
+  }, [comfyReachable])
 
   const pickRecipe = (id: string) => {
     const next = recipes.find((r) => r.id === id)
@@ -241,7 +258,12 @@ export const VideoPage: React.FC = () => {
     <div className="p-6 h-full flex flex-col gap-4 overflow-y-auto">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-medium text-gray-300">Video</h2>
-        <button onClick={() => { void loadStatus(); void loadVideos() }} className="px-3 py-1 rounded text-xs" style={button()}>Refresh</button>
+        <div className="flex items-center gap-3">
+          {checkedAt && !refreshing && <span className="text-xs text-gray-500">Checked {new Date(checkedAt).toLocaleTimeString()}</span>}
+          <button onClick={() => void refresh()} disabled={refreshing} className="px-3 py-1 rounded text-xs" style={{ ...button(), opacity: refreshing ? 0.6 : 1, cursor: refreshing ? 'wait' : 'pointer' }}>
+            {refreshing ? 'Checking...' : 'Refresh'}
+          </button>
+        </div>
       </div>
 
       {/* ComfyUI connection */}
