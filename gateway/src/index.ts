@@ -181,7 +181,7 @@ registerModelsMethods((provider?: string) => {
   const p = provider ?? active?.provider
   return p === 'openrouter'
     ? { mode: 'openrouter' }
-    : { mode: 'local', baseUrl: s.localProviderUrl }
+    : { mode: 'local', baseUrl: s.localProviderUrl, apiKey: s.providerKeys.local || undefined }
 })
 registerToolsMethods(tools)
 registerArtifactsMethods(db)
@@ -212,7 +212,7 @@ setVideoFileResolver((id) => videoJobs.filePath(id))
 const watchdog     = startWatchdog(db, monitorBuffer)
 monitorTracker.setWatchdogSource(watchdog.getStats)
 const stopSweep    = startDailyNoteSweep(db)
-startPricingRefresh(() => settingsStore.get().localProviderUrl)
+startPricingRefresh(() => settingsStore.get().localProviderUrl, () => settingsStore.get().providerKeys.local || undefined)
 
 // ---------------------------------------------------------------------------
 // Start

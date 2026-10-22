@@ -24,6 +24,7 @@ export interface SettingsSnapshot {
   providerKeys: {
     openrouter: string
     anthropic:  string
+    local:      string   // for a local server that requires a key (LM Studio "Require Authentication"); empty = none
   }
   searchApiKey:     string   // Brave Search key for web_search (was env-only)
   instances:        Instance[]
@@ -46,7 +47,7 @@ const DEFAULTS: SettingsSnapshot = {
   execEnabled:      false,
   thinkingDefault:  false,
   reasoningEffort:  'medium',
-  providerKeys: { openrouter: '', anthropic: '' },
+  providerKeys: { openrouter: '', anthropic: '', local: '' },
   searchApiKey:     '',
   instances:        [],
   activeInstanceId: null,
@@ -181,10 +182,10 @@ export class SettingsStore {
   // rest of the snapshot untouched.
   private mapSecrets(s: SettingsSnapshot, fn: (v: string | undefined, keyHex: string) => string): SettingsSnapshot {
     const keyHex = getConfig().encryptionKey
-    const pk = s.providerKeys ?? { openrouter: '', anthropic: '' }
+    const pk = s.providerKeys ?? { openrouter: '', anthropic: '', local: '' }
     return {
       ...s,
-      providerKeys: { openrouter: fn(pk.openrouter, keyHex), anthropic: fn(pk.anthropic, keyHex) },
+      providerKeys: { openrouter: fn(pk.openrouter, keyHex), anthropic: fn(pk.anthropic, keyHex), local: fn(pk.local, keyHex) },
       searchApiKey: fn(s.searchApiKey, keyHex),
     }
   }
@@ -215,6 +216,7 @@ export function envOverrides(): Partial<SettingsSnapshot> {
   const keys: Partial<SettingsSnapshot['providerKeys']> = {}
   if (process.env['OPENROUTER_API_KEY']) keys.openrouter = process.env['OPENROUTER_API_KEY']
   if (process.env['ANTHROPIC_API_KEY'])  keys.anthropic  = process.env['ANTHROPIC_API_KEY']
-  if (Object.keys(keys).length > 0) out.providerKeys = { openrouter: '', anthropic: '', ...keys }
+  if (process.env['LOCAL_PROVIDER_API_KEY']) keys.local  = process.env['LOCAL_PROVIDER_API_KEY']
+  if (Object.keys(keys).length > 0) out.providerKeys = { openrouter: '', anthropic: '', local: '', ...keys }
   return out
 }

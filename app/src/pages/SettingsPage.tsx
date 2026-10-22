@@ -501,6 +501,7 @@ function GatewayTab() {
 function ProvidersTab() {
   const { settings } = useSettings()
   const [localUrl, setLocalUrl] = useState("")
+  const [localKey, setLocalKey] = useState("")
   const [orKey, setOrKey]       = useState("")
   const [anthropicKey, setAnthropicKey] = useState("")
   const [searchKey, setSearchKey] = useState("")
@@ -514,6 +515,7 @@ function ProvidersTab() {
   if (settings && settings !== copiedSettings) {
     setCopiedSettings(settings)
     setLocalUrl(settings.localProviderUrl)
+    setLocalKey(settings.providerKeys.local ?? "")
     setOrKey(settings.providerKeys.openrouter)
     setAnthropicKey(settings.providerKeys.anthropic)
     setSearchKey(settings.searchApiKey)
@@ -523,8 +525,9 @@ function ProvidersTab() {
     setTestStatus(p => ({ ...p, [provider]: "loading" }))
     try {
       if (provider === "local") {
-        const r = await fetch(`${localUrl}/models`)
-        setTestStatus(p => ({ ...p, local: r.ok ? "ok" : "error" }))
+        // Through the gateway, which holds the real key: the page only ever sees it masked. Tests the SAVED address and key.
+        const r = await gateway.request<{ models: unknown[]; error?: string }>("models.list", { provider: "local" })
+        setTestStatus(p => ({ ...p, local: !r.error ? "ok" : "error" }))
       } else {
         setTestStatus(p => ({ ...p, [provider]: "ok" }))
       }
@@ -537,7 +540,7 @@ function ProvidersTab() {
     setError(null)
     const next = await updateSettings({
       localProviderUrl: localUrl,
-      providerKeys: { openrouter: orKey, anthropic: anthropicKey },
+      providerKeys: { openrouter: orKey, anthropic: anthropicKey, local: localKey },
       searchApiKey: searchKey,
     })
     if (!next) { setError("Save failed — gateway rejected the change."); return }
@@ -561,7 +564,10 @@ function ProvidersTab() {
           </div>
           {tstIcon("local")}
         </Field>
-        <p style={{ fontSize: 11, color: T.muted, margin: 0 }}>OpenAI-compatible REST. Loopback only. Applied immediately — no restart needed.</p>
+        <Field label="API key (only if your server requires one)">
+          <MaskedInput value={localKey} onChange={setLocalKey} placeholder="Leave empty if the server has no password" />
+        </Field>
+        <p style={{ fontSize: 11, color: T.muted, margin: 0 }}>OpenAI-compatible REST. Loopback only. Applied immediately — no restart needed. For LM Studio's "Require Authentication", create a key in its Developer tab and paste it here. Save before pressing Test.</p>
       </Card>
 
       <Card accent={T.violet}>

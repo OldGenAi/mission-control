@@ -184,6 +184,10 @@ async function modelCheck(settings: SettingsView): Promise<DoctorCheck> {
   const url = settings.localProviderUrl ?? 'http://127.0.0.1:1234/v1'
   try {
     const res = await fetch(`${url}/models`, { signal: AbortSignal.timeout(3000) })
+    // A server that requires a key answers 401. Mission Control sends the key saved in Settings (encrypted, so not checked here).
+    if (res.status === 401 || res.status === 403) {
+      return { name: 'Model server', status: 'info', detail: `${redact(url)} answers and requires an API key`, fix: 'If chat fails, check the key in Settings, Providers, Local provider' }
+    }
     const body = (await res.json()) as { data?: unknown[] }
     const count = Array.isArray(body.data) ? body.data.length : 0
     if (res.ok && count > 0) return { name: 'Model server', status: 'ok', detail: `${redact(url)} answers, ${count} model${count === 1 ? '' : 's'}` }
@@ -200,7 +204,6 @@ async function modelCheck(settings: SettingsView): Promise<DoctorCheck> {
 function watchedServers(settings: SettingsView): WatchedServer[] {
   const servers: WatchedServer[] = [
     { name: 'Mission Control', port: PORT, fix: 'Remove GATEWAY_HOST and GATEWAY_ALLOWED_HOSTS unless you meant to share it on your network' },
-    // Not "Require Authentication": Mission Control can't send an LM Studio key yet, so chat would stop working.
     { name: 'LM Studio', port: 1234, fix: "In LM Studio's Developer tab, turn off Serve on Local Network" },
     { name: 'Ollama', port: 11434, fix: 'Set OLLAMA_HOST to 127.0.0.1 (or remove it) and restart Ollama' },
     { name: 'ComfyUI', port: 8188, fix: 'Start ComfyUI without --listen' },

@@ -22,6 +22,7 @@ export interface SettingsSnapshot {
   providerKeys: {
     openrouter: string  // masked when read (e.g. "sk-or-v…ab12") — empty string when unset
     anthropic:  string
+    local:      string  // key for a local server that requires one; masked when read, empty when unset
   }
   searchApiKey:     string  // masked when read — Brave Search key for web_search
   instances:        Instance[]
