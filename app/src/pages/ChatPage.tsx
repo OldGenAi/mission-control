@@ -583,8 +583,11 @@ export function ChatPage() {
         if (p.correlationId && p.correlationId !== deltaTurnRef.current) {
           // First words of a new turn: by now the question is saved, so load it (a turn started elsewhere has no optimistic copy here).
           deltaTurnRef.current = p.correlationId
-          void gateway.request<ChatHistoryResponse>("sessions.history", { sessionId: selectedId })
-            .then(setHistory).catch(() => { /* the final event reloads it anyway */ })
+          ;(async () => {
+            try {
+              setHistory(await gateway.request<ChatHistoryResponse>("sessions.history", { sessionId: selectedId }))
+            } catch { /* the final event reloads it anyway */ }
+          })()
         }
       } else if (e.event === "chat.final") {
         const p = e.payload as {
