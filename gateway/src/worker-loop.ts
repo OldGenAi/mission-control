@@ -126,6 +126,7 @@ export async function runWorker(config: WorkerRunConfig): Promise<WorkerResult> 
     // it to finish at the soft cap and hard-stopping past the hard cap.
     let cumulativeToolOutputChars = 0
     let wrapUpNudged = false
+    let artifactNudged = false
     const TOOL_OUTPUT_SOFT_CAP = 40_000  // ~10k tokens gathered → tell it to synthesise + write
     const TOOL_OUTPUT_HARD_CAP = 80_000  // ~20k tokens → stop, regardless of model behaviour
 
@@ -211,6 +212,25 @@ export async function runWorker(config: WorkerRunConfig): Promise<WorkerResult> 
         // If the worker stopped without producing one, the pipeline must be marked
         // failed — not silently "completed" with no deliverable. This catches the
         // common Gemma failure mode of skipping/mistyping artifact_write at the end.
+        // One reminder first: a local model often stops after writing its report as plain text. Everything it gathered is still in
+        // the conversation, so asking it to save the report costs one more model call and rescues the whole run.
+        if (writtenArtifactIds.length === 0 && !artifactNudged && allowedTools.includes('artifact_write') && iterations < maxIterations) {
+          artifactNudged = true
+          console.warn(`[worker] ${correlationId} worker "${role}" stopped without artifact_write — reminding it once`)
+          config.monitorBuffer.enqueue({
+            kind: 'error', correlationId, agentId: workerAgentId,
+            code: 'WORKER_ARTIFACT_REMINDER', message: `worker "${role}" finished without calling artifact_write; reminded once`,
+          })
+          messages.push({ role: 'assistant', content: responseText || '(no text)' })
+          messages.push({
+            role: 'user',
+            content:
+              `[system] You finished without calling artifact_write, so nothing has been saved. Call artifact_write now with your complete ` +
+              `final report as the content (type "report" and a clear title). Do not fetch anything further.`,
+          })
+          config.broadcast('', 'agent.status', { agentId: workerAgentId, status: 'thinking', correlationId })
+          continue
+        }
         if (writtenArtifactIds.length === 0) {
           const msg = `WORKER_NO_ARTIFACT: worker "${role}" finished without calling artifact_write — the pipeline has no deliverable`
           console.warn(`[worker] ${correlationId} ${msg}`)
