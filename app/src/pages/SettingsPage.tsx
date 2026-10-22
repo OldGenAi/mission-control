@@ -3,6 +3,7 @@ import { gateway } from "../lib/gateway-client"
 import { mcConfig } from "../lib/mc-config"
 import { useSettings, updateSettings, updateInstance, fetchShellAvailability, type ShellAvailability } from "../lib/settings"
 import { getPerfMode, setPerfMode, type PerfMode } from "../lib/perf"
+import { useAssistantName } from "../lib/assistant"
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 const T = {
@@ -328,6 +329,50 @@ function useSaved() {
   return [saved, save] as const
 }
 
+// ── ASSISTANT NAME ───────────────────────────────────────────────────────────
+// Renames the assistant after setup, without reinstalling. The gateway changes the identity entry (and the starter instructions
+// while they are untouched) and any model setup still named after the old name.
+function AssistantNameCard() {
+  const current = useAssistantName()
+  const [typed, setTyped] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null)
+  const shown = typed ?? current
+
+  const save = async () => {
+    setSaving(true)
+    setMessage(null)
+    try {
+      const r = await gateway.request<{ ok: boolean; error?: string; name?: string; soulKept?: boolean }>("assistant.rename", { name: shown })
+      if (!r.ok) {
+        setMessage({ kind: "error", text: r.error ?? "Could not save the name." })
+      } else if (r.soulKept) {
+        setMessage({ kind: "ok", text: `Saved. Instructions you wrote yourself still use the old name: edit them on the Agents page. Reload the page to see ${r.name} everywhere.` })
+      } else {
+        window.location.reload()
+      }
+    } catch (e) {
+      setMessage({ kind: "error", text: e instanceof Error ? e.message : "Could not save the name." })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card accent={T.violet}>
+      <SectionTitle>Assistant name</SectionTitle>
+      <Field label="What you call your assistant">
+        <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ flex: 1 }}><Input value={shown} onChange={setTyped} placeholder="Dave" /></div>
+          <Btn label={saving ? "Saving..." : "Save"} onClick={() => void save()} variant="ghost" />
+        </div>
+      </Field>
+      {message && <p style={{ fontSize: 11, color: message.kind === "ok" ? T.success : T.error, margin: "0 0 8px" }}>{message.text}</p>}
+      <p style={{ fontSize: 11, color: T.muted, margin: 0 }}>Up to 30 characters. Your chats, memory and settings stay as they are.</p>
+    </Card>
+  )
+}
+
 // ── QUICK TAB ────────────────────────────────────────────────────────────────
 function QuickTab() {
   const { settings } = useSettings()
@@ -355,6 +400,8 @@ function QuickTab() {
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
+      <AssistantNameCard />
+
       <Card accent={T.cyan}>
         <SectionTitle>Gateway</SectionTitle>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>

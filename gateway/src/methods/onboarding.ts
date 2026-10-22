@@ -13,8 +13,9 @@ import type Database from 'better-sqlite3'
 import { registerMethod } from '../router.js'
 import type { SettingsStore } from '../store/settings.js'
 import {
-  DEFAULT_ASSISTANT_NAME, currentEntry, setEntry, starterIdentity, starterSoul,
+  DEFAULT_ASSISTANT_NAME, currentEntry, renameAssistant, setEntry, starterIdentity, starterSoul,
 } from '../memory/starter-entries.js'
+import type { Instance } from '../store/settings.js'
 
 const AGENT_ID = 'tier1_agent'
 
@@ -116,6 +117,19 @@ export function saveWelcome(db: Database.Database, a: WelcomeAnswers): void {
   }
 }
 
+/** A new assistant name from Settings: one line, up to 30 characters, no markdown emphasis (the app strips it when reading), something to show. */
+export function parseAssistantName(input: unknown): { ok: true; name: string } | { ok: false; error: string } {
+  const name = clean(input, LIMITS.assistantName, true)?.replace(/[*_`]/g, '').trim()
+  if (name === undefined || name === null) return { ok: false, error: `name: up to ${LIMITS.assistantName} characters` }
+  if (!/[\p{L}\p{N}]/u.test(name)) return { ok: false, error: 'name: use at least one letter or number' }
+  return { ok: true, name }
+}
+
+/** Model setups that carry the old assistant name take the new one; setups the person named themselves are left alone. */
+export function instancesRenamed(instances: Instance[], from: string, to: string): Instance[] {
+  return instances.map((i) => (i.name === from ? { ...i, name: to } : i))
+}
+
 export function registerOnboardingMethods(db: Database.Database, settings: SettingsStore): void {
   // The form shows only on a fresh install: nobody has filled in the user entry or skipped it.
   registerMethod('onboarding.status', async () => {
@@ -133,6 +147,17 @@ export function registerOnboardingMethods(db: Database.Database, settings: Setti
     const instances = settings.get().instances.map((i) => (i.id === 'default' && i.name === DEFAULT_ASSISTANT_NAME ? { ...i, name } : i))
     settings.update({ welcomeDone: true, instances })
     return { ok: true }
+  })
+
+  // Settings > Assistant name. Only the person can reach this (the UI): agents have no tool for it, and the identity entries stay protected from them.
+  registerMethod('assistant.rename', async (params) => {
+    const parsed = parseAssistantName((params as Record<string, unknown> | undefined)?.['name'])
+    if (!parsed.ok) return parsed
+    const result = renameAssistant(db, AGENT_ID, parsed.name)
+    if (result.from !== parsed.name) {
+      settings.update({ instances: instancesRenamed(settings.get().instances, result.from, parsed.name) })
+    }
+    return { ok: true, name: parsed.name, soulKept: result.soulKept }
   })
 
   registerMethod('onboarding.skip', async () => {
