@@ -768,6 +768,7 @@ export const MonitorPage: FC = () => {
   const [activeProvider, setActiveProvider] = useState<string>('local')
   const [nowTs, setNowTs] = useState(() => Date.now())  // 1s clock so countdowns (e.g. watchdog NEXT) tick smoothly between 2s monitor updates
   const feedEnd = useRef<HTMLDivElement>(null)
+  const feedStick = useRef(true)   // true while the feed is scrolled to its end; scrolling up to read turns it off until it is back at the end
 
   const push = useCallback((e: Omit<FeedEvent, 'id'>) => {
     setFeed(prev => { const n = [...prev, { ...e, id: ++feedSeq }]; return n.length > 200 ? n.slice(-200) : n })
@@ -823,7 +824,12 @@ export const MonitorPage: FC = () => {
     return () => { unsub(); gateway.request('monitor.unsubscribe', {}).catch(() => {}) }
   }, [push])
 
-  useEffect(() => { feedEnd.current?.scrollIntoView({ behavior: 'smooth' }) }, [feed.length])
+  // Follow the newest entry. Not keyed on feed.length: the feed is capped at 200 entries, so once full its length never changes and
+  // the view stopped following (until the page was left and re-entered).
+  useEffect(() => {
+    const box = feedEnd.current?.parentElement
+    if (box && feedStick.current) box.scrollTop = box.scrollHeight
+  }, [feed])
   useEffect(() => { const id = setInterval(() => setNowTs(Date.now()), 1000); return () => clearInterval(id) }, [])
   useEffect(() => {
     if (view === 'history') gateway.request('monitoring.query', { type: 'model_calls' }).then(r => setHistRows((r as { rows?: Record<string, unknown>[] }).rows ?? [])).catch(() => {})
@@ -924,7 +930,7 @@ export const MonitorPage: FC = () => {
           <span style={{ fontSize: 9, color: C.amber, fontFamily: 'monospace' }}>FILTER …{corrFilter}</span>
           <button onClick={() => setCorrFilter(null)} style={{ marginLeft: 'auto', fontSize: 9, color: C.muted, background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
         </div>}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }} onScroll={(ev) => { const el = ev.currentTarget; feedStick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40 }}>
           {vis.length === 0 && <div style={{ padding: '8px 14px', fontSize: 10, color: C.muted, fontFamily: 'monospace' }}>AWAITING EVENTS…</div>}
           {vis.map(e => (
             <div key={e.id} style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '2px 0 2px 12px', marginBottom: 1, borderLeft: `3px solid ${feedBorder[e.type]}`, background: `${feedBorder[e.type]}07`, fontFamily: 'monospace', fontSize: 11 }}>
