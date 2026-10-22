@@ -76,6 +76,40 @@ export function assistantName(identity: string | null): string {
   return name || DEFAULT_ASSISTANT_NAME
 }
 
+const NAME_LINE = /^(\s*[-*]?\s*\**Name\**:?\**\s*)(.+)$/im
+
+export interface RenameResult {
+  from: string
+  /** The soul still has its old wording (the person wrote their own), so it may still say the old name. */
+  soulKept: boolean
+}
+
+/**
+ * Gives the assistant a new name after setup. The identity entry's "Name:" line changes (it is what the app reads). The soul and a
+ * starter identity are rewritten only while they are still the untouched starters for the old name, so text the person wrote
+ * is never overwritten.
+ */
+export function renameAssistant(db: Database.Database, agentId: string, to: string): RenameResult {
+  const identity = currentEntry(db, agentId, 'identity')
+  const from = assistantName(identity)
+  if (from === to) return { from, soulKept: false }
+
+  db.transaction(() => {
+    if (!identity?.trim() || identity === starterIdentity(from)) {
+      setEntry(db, agentId, 'identity', starterIdentity(to))
+    } else if (NAME_LINE.test(identity)) {
+      setEntry(db, agentId, 'identity', identity.replace(NAME_LINE, (_line, lead: string) => `${lead}${to}`))
+    } else {
+      setEntry(db, agentId, 'identity', `Name: ${to}\n${identity}`)
+    }
+  })()
+
+  const soul = currentEntry(db, agentId, 'soul')
+  const soulIsStarter = soul === starterSoul(from)
+  if (soulIsStarter) setEntry(db, agentId, 'soul', starterSoul(to))
+  return { from, soulKept: Boolean(soul?.trim()) && !soulIsStarter }
+}
+
 export function currentEntry(db: Database.Database, agentId: string, key: string): string | null {
   const row = db.prepare<[string, string], { content: string }>(
     `SELECT content FROM memory_entries WHERE agent_id = ? AND key = ? AND valid_until IS NULL LIMIT 1`,
