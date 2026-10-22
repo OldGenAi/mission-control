@@ -18,6 +18,7 @@ Built by [OldGenAI](#about). Free and open source under the [MIT license](#licen
 - [Quick start](#quick-start)
 - [Running it with Docker instead](#running-it-with-docker-instead)
 - [Configuration](#configuration)
+- [Making videos](#making-videos)
 - [Security and privacy](#security-and-privacy)
 - [Troubleshooting](#troubleshooting)
 - [Roadmap](#roadmap)
@@ -76,7 +77,10 @@ Memory
 - Short-term daily notes that fade after a week, and milestones that stay. Dave decides what's worth keeping.
 
 Built-in tools
-- Web search (Brave) and a guarded web fetch, file read, write and edit inside the workspace, and an optional shell (`exec`) tool that is off by default and needs an explicit confirmation before it can be turned on.
+- Web search (Brave) and a guarded web fetch, and file read, write and edit inside the workspace. The shell (`exec`) tool is locked for now (see [Security and privacy](#security-and-privacy)).
+
+Video
+- Make short clips with ComfyUI on your own computer, from a description or from a picture, and watch them take shape. See [Making videos](#making-videos).
 
 ## How it works
 
@@ -183,6 +187,42 @@ Almost everything is set up in the app, under Settings:
 
 `gateway/.env` is optional. It only sets first-boot defaults. After the first start, what you set in Settings wins.
 
+## Making videos
+
+The Video page makes short clips with [ComfyUI](https://github.com/comfyanonymous/ComfyUI) running on your own computer. Mission Control doesn't come with ComfyUI or any video model. You install those yourself and choose which models to use, and your prompts and pictures never leave your computer.
+
+What it does:
+- Text to video: describe a scene and get a clip, with sound when the model makes it.
+- Picture to video: choose a photo and it becomes the first frame of the clip.
+- While it works you see the stage it's at, the step count and a rough preview.
+- Finished clips play in the page. "Use again" fills the form with the same settings, so you can make the same clip again or change one thing.
+
+The recipes, timed on a mini PC with an NVIDIA RTX 5070 Ti (16 GB) in an external dock:
+
+| Recipe | Graphics card | Time for a 5-second clip |
+|---|---|---|
+| LTX-2.5 text to video | NVIDIA with 16 GB | about a minute, 1280x704 with sound |
+| LTX-2.5 picture to video | NVIDIA with 16 GB | about 40 seconds, with sound |
+| Wan 2.2 (5B) text to video | NVIDIA with 8 GB or more | about 100 seconds, 832x480, silent (not yet timed on a smaller card) |
+
+Setting it up:
+1. Install ComfyUI and download the model files the recipe needs. The Video page lists any file that's missing.
+2. Start ComfyUI with `--preview-method auto --disable-metadata`, for example `python main.py --preview-method auto --disable-metadata`. Don't add `--listen`: ComfyUI has no sign-in, so anyone who can reach it could use your graphics card and see what you make.
+3. On the Video page, check the ComfyUI address (normally `http://127.0.0.1:8188`). `mc doctor` checks ComfyUI too.
+
+How it's kept safe:
+- The page and Dave can only pick a recipe and fill in its settings. Neither can send ComfyUI a workflow of its own.
+- Mission Control only talks to a ComfyUI on this computer, and won't use one that was started with `--listen`.
+- ComfyUI writes your prompt into every video file it saves. Mission Control removes it from its own copies.
+- Pictures are checked by their contents (PNG, JPEG or WebP, one still frame, up to 11 MB) and stored under a random name.
+- One video at a time, a check that there's enough free graphics memory before each one, and the memory is handed back afterwards.
+- Videos are kept in `~/.missioncontrol/media/video`, up to 50 GB in total.
+
+The model is your choice, and so is following its licence:
+- LTX-2.5 uses Lightricks' LTX-2 community licence. It's free for businesses with less than $10 million a year in revenue, and it requires you to say clearly that what you share is machine-generated. Read it before you use clips commercially.
+- Wan 2.2 is Apache-2.0.
+- Some licences don't cover every country. HunyuanVideo 1.5's licence leaves out the EU, the UK and South Korea, so there's no recipe for it here.
+
 ## Security and privacy
 
 Mission Control is built to be safe to run on your own machine:
@@ -225,6 +265,7 @@ Mission Control is actively developed. Coming up:
 - A one-line install for Windows, macOS and Linux, with a desktop icon (in progress).
 - A locked room for the shell tool: commands run with no network and no access outside a scratch folder.
 - Approving shell commands one at a time, as they come up.
+- Video: a simple editor in the page (trim, join, add sound), and letting Dave make videos for you.
 - Direct Anthropic support (Claude is already reachable through OpenRouter).
 - Several local model servers at once, one per instance.
 - Skills and plugins to extend Dave.
