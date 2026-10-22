@@ -41,7 +41,7 @@ export function registerVideoMethods(jobs: VideoJobs, comfyUrl: () => string): v
     const client = new ComfyClient(checked.url)
     let stats
     try { stats = await client.stats() } catch { stats = null }
-    if (!stats) return { reachable: false, url, problem: `ComfyUI isn't answering at ${url}.` }
+    if (!stats) return { reachable: false, url, problem: `ComfyUI isn't answering at ${url}. Mission Control doesn't start it: start ComfyUI on this computer (see Making videos in the README), or fix the address in Settings.` }
 
     const warnings: string[] = []
     if (listensBeyondThisComputer(stats.argv)) warnings.push('ComfyUI was started with --listen, so other devices can reach it. Start it without --listen.')
