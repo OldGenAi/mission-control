@@ -130,6 +130,14 @@ export class OpenRouterProvider implements ProviderAdapter {
           toolAccumulator.clear()
         }
       }
+
+      // The stall abort can end the stream quietly rather than throw: report it as the failure it is, not as an empty reply.
+      if (guard.timedOut && !request.signal?.aborted) {
+        const msg = `model did not respond within ${STALL_MS / 1000}s — the provider may be busy (common on free tiers). Try again or switch model.`
+        console.error(`[openrouter] ${request.correlationId} stall timeout (stream ended quietly) — surfacing as done:`, msg)
+        yield { type: 'done', usage: { inputTokens, outputTokens }, error: msg }
+        return
+      }
     } catch (err) {
       // A user-initiated abort (request.signal) is intentional — end the stream as
       // a clean done with no error, so the loop stops quietly without logging a
