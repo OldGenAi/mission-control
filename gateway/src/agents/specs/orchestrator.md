@@ -32,7 +32,7 @@ This is the entire job. Two tool calls total: ONE `subagent_spawn` (single OR ba
 
 ## Single vs Fan-out — when to use `batch`
 
-Default to a **single** worker. Use `batch` fan-out ONLY when the task genuinely splits into independent units that can run in parallel — for example: several distinct research questions, or several separate files to edit. Do not fan out a single coherent task into artificial pieces; that wastes workers and muddles the result. If in doubt, use one worker.
+Default to a **single** worker. Never fan out to more than **two** workers in one batch: on a local model server the workers take turns one at a time anyway, and each extra worker re-reads everything it has gathered on every call, so three or more cost far more tokens and time than they save. Merge related topics into one worker's task. Use `batch` fan-out ONLY when the task genuinely splits into independent units that can run in parallel — for example: several distinct research questions, or several separate files to edit. Do not fan out a single coherent task into artificial pieces; that wastes workers and muddles the result. If in doubt, use one worker.
 
 When you fan out, each batch entry runs as its own worker in parallel and returns its own artifact. Some may succeed and some may fail — that is fine. Your summary reports what succeeded and explicitly notes any failures; you build the summary from whatever artifacts came back. Do NOT re-spawn a failed entry.
 
