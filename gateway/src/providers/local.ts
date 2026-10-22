@@ -70,6 +70,16 @@ function assertLoopbackUrl(baseUrl: string): void {
   }
 }
 
+/** True when the address is one LocalProvider would accept (loopback, host.docker.internal or a private network). */
+export function isLocalServerUrl(baseUrl: string): boolean {
+  try {
+    assertLoopbackUrl(baseUrl)
+    return true
+  } catch {
+    return false
+  }
+}
+
 // ---------------------------------------------------------------------------
 // LocalProvider
 // ---------------------------------------------------------------------------
@@ -96,6 +106,10 @@ export class LocalProvider implements ProviderAdapter {
       baseURL: config.baseUrl,
       apiKey: config.apiKey ?? 'local-no-key',
     })
+  }
+
+  private stallMessage(): string {
+    return `local model did not send a token within ${this.stallMs / 1000}s — the server may be loading the model or wedged. Try again or check the local provider.`
   }
 
   async *complete(request: CompletionRequest): AsyncGenerator<StreamChunk> {
@@ -195,7 +209,7 @@ export class LocalProvider implements ProviderAdapter {
       // The stall abort can end the stream quietly rather than throw. Without this check that looked like an empty, successful reply
       // (no text, no tool call, no error), and a worker was told it had simply finished without saving its report.
       if (guard.timedOut && !request.signal?.aborted) {
-        const msg = `local model did not send a token within ${this.stallMs / 1000}s — the server may be loading the model or wedged. Try again or check the local provider.`
+        const msg = this.stallMessage()
         console.error(`[local] ${request.correlationId} stall timeout (stream ended quietly) — surfacing as done:`, msg)
         yield { type: 'done', usage: { inputTokens, outputTokens }, error: msg }
         return
@@ -209,7 +223,7 @@ export class LocalProvider implements ProviderAdapter {
         return
       }
       if (guard.timedOut) {
-        const msg = `local model did not send a token within ${this.stallMs / 1000}s — the server may be loading the model or wedged. Try again or check the local provider.`
+        const msg = this.stallMessage()
         console.error(`[local] ${request.correlationId} stall timeout — surfacing as done:`, msg)
         yield { type: 'done', usage: { inputTokens, outputTokens }, error: msg }
         return

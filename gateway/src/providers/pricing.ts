@@ -12,6 +12,8 @@
  * map lookup; unknown models fall back to safe defaults (cost 0, context 8k).
  */
 
+import { isLocalServerUrl } from './local.js'
+
 interface TokenPrice {
   prompt: number      // USD per input token
   completion: number  // USD per output token
@@ -62,7 +64,8 @@ export async function refreshPricing(): Promise<void> {
 export async function refreshLocalContext(localBaseUrl: string | undefined, apiKey?: string): Promise<void> {
   if (!localBaseUrl) return
   const root = localBaseUrl.replace(/\/v1\/?$/, '')   // strip the OpenAI-compat suffix
-  const headers: Record<string, string> = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
+  // The key is secret: it only goes to an address the local provider itself would accept.
+  const headers: Record<string, string> = apiKey && isLocalServerUrl(localBaseUrl) ? { Authorization: `Bearer ${apiKey}` } : {}
 
   // LM Studio — native /api/v0/models reports loaded_context_length per model.
   try {

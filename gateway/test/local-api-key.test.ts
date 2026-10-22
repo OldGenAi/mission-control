@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { LocalProvider } from '../src/providers/local.js'
+import { LocalProvider, isLocalServerUrl } from '../src/providers/local.js'
 import { ProviderRegistry } from '../src/providers/registry.js'
 import { listLocalModels, localAuthHeaders } from '../src/methods/models.js'
 import { refreshLocalContext } from '../src/providers/pricing.js'
@@ -101,4 +101,32 @@ test('the registry builds the local provider from the saved key', () => {
   const settings = { localProviderUrl: 'http://127.0.0.1:1234/v1', providerKeys: { openrouter: '', anthropic: '', local: KEY } } as unknown as SettingsSnapshot
   const registry = new ProviderRegistry(settings)
   assert.ok(registry.get('local') instanceof LocalProvider)
+})
+
+test('isLocalServerUrl accepts what the local provider accepts and nothing else', () => {
+  for (const ok of ['http://127.0.0.1:1234/v1', 'http://localhost:1234/v1', 'http://host.docker.internal:1234/v1', 'http://192.168.1.20:1234/v1', 'http://10.0.0.5/v1', 'http://172.20.0.2/v1']) {
+    assert.equal(isLocalServerUrl(ok), true, ok)
+  }
+  for (const bad of ['https://example.com/v1', 'http://8.8.8.8/v1', 'http://172.32.0.1/v1', 'not a url', '']) {
+    assert.equal(isLocalServerUrl(bad), false, bad)
+  }
+})
+
+test('the key is never sent to an address the local provider would refuse', async () => {
+  const sent: Array<{ url: string; auth: string | undefined }> = []
+  const realFetch = globalThis.fetch
+  globalThis.fetch = (async (input: unknown, init?: { headers?: Record<string, string> }) => {
+    sent.push({ url: String(input), auth: init?.headers?.['Authorization'] })
+    return new Response(JSON.stringify({ data: [] }), { status: 200 })
+  }) as typeof fetch
+  try {
+    await listLocalModels('https://attacker.example/v1', KEY)
+    await refreshLocalContext('https://attacker.example/v1', KEY)
+    await listLocalModels('http://127.0.0.1:1234/v1', KEY)
+    assert.ok(sent.length >= 3)
+    for (const call of sent.filter((s) => s.url.includes('attacker.example'))) assert.equal(call.auth, undefined, call.url)
+    assert.equal(sent.find((s) => s.url.startsWith('http://127.0.0.1'))?.auth, `Bearer ${KEY}`)
+  } finally {
+    globalThis.fetch = realFetch
+  }
 })
