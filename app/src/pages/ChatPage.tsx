@@ -729,6 +729,9 @@ export function ChatPage() {
   // forceScrollNextRef: set on session switch so the next history update
   // jumps to the latest message even if the prior scroll position was elsewhere.
   const forceScrollNextRef = useRef(false)
+  // True while the thread is at (or near) its end. Set from scroll events, so a long reply growing between two renders cannot turn it off
+  // (measuring the distance after the text had grown made following stop partway through a reply).
+  const stickToBottomRef = useRef(true)
   useEffect(() => { forceScrollNextRef.current = true }, [selectedId])
 
   // Auto-scroll to bottom — only when the user is already near the bottom,
@@ -737,8 +740,7 @@ export function ChatPage() {
   useEffect(() => {
     const el = threadRef.current
     if (!el) return
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-    if (forceScrollNextRef.current || distanceFromBottom < 120) {
+    if (forceScrollNextRef.current || stickToBottomRef.current) {
       el.scrollTop = el.scrollHeight
       forceScrollNextRef.current = false
     }
@@ -766,6 +768,7 @@ export function ChatPage() {
     if (!text || !selectedId || sending) return
     setSending(true)
     setIsGenerating(true)
+    stickToBottomRef.current = true   // sending a message always brings the thread to its end
     setDraft("")
     if (textareaRef.current) textareaRef.current.style.height = "auto"
     const optimistic: ChatMessage = { id: crypto.randomUUID(), role: "user", content: text, createdAt: Date.now() }
@@ -982,7 +985,7 @@ export function ChatPage() {
       </div>
 
       {/* Thread */}
-      <div className="chat-thread" ref={threadRef}>
+      <div className="chat-thread" ref={threadRef} onScroll={(ev) => { const el = ev.currentTarget; stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80 }}>
         {!selectedId && (
           <div className="chat-empty">Select a session or create a new one to start</div>
         )}
