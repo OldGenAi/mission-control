@@ -196,8 +196,11 @@ export class VideoJobs {
   // The row is kept (soft delete, like artifacts) but the file goes: videos are large, and
   // the disk cap counts every file in the media folder.
   delete(id: string): boolean {
-    if (!/^[0-9a-f]{32}$/.test(id) || this.running?.id === id || this.queue.includes(id)) return false
-    const deleted = this.db.prepare(`UPDATE videos SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL`).run(Date.now(), id).changes > 0
+    if (!/^[0-9a-f]{32}$/.test(id)) return false
+    // Judged by the stored status, not by `running`: a finished job stays the running one for a
+    // moment while the graphics memory is handed back, and its video can already be deleted.
+    const deleted = this.db.prepare(`UPDATE videos SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL AND status NOT IN ('queued', 'running')`)
+      .run(Date.now(), id).changes > 0
     if (deleted) rmSync(join(this.mediaDir, `${id}.mp4`), { force: true })
     return deleted
   }
