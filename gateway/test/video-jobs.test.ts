@@ -28,6 +28,7 @@ interface FakeOptions { argv?: string[]; vramFreeGb?: number; missingNode?: stri
 async function fakeComfy(opts: FakeOptions = {}) {
   const sockets = new Map<string, WebSocket>()
   const prompts: unknown[] = []
+  const uploads: Array<{ name: string; body: Buffer }> = []
   let freed = 0
   let cancelled = 0
   const server = http.createServer((req, res) => {
@@ -71,6 +72,17 @@ async function fakeComfy(opts: FakeOptions = {}) {
       res.writeHead(200, { 'content-type': 'video/mp4' })
       return res.end(opts.videoBody ?? MP4)
     }
+    if (url.pathname === '/upload/image' && req.method === 'POST') {
+      const chunks: Buffer[] = []
+      req.on('data', (c: Buffer) => chunks.push(c))
+      req.on('end', () => {
+        const body = Buffer.concat(chunks)
+        const name = /filename="([^"]+)"/.exec(body.toString('latin1'))?.[1] ?? ''
+        uploads.push({ name, body })
+        json({ name, subfolder: 'mission-control', type: 'input' })
+      })
+      return
+    }
     if (url.pathname === '/free') { freed++; return json({}) }
     if (url.pathname === '/interrupt' || url.pathname.startsWith('/api/jobs/')) { cancelled++; return json({}) }
     res.writeHead(404).end()
@@ -81,7 +93,7 @@ async function fakeComfy(opts: FakeOptions = {}) {
   const port = (server.address() as AddressInfo).port
   return {
     url: `http://127.0.0.1:${port}`,
-    prompts, freed: () => freed, cancelled: () => cancelled,
+    prompts, uploads, freed: () => freed, cancelled: () => cancelled,
     close: () => new Promise<void>((r) => { wss.close(); server.closeAllConnections(); server.close(() => r()) }),
   }
 }
@@ -250,5 +262,41 @@ test('deleting a video removes its file and its link stops working', async () =>
     assert.equal(jobs.filePath(id), null)
     assert.equal(jobs.list().length, 0)
     assert.equal(jobs.delete('../../etc'), false)
+  } finally { await comfy.close() }
+})
+
+function png(width: number, height: number): Buffer {
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4); ihdr[8] = 8; ihdr[9] = 2
+  const chunk = (type: string, data: Buffer) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length)
+    return Buffer.concat([len, Buffer.from(type, 'latin1'), data, Buffer.alloc(4)])
+  }
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', Buffer.from('x')), chunk('IEND', Buffer.alloc(0))])
+}
+
+test('picture to video: the picture is checked, copied into ComfyUI under our name, and used as the first frame', async () => {
+  const comfy = await fakeComfy()
+  const { jobs, finished } = setup(comfy.url)
+  try {
+    const picture = png(1600, 900)
+    const uploaded = jobs.uploadImage(picture.toString('base64'))
+    assert.match(uploaded.id, /^[0-9a-f]{32}$/)
+    assert.deepEqual([uploaded.type, uploaded.width, uploaded.height], ['png', 1600, 900])
+    assert.throws(() => jobs.uploadImage(Buffer.from('<svg/>').toString('base64')), /not a PNG, JPEG or WebP/)
+    assert.throws(() => jobs.submit('ltx25-i2v', { prompt: 'waves', image: 'f'.repeat(32) }), /not uploaded/)
+    assert.throws(() => jobs.submit('ltx25-i2v', { prompt: 'waves', image: '../../etc/passwd' }), VideoRequestError)
+
+    const id = jobs.submit('ltx25-i2v', { prompt: 'waves roll in', image: uploaded.id, seconds: 2 })
+    const end = await finished(id)
+    assert.equal(end.status, 'done', end.error)
+    assert.equal(comfy.uploads.length, 1)
+    assert.equal(comfy.uploads[0]!.name, `${uploaded.id}.png`)
+    assert.ok(comfy.uploads[0]!.body.includes(picture), 'the exact picture bytes were sent')
+    const graph = comfy.prompts[0] as Record<string, { class_type: string; inputs: Record<string, unknown> }>
+    const nodes = Object.values(graph)
+    assert.equal(nodes.find((n) => n.class_type === 'LoadImage')?.inputs['image'], `mission-control/${uploaded.id}.png`)
+    const firstFrames = nodes.filter((n) => n.class_type === 'LTXVImgToVideoInplace').map((n) => n.inputs['strength'])
+    assert.deepEqual(firstFrames, [0.7, 1.0], 'the picture guides both passes, as in the ComfyUI blueprint')
   } finally { await comfy.close() }
 })

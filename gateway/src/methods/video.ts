@@ -23,6 +23,7 @@ function defaults(params: RecipeParams): ParamValues {
     else if (spec.kind === 'text') values[name] = 'x'
     else if (spec.kind === 'int') values[name] = spec.min
     else if (spec.kind === 'choice') values[name] = spec.options[0]!
+    else if (spec.kind === 'image') values[name] = 'check.png'
   }
   return values
 }
@@ -67,6 +68,18 @@ export function registerVideoMethods(jobs: VideoJobs, comfyUrl: () => string): v
     if (!findRecipe(params['recipeId'])) invalid('There is no recipe with that name.')
     try {
       return { id: jobs.submit(params['recipeId'], params['params']) }
+    } catch (err) {
+      if (err instanceof VideoRequestError) invalid(err.message)
+      throw err
+    }
+  })
+
+  // A picture for image-to-video, as base64. It's checked and stored under an id the gateway
+  // picks; recipes then take that id.
+  registerMethod('video.uploadImage', async (params) => {
+    try {
+      const { id, type, width, height } = jobs.uploadImage(params['data'])
+      return { id, type, width, height }
     } catch (err) {
       if (err instanceof VideoRequestError) invalid(err.message)
       throw err

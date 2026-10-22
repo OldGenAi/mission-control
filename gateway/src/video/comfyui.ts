@@ -144,6 +144,25 @@ export class ComfyClient {
     return gaps
   }
 
+  /**
+   * Copies an input picture into ComfyUI's input/mission-control folder (overwriting an earlier
+   * copy of the same picture) and returns the name LoadImage takes. The file name is the
+   * gateway's own random id, never one from the page.
+   */
+  async uploadImage(data: Buffer, fileName: string, mime: string): Promise<string> {
+    if (!/^[0-9a-f]{32}\.(png|jpg|webp)$/.test(fileName)) throw new Error('Not a stored picture name.')
+    const form = new FormData()
+    form.append('image', new Blob([data], { type: mime }), fileName)
+    form.append('subfolder', 'mission-control')
+    form.append('type', 'input')
+    form.append('overwrite', 'true')
+    const { status, value } = await this.json('/upload/image', { method: 'POST', body: form })
+    if (status !== 200 || !isRecord(value) || value.name !== fileName || value.subfolder !== 'mission-control') {
+      throw new Error('ComfyUI did not accept the picture.')
+    }
+    return `mission-control/${fileName}`
+  }
+
   /** Queues a graph; returns ComfyUI's prompt id. */
   async submit(graph: ComfyGraph, clientId: string): Promise<string> {
     const { status, value } = await this.post('/prompt', { prompt: graph, client_id: clientId })

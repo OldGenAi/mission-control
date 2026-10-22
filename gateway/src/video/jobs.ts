@@ -4,14 +4,16 @@
 // Security-sensitive. Do not modify without Claude review.
 
 import { randomBytes, randomInt } from 'crypto'
-import { mkdirSync, writeFileSync, existsSync, statSync, readdirSync, rmSync } from 'fs'
+import { mkdirSync, writeFileSync, existsSync, statSync, readdirSync, readFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import type Database from 'better-sqlite3'
 import type WebSocket from 'ws'
 import { ComfyClient, checkComfyUrl, type ComfyMessage } from './comfyui.js'
+import { ImageInputs, type ImageInfo } from './image-input.js'
 import { stripMp4Metadata } from './mp4-strip.js'
 import { validateParams } from './params.js'
-import { findRecipe, nodeClasses, type ComfyGraph } from './recipes.js'
+import { findRecipe, nodeClasses, type ComfyGraph, type Recipe } from './recipes.js'
+import type { ParamValues } from './recipe-types.js'
 
 const JOB_TIMEOUT_MS = 30 * 60 * 1000
 const MAX_VIDEO_BYTES = 512 * 1024 * 1024
@@ -99,6 +101,7 @@ type Outcome = 'success' | 'cancelled' | { error: string }
 export class VideoJobs {
   private readonly queue: string[] = []
   private running: Running | null = null
+  private readonly images: ImageInputs
 
   constructor(
     private readonly db: Database.Database,
@@ -107,6 +110,7 @@ export class VideoJobs {
     private readonly emit: (event: VideoEvent) => void,
   ) {
     mkdirSync(mediaDir, { recursive: true, mode: 0o700 })
+    this.images = new ImageInputs(join(mediaDir, 'inputs'))
     // A job can't survive a restart (ComfyUI may still finish it, but nothing is listening).
     db.prepare(`UPDATE videos SET status = 'failed', error = 'Mission Control restarted while this was running.', finished_at = ?
                 WHERE status IN ('queued', 'running')`).run(Date.now())
@@ -127,13 +131,40 @@ export class VideoJobs {
     return rows.map((r) => ({ ...r, params: JSON.parse(r.params) as Record<string, unknown> }))
   }
 
-  /** Bytes used by finished videos in the media folder. */
+  /** Bytes used by finished videos and uploaded pictures in the media folder. */
   diskUsage(): number {
-    let total = 0
+    let total = this.images.diskUsage()
     for (const name of readdirSync(this.mediaDir)) {
       if (/^[0-9a-f]{32}\.mp4$/.test(name)) total += statSync(join(this.mediaDir, name)).size
     }
     return total
+  }
+
+  /** Keeps a picture for image-to-video, after checking it. */
+  uploadImage(base64: unknown): ImageInfo & { id: string } {
+    if (this.diskUsage() >= MAX_MEDIA_BYTES) {
+      throw new VideoRequestError(`Your videos and pictures use the full ${MAX_MEDIA_BYTES / 1024 ** 3} GB. Delete some you no longer need, then try again.`)
+    }
+    const saved = this.images.save(base64)
+    if (typeof saved === 'string') throw new VideoRequestError(`That picture can't be used: ${saved}.`)
+    return saved
+  }
+
+  // Copies each picture the job uses into ComfyUI and swaps its id for the name ComfyUI gave it.
+  // Returns why it couldn't, or the values ready for the recipe.
+  private async placeImages(client: ComfyClient, recipe: Recipe, values: ParamValues): Promise<ParamValues | string> {
+    const placed = { ...values }
+    for (const [name, spec] of Object.entries(recipe.params)) {
+      if (spec.kind !== 'image' || values[name] === undefined) continue
+      const stored = this.images.find(values[name])
+      if (!stored) return 'The picture for this video is no longer there. Upload it again.'
+      try {
+        placed[name] = await client.uploadImage(readFileSync(stored.path), stored.fileName, stored.mime)
+      } catch (err) {
+        return err instanceof Error ? err.message : 'ComfyUI did not accept the picture.'
+      }
+    }
+    return placed
   }
 
   submit(recipeId: unknown, params: unknown): string {
@@ -141,6 +172,11 @@ export class VideoJobs {
     if (!recipe) throw new VideoRequestError('There is no recipe with that name.')
     const checked = validateParams(recipe.params, params)
     if (!checked.ok) throw new VideoRequestError(checked.errors.join('; '))
+    for (const [name, spec] of Object.entries(recipe.params)) {
+      if (spec.kind === 'image' && checked.values[name] !== undefined && !this.images.find(checked.values[name])) {
+        throw new VideoRequestError('That picture is not uploaded (or has been removed). Choose it again.')
+      }
+    }
     const used = this.diskUsage()
     if (used >= MAX_MEDIA_BYTES) {
       throw new VideoRequestError(`Your videos use ${(used / 1024 ** 3).toFixed(1)} GB, the limit is ${MAX_MEDIA_BYTES / 1024 ** 3} GB. Delete some you no longer need, then try again.`)
@@ -219,7 +255,9 @@ export class VideoJobs {
     const problem = await this.preflight(client, recipe, comfyUrl)
     if (problem) return this.finish(id, 'failed', problem)
 
-    const graph = recipe.build(JSON.parse(row.params) as Record<string, string | number>, `mission-control/${id}`)
+    const values = await this.placeImages(client, recipe, JSON.parse(row.params) as ParamValues)
+    if (typeof values === 'string') return this.finish(id, 'failed', values)
+    const graph = recipe.build(values, `mission-control/${id}`)
     const missing = await client.missing(nodeClasses(graph), recipe.models)
     if (missing.length > 0) {
       return this.finish(id, 'failed', `ComfyUI is missing what this recipe needs: ${missing.join(', ')}.`)

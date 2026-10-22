@@ -45,7 +45,25 @@ const button = (primary = false): React.CSSProperties => ({
   color: primary ? '#67e8f9' : '#9CA3AF',
 })
 
-const LABELS: Record<string, string> = { prompt: 'Describe the video', negative: 'Avoid', seconds: 'Length (seconds)', aspect: 'Shape', seed: 'Variation number (0 = a new one each time)' }
+const LABELS: Record<string, string> = { image: 'Picture (it becomes the first frame)', prompt: 'Describe the video', negative: 'Avoid', seconds: 'Length (seconds)', aspect: 'Shape', seed: 'Variation number (0 = a new one each time)' }
+
+// The gateway takes pictures up to 11 MB (PNG, JPEG or WebP) and checks them itself.
+const MAX_PICTURE_BYTES = 11 * 1024 * 1024
+
+/** The recipe shape that best fits a picture, so it isn't cropped more than it has to be. */
+function shapeFor(width: number, height: number): string {
+  const ratio = width / height
+  return ratio > 1.2 ? '16:9' : ratio < 0.83 ? '9:16' : '1:1'
+}
+
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(new Error('Could not read that file.'))
+    reader.readAsDataURL(file)
+  })
+}
 
 const fmtDate = (ts: number) => new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 const fmtSecs = (ms: number) => `${Math.round(ms / 1000)} s`
@@ -69,6 +87,8 @@ export const VideoPage: React.FC = () => {
   const [error, setError] = useState('')
   const [comfyUrl, setComfyUrl] = useState('')
   const [now, setNow] = useState(() => Date.now())
+  const [pictures, setPictures] = useState<Record<string, string>>({}) // uploaded picture id -> data: URL shown as a thumbnail
+  const [uploading, setUploading] = useState(false)
   const refreshTimer = useRef<number | null>(null)
   // Signed links change on every list call; keeping the one a player already has stops the
   // browser reloading every finished video each time the list refreshes. Links last an hour.
@@ -145,6 +165,31 @@ export const VideoPage: React.FC = () => {
     const next = recipes.find((r) => r.id === id)
     setRecipeId(id)
     if (next) setValues(startValues(next))
+  }
+
+  const choosePicture = async (name: string, file: File | undefined) => {
+    if (!file || !recipe) return
+    setError('')
+    if (file.size > MAX_PICTURE_BYTES) {
+      setError(`That picture is ${(file.size / 1024 ** 2).toFixed(1)} MB. The limit is 11 MB.`)
+      return
+    }
+    setUploading(true)
+    try {
+      const dataUrl = await readAsDataUrl(file)
+      const data = dataUrl.slice(dataUrl.indexOf(',') + 1)
+      const uploaded = await gateway.request<{ id: string; width: number; height: number }>('video.uploadImage', { data })
+      setPictures((prev) => ({ ...prev, [uploaded.id]: dataUrl }))
+      setValues((prev) => {
+        const next: Record<string, string | number> = { ...prev, [name]: uploaded.id }
+        if ('aspect' in recipe.params) next['aspect'] = shapeFor(uploaded.width, uploaded.height)
+        return next
+      })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not upload that picture.')
+    } finally {
+      setUploading(false)
+    }
   }
 
   const submit = async () => {
@@ -236,6 +281,16 @@ export const VideoPage: React.FC = () => {
               {spec.kind === 'int' && (
                 <input id={`p-${name}`} type="number" min={spec.min} max={spec.max} step={1} value={Number(values[name] ?? spec.min)}
                   onChange={(e) => setValues({ ...values, [name]: Math.trunc(Number(e.target.value)) })} className="px-2 py-1 rounded text-xs w-40" style={input} />
+              )}
+              {spec.kind === 'image' && (
+                <div className="flex items-center gap-3">
+                  <input id={`p-${name}`} type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading}
+                    onChange={(e) => { void choosePicture(name, e.target.files?.[0]); e.target.value = '' }} className="text-xs text-gray-400" />
+                  {uploading && <span className="text-xs text-gray-500">Checking the picture...</span>}
+                  {typeof values[name] === 'string' && (pictures[values[name] as string]
+                    ? <img src={pictures[values[name] as string]} alt="The chosen picture" style={{ maxHeight: 72, maxWidth: 128, borderRadius: 6 }} />
+                    : <span className="text-xs text-gray-500">Using the picture from before.</span>)}
+                </div>
               )}
               {spec.kind === 'choice' && (
                 <select id={`p-${name}`} value={String(values[name] ?? '')} onChange={(e) => setValues({ ...values, [name]: e.target.value })} className="px-2 py-1 rounded text-xs w-40" style={input}>
