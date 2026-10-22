@@ -168,7 +168,7 @@ export function Sidebar() {
       {/* Footer */}
       <div className="sidebar-footer">
         <a href="#" className="nav-item" style={{ color: 'inherit', textDecoration: 'none' }}>Docs</a>
-        <span className="sidebar-version">v0.2.0</span>
+        <span className="sidebar-version">v0.2.1</span>
         <span className="sidebar-status-dot" title="Gateway online" />
       </div>
     </aside>

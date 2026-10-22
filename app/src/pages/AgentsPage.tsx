@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { gateway } from '../lib/gateway-client'
 import type { GatewayEvent } from '../lib/gateway-client'
-import { useSettings } from '../lib/settings'
+import { useSettings, fetchShellAvailability, type ShellAvailability } from '../lib/settings'
 
 interface AgentInfo {
   role: string
@@ -119,7 +119,14 @@ export const AgentsPage: React.FC = () => {
   // Global shell-access switch (the real gate, with confirmation, lives in Settings).
   // The per-agent tool list below can only *restrict* — it can never enable exec on its own.
   const { settings } = useSettings()
-  const execGloballyOn = settings?.execEnabled ?? false
+  const [shell, setShell] = useState<ShellAvailability | null>(null)
+  const execGloballyOn = (settings?.execEnabled ?? false) && (shell?.available ?? false)
+
+  useEffect(() => {
+    let alive = true
+    void fetchShellAvailability().then(s => { if (alive) setShell(s) })
+    return () => { alive = false }
+  }, [])
 
   useEffect(() => {
     gateway.request('agents.list', {}).then((res) => {
@@ -476,7 +483,7 @@ export const AgentsPage: React.FC = () => {
                       </span>
                     ) : (
                       <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(239,68,68,0.1)', color: '#f87171', border: '1px solid rgba(239,68,68,0.25)' }}>
-                        shell access off — enable in Settings
+                        {shell && !shell.available ? 'shell locked: no sandbox yet' : 'shell access off — enable in Settings'}
                       </span>
                     ))}
                     {isOrchestratorOnly && selectedAgent.tier !== 2 && (

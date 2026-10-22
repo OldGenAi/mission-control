@@ -14,6 +14,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { workspacePath } from '../store/redact.js'
+import { shellAvailability } from './shell-policy.js'
 import type { RegisteredTool, ToolContext, ToolResult } from './types.js'
 
 const execFileAsync = promisify(execFile)
@@ -58,6 +59,13 @@ export const execTool: RegisteredTool = {
   async execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
     const start = Date.now()
     const command = args['command']
+
+    // Last line of defence: whatever let this call through, the shell does not run unless it is
+    // allowed on this machine (see shell-policy.ts).
+    const shell = shellAvailability()
+    if (!shell.available) {
+      return makeResult(context.correlationId, start, '', `exec is locked: ${shell.reason}`)
+    }
 
     if (typeof command !== 'string' || !command.trim()) {
       return makeResult(context.correlationId, start, '', 'command must be a non-empty string')

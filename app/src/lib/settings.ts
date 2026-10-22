@@ -26,6 +26,22 @@ export interface SettingsSnapshot {
   searchApiKey:     string  // masked when read — Brave Search key for web_search
   instances:        Instance[]
   activeInstanceId: string | null
+  welcomeDone:      boolean
+}
+
+/** Whether the shell tool may run on this machine at all (it stays locked without a sandbox). */
+export interface ShellAvailability {
+  available: boolean
+  reason:    string
+}
+
+export async function fetchShellAvailability(): Promise<ShellAvailability | null> {
+  try {
+    const r = await gateway.request<{ ok: boolean; shell?: ShellAvailability }>('settings.get', {})
+    return r.shell ?? null
+  } catch {
+    return null
+  }
 }
 
 export interface InstancesListResponse {

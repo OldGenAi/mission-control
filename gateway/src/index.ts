@@ -17,6 +17,8 @@ import { registerMonitoringQueryMethod } from './methods/monitoring-query.js'
 import { MonitorTracker } from './monitor.js'
 import { registerMemoryMilestonesMethod } from './methods/memory-milestones.js'
 import { registerMemoryIdentityMethods } from './methods/memory-identity.js'
+import { registerOnboardingMethods } from './methods/onboarding.js'
+import { seedStarterEntries } from './memory/starter-entries.js'
 import { registerAgentToolsMethods } from './methods/agent-tools.js'
 import { makeHealthHandler } from './methods/health.js'
 import { registerSettingsMethods } from './methods/settings.js'
@@ -57,6 +59,9 @@ const SPECS_DIR     = path.join(__dirname, 'agents', 'specs')
 
 const db = openDatabase(DB_PATH)
 installFtsTriggers(db)
+// A fresh install gets Dave's starter instructions; entries the person already has are untouched.
+const seeded = seedStarterEntries(db, 'tier1_agent')
+if (seeded.length > 0) console.log(`[gateway] wrote starter instructions for Dave: ${seeded.join(', ')}`)
 const monitorBuffer = new MonitorBuffer(db)
 const monitorTracker = new MonitorTracker(db)
 monitorTracker.start()
@@ -185,6 +190,7 @@ registerMonitorMethods(monitorTracker)
 registerMonitoringQueryMethod(db)
 registerMemoryMilestonesMethod(db)
 registerMemoryIdentityMethods(db)
+registerOnboardingMethods(db, settingsStore)
 registerAgentToolsMethods()
 
 // ---------------------------------------------------------------------------

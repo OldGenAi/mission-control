@@ -84,8 +84,26 @@ export class AgentLoop {
         this.persistMessages(sessionId, [{ role: 'user', content: message }], [null], false)
       }
 
-      // Step 4 — load frozen identity snapshot for this session
-      const systemPrompt = loadSystemPrompt(this.config.db, this.config.agentId)
+      // Step 4 — build tool definitions from the tools map
+      // Three filters: exec gate → registry capability → UI override
+      const enabledOverride = toolOverrides.get(this.config.agentId)
+      const toolDefs: ToolDefinition[] = []
+      for (const [name, tool] of this.config.tools) {
+        if (tool.requiresExplicitEnable && !this.config.execEnabled) continue
+        if (!this.config.registry.hasCapability(this.config.agentId, name)) continue
+        if (enabledOverride !== undefined && !enabledOverride.has(name)) continue
+        toolDefs.push(tool.schema)
+      }
+      const tools = toolDefs.length > 0 ? toolDefs : undefined
+      // Dispatch only ever runs a tool that was offered this turn. A model can name a tool it
+      // was never given (exec is a common guess), and the registry alone would let it through.
+      const offeredTools = new Set(toolDefs.map((t) => t.name))
+
+      // Step 5 — load frozen identity snapshot for this session, plus what is on right now
+      const systemPrompt = loadSystemPrompt(this.config.db, this.config.agentId, {
+        offeredTools: [...offeredTools],
+        execEnabled: this.config.execEnabled ?? false,
+      })
 
       // The live clock rides on the latest USER turn (which is always reprocessed anyway),
       // NOT the system prompt — keeping the cached system+tools prefix byte-stable so SWA
@@ -97,18 +115,6 @@ export class AgentLoop {
         ...history,
         { role: 'user', content: `${currentDateTimeNote()}\n\n${message}` },
       ]
-
-      // Step 5 — build tool definitions from the tools map
-      // Three filters: exec gate → registry capability → UI override
-      const enabledOverride = toolOverrides.get(this.config.agentId)
-      const toolDefs: ToolDefinition[] = []
-      for (const [name, tool] of this.config.tools) {
-        if (tool.requiresExplicitEnable && !this.config.execEnabled) continue
-        if (!this.config.registry.hasCapability(this.config.agentId, name)) continue
-        if (enabledOverride !== undefined && !enabledOverride.has(name)) continue
-        toolDefs.push(tool.schema)
-      }
-      const tools = toolDefs.length > 0 ? toolDefs : undefined
 
       let iterations = 0
       const maxIterations = this.config.maxIterations ?? 10
@@ -261,7 +267,8 @@ export class AgentLoop {
         })
 
         for (const toolCall of pendingToolCalls) {
-          const permitted = this.config.registry.hasCapability(this.config.agentId, toolCall.name)
+          const permitted = offeredTools.has(toolCall.name)
+            && this.config.registry.hasCapability(this.config.agentId, toolCall.name)
 
           if (!permitted) {
             console.warn(`[loop] ${correlationId} SECURITY: agent "${this.config.agentId}" attempted unpermitted tool "${toolCall.name}"`)

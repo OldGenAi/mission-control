@@ -17,9 +17,20 @@ if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
   console.error(`[gateway] GATEWAY_PORT must be a port number (1-65535), got "${process.env['GATEWAY_PORT']}"`);
   process.exit(1);
 }
-// GATEWAY_HOST=0.0.0.0 in Docker so the container port is reachable from the host.
-// Default stays loopback for native installs.
+// Loopback by default: only this computer can reach the gateway. Opening it to the network
+// (GATEWAY_HOST=0.0.0.0 or a LAN address) is a deliberate choice, so it also needs the names
+// other devices will use in GATEWAY_ALLOWED_HOSTS. Without them every LAN request is refused by
+// the Host check anyway, so the port would be exposed for nothing.
 const HOST = process.env['GATEWAY_HOST'] ?? '127.0.0.1';
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
+if (!LOOPBACK_HOSTS.has(HOST) && !(process.env['GATEWAY_ALLOWED_HOSTS'] ?? '').trim()) {
+  console.error(
+    `[gateway] GATEWAY_HOST=${HOST} would open Mission Control to your network. ` +
+    'If you mean to, also set GATEWAY_ALLOWED_HOSTS to the address other devices will use ' +
+    '(for example 192.168.1.20). Otherwise remove GATEWAY_HOST to keep it on this computer only.',
+  );
+  process.exit(1);
+}
 
 // Map to store auth challenge nonces per client
 const nonces = new Map<string, string>();

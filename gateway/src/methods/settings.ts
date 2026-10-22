@@ -1,6 +1,7 @@
 import { registerMethod } from '../router.js'
 import { broadcastEvent } from '../broadcast.js'
 import type { SettingsStore, SettingsSnapshot, ReasoningEffort } from '../store/settings.js'
+import { shellAvailability } from '../tools/shell-policy.js'
 
 /**
  * Mask provider API keys in any settings payload that crosses the wire.
@@ -71,11 +72,16 @@ function coercePatch(input: Record<string, unknown>, current: SettingsSnapshot):
 
 export function registerSettingsMethods(store: SettingsStore): void {
   registerMethod('settings.get', async () => {
-    return { ok: true, settings: maskKeys(store.get()) }
+    return { ok: true, settings: maskKeys(store.get()), shell: shellAvailability() }
   })
 
   registerMethod('settings.update', async (params) => {
     const patch = coercePatch(params, store.get())
+    // The setting alone can't turn the shell on: it stays locked until commands can be sandboxed.
+    const shell = shellAvailability()
+    if (patch.execEnabled === true && !shell.available) {
+      return { ok: false, error: `SHELL_LOCKED: ${shell.reason}` }
+    }
     if (Object.keys(patch).length === 0) {
       return { ok: false, error: 'NO_VALID_FIELDS: payload contained no recognised settings fields' }
     }

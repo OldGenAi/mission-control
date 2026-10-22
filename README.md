@@ -165,7 +165,7 @@ To stop Mission Control, press Ctrl+C in the gateway window.
 
 ## Running it with Docker instead
 
-Docker keeps Mission Control in its own container. Day to day it works the same, but if you plan to turn on the shell tool, this limits what shell commands can reach to the folders shared with the container (see [Security and privacy](#security-and-privacy)).
+Docker keeps Mission Control in its own container. Day to day it works the same.
 
 1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) (on Windows, keep "Use WSL 2 based engine" on) or [Docker Engine](https://docs.docker.com/engine/install/) on Linux, and make sure it's running.
 2. Copy the settings template and pick your provider in it: `cp gateway/.env.example gateway/.env`
@@ -178,7 +178,8 @@ Almost everything is set up in the app, under Settings:
 
 - Providers and keys: add your OpenRouter and Brave keys. They're stored encrypted.
 - Instances: create model setups (say, one local and one cloud) and switch the active one in the sidebar.
-- Exec (shell) tool: off by default; turning it on needs an explicit confirmation, and is at your own risk (see [Security and privacy](#security-and-privacy)).
+- Exec (shell) tool: locked for now (see [Security and privacy](#security-and-privacy)).
+- About you: the first time you open Mission Control it asks a few questions so Dave knows who he's helping. You can change the answers, and Dave's own instructions, on the Agents page.
 
 `gateway/.env` is optional. It only sets first-boot defaults. After the first start, what you set in Settings wins.
 
@@ -187,11 +188,12 @@ Almost everything is set up in the app, under Settings:
 Mission Control is built to be safe to run on your own machine:
 
 - Your data stays local. Sessions, memory and artifacts live in a SQLite database on your computer.
-- The gateway only listens on `127.0.0.1` (this computer), unless you change `GATEWAY_HOST` yourself. Requests that name any other host are refused, which blocks DNS-rebinding tricks.
+- The gateway only listens on `127.0.0.1` (this computer). To share it on your network you have to set both `GATEWAY_HOST` and `GATEWAY_ALLOWED_HOSTS`, and it won't start with only one of them. Requests that name any other host are refused, which blocks DNS-rebinding tricks. `mc doctor` also tells you if Mission Control, LM Studio, Ollama or ComfyUI can be reached from other devices.
 - Every connection needs the gateway's key, checked together with where the request comes from, with replay protection. The browser never sees that key: `npm run open` proves it holds the key without sending it, gets a one-time sign-in link, and the page swaps that link for its own session.
 - The app runs under a strict Content-Security-Policy, and it loads nothing from other websites (even its font ships with it).
 - API keys are encrypted at rest, masked in the app and removed from logs. The encryption key sits next to them in `~/.missioncontrol`, so this protects a copied settings file, not someone with full access to your account.
-- The shell tool is opt-in and is not a sandbox. It's off by default and needs a confirmation. When it's on, commands start in your workspace folder, run without your API keys and are time-limited, but a command can still read any file the gateway can. On a normal install that means anything your user account can read. Turning it on is at your own risk: treat it like handing Dave a terminal on your computer. Running Mission Control in Docker narrows this to the folders shared with the container. (On Windows without WSL or Docker, the shell tool isn't available at all.) A properly locked room for it is on the roadmap.
+- The shell tool is locked. A shell command can read or change anything your user account can, so it stays locked until Mission Control can run commands in a locked room (on the roadmap). Dave can only use the tools he's been given for that chat, and the shell refuses to run even if something asks for it. Developers who accept the risk on their own machine can unlock it by starting the gateway with `MC_ALLOW_UNSANDBOXED_SHELL=1`, then switching it on in Settings.
+- Dave's instructions (his soul, how he works, who he is, and who you are) can only be changed by you, on the Agents page. Dave's own tools can't rewrite them, so a web page he reads can't talk him into changing his rules.
 - Hardened throughout: parameterised database queries; web fetch refuses private and internal addresses (also after DNS lookup and on redirects); file tools can't leave the workspace or read credential files like `.env`; and every change is automatically checked for known vulnerable dependencies.
 
 Use a local model and leave the web tools alone, and nothing leaves your machine. (Web search sends your queries to Brave, and web fetch contacts the sites you ask for.)
