@@ -683,6 +683,22 @@ export function ChatPage() {
     return () => { cancelled = true }
   }, [activeProvider])
 
+  // A model list that came back empty or with an error (a local server with nothing loaded yet) is asked for again every 10 seconds, so loading
+  // a model afterwards needs no page refresh and the warning clears by itself.
+  const modelsMissing = models.length === 0 || modelsError !== null
+  useEffect(() => {
+    if (!activeProvider || modelsLoading || !modelsMissing) return
+    const again = window.setInterval(async () => {
+      try {
+        const r = await gateway.request<ModelsResponse>("models.list", {})
+        setModels(r.models ?? [])
+        setModelsError(r.error ?? null)
+        setModelsProbedUrl(r.probedUrl ?? null)
+      } catch { /* still unreachable: the next round asks again */ }
+    }, 10_000)
+    return () => window.clearInterval(again)
+  }, [activeProvider, modelsLoading, modelsMissing])
+
   // Tell the gateway which chat is on screen, so the voice window talks to Dave in this one and its words show up here.
   useEffect(() => {
     if (!selectedId) return
@@ -733,6 +749,16 @@ export function ChatPage() {
   // (measuring the distance after the text had grown made following stop partway through a reply).
   const stickToBottomRef = useRef(true)
   useEffect(() => { forceScrollNextRef.current = true }, [selectedId])
+
+  // Keep following when the thread changes by itself: a finished reply re-renders as formatted text and grows after the history effect below ran.
+  useEffect(() => {
+    const el = threadRef.current
+    if (!el) return
+    const follow = () => { if (stickToBottomRef.current) el.scrollTop = el.scrollHeight }
+    const watcher = new MutationObserver(() => requestAnimationFrame(follow))
+    watcher.observe(el, { childList: true, subtree: true, characterData: true })
+    return () => watcher.disconnect()
+  }, [])
 
   // Auto-scroll to bottom — only when the user is already near the bottom,
   // OR when we just switched sessions (forceScrollNextRef). If they've scrolled
