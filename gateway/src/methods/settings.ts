@@ -1,6 +1,7 @@
 import { registerMethod } from '../router.js'
 import { broadcastEvent } from '../broadcast.js'
 import type { SettingsStore, SettingsSnapshot, ReasoningEffort } from '../store/settings.js'
+import { checkComfyUrl } from '../video/comfyui.js'
 import { shellAvailability } from '../tools/shell-policy.js'
 
 /**
@@ -45,6 +46,9 @@ function coercePatch(input: Record<string, unknown>, current: SettingsSnapshot):
   if (typeof input['execEnabled']      === 'boolean') patch.execEnabled      = input['execEnabled']
   if (typeof input['thinkingDefault']  === 'boolean') patch.thinkingDefault  = input['thinkingDefault']
   if (isValidEffort(input['reasoningEffort']))        patch.reasoningEffort  = input['reasoningEffort']
+  // Only a loopback address is ever stored: the Video page must not send jobs to another machine.
+  if (typeof input['comfyUrl'] === 'string' && 'url' in checkComfyUrl(input['comfyUrl'])) patch.comfyUrl = input['comfyUrl']
+  if (typeof input['videoFreeAfterJob'] === 'boolean') patch.videoFreeAfterJob = input['videoFreeAfterJob']
   // Search key: ignore the masked placeholder so re-saving the UI doesn't clobber the real key.
   if (typeof input['searchApiKey'] === 'string' && input['searchApiKey'] !== maskKey(current.searchApiKey)) {
     patch.searchApiKey = input['searchApiKey']

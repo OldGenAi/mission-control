@@ -12,6 +12,7 @@ import { MemoryPage } from "./pages/MemoryPage"
 import { ChannelsPage } from "./pages/ChannelsPage"
 import { MonitorPage } from "./pages/MonitorPage"
 import { ArtifactsPage } from "./pages/ArtifactsPage"
+import { VideoPage } from "./pages/VideoPage"
 
 // ---------- breadcrumb -------------------------------------------
 
@@ -73,6 +74,7 @@ function Shell() {
             <Route path="/pipelines/approvals" element={<PipelinesPage />} />
 
             <Route path="/artifacts" element={<ArtifactsPage />} />
+            <Route path="/video" element={<VideoPage />} />
 
             <Route path="/agents"   element={<AgentsPage />} />
             <Route path="/sessions" element={<SessionsPage />} />

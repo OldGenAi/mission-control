@@ -28,6 +28,8 @@ export interface SettingsSnapshot {
   searchApiKey:     string   // Brave Search key for web_search (was env-only)
   instances:        Instance[]
   activeInstanceId: string | null
+  comfyUrl:         string    // ComfyUI on this computer, for the Video page (loopback only, checked on use)
+  videoFreeAfterJob: boolean  // ask ComfyUI to give the graphics memory back after each video
   welcomeDone:      boolean  // the first-run "tell Dave about you" form was saved or skipped
 }
 
@@ -48,6 +50,8 @@ const DEFAULTS: SettingsSnapshot = {
   searchApiKey:     '',
   instances:        [],
   activeInstanceId: null,
+  comfyUrl:         'http://127.0.0.1:8188',
+  videoFreeAfterJob: true,
   welcomeDone:      false,
 }
 

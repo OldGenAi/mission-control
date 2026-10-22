@@ -52,7 +52,8 @@ export type PushEventName =
   | 'presence'
   | 'shutdown'
   | 'error.occurred'
-  | 'settings.changed';
+  | 'settings.changed'
+  | 'video.event';
 
 // Agent status
 export type AgentStatus =

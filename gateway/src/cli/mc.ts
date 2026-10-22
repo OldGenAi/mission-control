@@ -22,6 +22,7 @@ import { GATEWAY_VERSION } from '../version.js'
 import { redact } from '../store/redact.js'
 import { shellAvailability } from '../tools/shell-policy.js'
 import { networkChecks, type WatchedServer } from './network-exposure.js'
+import { comfyChecks } from './comfy-check.js'
 
 const PORT = gatewayPort()
 const BASE = `http://127.0.0.1:${PORT}`
@@ -157,6 +158,7 @@ function logs(arg: string | undefined): boolean {
 
 interface SettingsView {
   localProviderUrl?: string
+  comfyUrl?: string
   execEnabled?: boolean
   provider?: string
   activeInstanceId?: string | null
@@ -203,13 +205,17 @@ function watchedServers(settings: SettingsView): WatchedServer[] {
     { name: 'Ollama', port: 11434, fix: 'Set OLLAMA_HOST to 127.0.0.1 (or remove it) and restart Ollama' },
     { name: 'ComfyUI', port: 8188, fix: 'Start ComfyUI without --listen' },
   ]
-  try {
-    const port = Number(new URL(settings.localProviderUrl ?? '').port)
-    if (port && !servers.some((s) => s.port === port)) {
-      servers.push({ name: 'Your model server', port, fix: 'Set it to listen on 127.0.0.1 only' })
+  const extra: Array<[string | undefined, string, string]> = [
+    [settings.localProviderUrl, 'Your model server', 'Set it to listen on 127.0.0.1 only'],
+    [settings.comfyUrl, 'ComfyUI', 'Start ComfyUI without --listen'],
+  ]
+  for (const [address, name, fix] of extra) {
+    try {
+      const port = Number(new URL(address ?? '').port)
+      if (port && !servers.some((s) => s.port === port)) servers.push({ name, port, fix })
+    } catch {
+      // No address set: the defaults above cover the usual ports.
     }
-  } catch {
-    // No local server address set: the defaults above cover the usual ports.
   }
   return servers
 }
@@ -250,6 +256,7 @@ async function doctor(): Promise<boolean> {
 
   const settings = readSettings()
   checks.push(await modelCheck(settings))
+  checks.push(...await comfyChecks(settings.comfyUrl))
   checks.push(...await networkChecks(watchedServers(settings)))
   const shell = shellAvailability()
   if (!shell.available) {

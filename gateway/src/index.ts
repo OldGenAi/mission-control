@@ -4,7 +4,7 @@ import { startServer, stopServer } from './server.js'
 import { openDatabase, installFtsTriggers } from './store/db.js'
 import { MonitorBuffer } from './store/monitor-buffer.js'
 import { AgentRegistry } from './agents/registry.js'
-import { getClient, sendEvent } from './broadcast.js'
+import { getClient, sendEvent, broadcastEvent } from './broadcast.js'
 import { registerSessionMethods } from './methods/sessions.js'
 import { registerToolsMethods } from './methods/tools.js'
 import { registerArtifactsMethods } from './methods/artifacts.js'
@@ -30,6 +30,9 @@ import { ProviderRegistry } from './providers/registry.js'
 import { resolveBootProvider } from './providers/unconfigured.js'
 import { startPricingRefresh } from './providers/pricing.js'
 import { registerInstancesMethods } from './methods/instances.js'
+import { registerVideoMethods } from './methods/video.js'
+import { VideoJobs } from './video/jobs.js'
+import { setVideoFileResolver } from './http-app.js'
 import { fileRead, fileWrite, fileEdit, fileList } from './tools/file.js'
 import { webFetch, webSearch, setSearchApiKeySource } from './tools/web.js'
 import { execTool } from './tools/exec.js'
@@ -192,6 +195,15 @@ registerMemoryMilestonesMethod(db)
 registerMemoryIdentityMethods(db)
 registerOnboardingMethods(db, settingsStore)
 registerAgentToolsMethods()
+
+const videoJobs = new VideoJobs(
+  db,
+  path.join(DATA_DIR, 'media', 'video'),
+  () => { const s = settingsStore.get(); return { comfyUrl: s.comfyUrl, freeAfterJob: s.videoFreeAfterJob } },
+  (event) => broadcastEvent('video.event', { ...event }),
+)
+registerVideoMethods(videoJobs, () => settingsStore.get().comfyUrl)
+setVideoFileResolver((id) => videoJobs.filePath(id))
 
 // ---------------------------------------------------------------------------
 // Watchdog
