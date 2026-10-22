@@ -4,9 +4,9 @@ description: Hands the task to the Orchestrator, which decomposes it and delegat
 version: "1.0"
 
 budget:
-  maxTokens: 100000
+  maxTokens: 250000
   maxCostUsd: 1.00
-  timeoutSeconds: 600
+  timeoutSeconds: 1200
   onExceed: abort
 
 steps:
