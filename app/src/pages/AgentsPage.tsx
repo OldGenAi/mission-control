@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { gateway } from '../lib/gateway-client'
+import { useAssistantName } from '../lib/assistant'
 import type { GatewayEvent } from '../lib/gateway-client'
 import { useSettings, fetchShellAvailability, type ShellAvailability } from '../lib/settings'
 
@@ -60,7 +61,6 @@ const STATIC_ROLES: AgentInfo[] = [
 
 // Human-readable display names — role id → label shown in the UI
 const DISPLAY_NAMES: Record<string, string> = {
-  tier1_agent:  'Dave',
   orchestrator: 'Orchestrator',
 }
 
@@ -105,6 +105,7 @@ const StatusDot: React.FC<{ status: AgentStatus }> = ({ status }) => {
 }
 
 export const AgentsPage: React.FC = () => {
+  const assistant = useAssistantName()
   const [agents, setAgents] = useState<AgentInfo[]>(STATIC_ROLES)
   const [tools, setTools] = useState<ToolInfo[]>([])
   const [selected, setSelected] = useState<string>('tier1_agent')
@@ -235,7 +236,7 @@ export const AgentsPage: React.FC = () => {
           >
             <div className="flex items-center gap-2 mb-0.5">
               <StatusDot status={st} />
-              <span className="font-medium text-sm text-white">{DISPLAY_NAMES[a.role] ?? a.role}</span>
+              <span className="font-medium text-sm text-white">{a.role === 'tier1_agent' ? assistant : DISPLAY_NAMES[a.role] ?? a.role}</span>
               <TierBadge tier={a.tier} />
             </div>
             {statusMap[a.role]?.detail && (
@@ -357,7 +358,7 @@ export const AgentsPage: React.FC = () => {
           <h4 className={`text-sm font-medium ${name === 'DAILY NOTE' ? 'mb-1' : 'mb-3'} text-white`}>{name}</h4>
           {name === 'DAILY NOTE' && (
             <p className="text-[11px] mb-3" style={{ color: C.muted }}>
-              Auto-expires after 7 days. Dave can call <span style={{ color: C.cyan }}>memory_promote</span> to graduate a note to a permanent milestone. Edits apply to new sessions.
+              Auto-expires after 7 days. {assistant} can call <span style={{ color: C.cyan }}>memory_promote</span> to graduate a note to a permanent milestone. Edits apply to new sessions.
             </p>
           )}
           {revealed[name] ? (
@@ -588,7 +589,7 @@ export const AgentsPage: React.FC = () => {
       {renderRoster()}
       <div className="flex-1 flex flex-col p-6 overflow-auto min-w-0">
         <div className="mb-5">
-          <h2 className="text-lg font-semibold text-white">{DISPLAY_NAMES[selected] ?? selected}</h2>
+          <h2 className="text-lg font-semibold text-white">{selected === 'tier1_agent' ? assistant : DISPLAY_NAMES[selected] ?? selected}</h2>
           <p className="text-xs mt-0.5" style={{ color: C.muted }}>
             Tier {selectedAgent.tier} · {selectedAgent.allowedTools.length} credentialed tools
           </p>

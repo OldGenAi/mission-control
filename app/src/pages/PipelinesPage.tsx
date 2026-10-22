@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { gateway } from '../lib/gateway-client'
+import { useAssistantName } from '../lib/assistant'
 import type { GatewayEvent } from '../lib/gateway-client'
 import { useSettings, updateInstance, listInstances, type ProviderName } from '../lib/settings'
 
@@ -233,6 +234,7 @@ const PipelineModelPicker: React.FC = () => {
 }
 
 export const PipelinesPage: React.FC = () => {
+  const assistant = useAssistantName()
   const [tab, setTab] = useState<'runs' | 'approvals'>('runs')
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
   const [available, setAvailable] = useState<AvailablePipeline[]>([])
@@ -424,7 +426,7 @@ export const PipelinesPage: React.FC = () => {
           runs.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-48 text-gray-600">
               <p className="font-medium">No pipeline runs yet</p>
-              <p className="text-xs mt-1">Runs appear here when Dave triggers a pipeline.</p>
+              <p className="text-xs mt-1">Runs appear here when {assistant} triggers a pipeline.</p>
             </div>
           ) : runs.map((p) => <PipelineRow key={p.id} pipeline={p} onAbort={handleAbort} onClick={() => setDetailRun(p)} />)
         )}

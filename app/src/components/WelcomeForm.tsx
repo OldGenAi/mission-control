@@ -46,6 +46,7 @@ export function WelcomeForm() {
   const [assistantName, setAssistantName] = useState("Dave")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
+  const shown = assistantName.trim() || "Dave"   // the labels follow the name typed in question 6
 
   useEffect(() => {
     let alive = true
@@ -65,7 +66,7 @@ export function WelcomeForm() {
 
   const save = async () => {
     if (!name.trim()) {
-      setError("Please tell Dave what to call you.")
+      setError(`Please tell ${shown} what to call you.`)
       return
     }
     setSaving(true)
@@ -74,7 +75,7 @@ export function WelcomeForm() {
       const r = await gateway.request<{ ok: boolean; error?: string }>("onboarding.save", {
         name, location, timeZone: localTimeZone(), comfort, helpWith, neverTouch, assistantName,
       })
-      if (r.ok) setNeeded(false)
+      if (r.ok) window.location.reload()
       else setError(r.error ?? "Could not save. Please try again.")
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save. Please try again.")
@@ -104,10 +105,10 @@ export function WelcomeForm() {
       }}>
         <h2 id="welcome-title" style={{ margin: "0 0 4px", fontSize: 18, color: "var(--text-strong)" }}>Welcome to Mission Control</h2>
         <p style={{ margin: "0 0 18px", fontSize: 13, color: "var(--text)" }}>
-          Tell Dave a little about you. You can change any of this later on the Agents page.
+          Tell {shown} a little about you. You can change any of this later on the Agents page.
         </p>
 
-        <Question n={1} label="What should Dave call you?">
+        <Question n={1} label={`What should ${shown} call you?`}>
           <input style={input} value={name} maxLength={60} onChange={e => setName(e.target.value)} autoFocus />
         </Question>
         <Question n={2} label="Where are you?" note="A town or country, for times and spelling.">
@@ -126,7 +127,7 @@ export function WelcomeForm() {
         <Question n={4} label="What would you like help with?" note="For example: sorting files, writing emails, research.">
           <textarea style={{ ...input, minHeight: 60, resize: "vertical" }} value={helpWith} maxLength={400} onChange={e => setHelpWith(e.target.value)} />
         </Question>
-        <Question n={5} label="Anything Dave must never touch or do?" note='For example: "my Tax folder", "never send emails". Dave will respect this. A future update will also make Mission Control enforce it.'>
+        <Question n={5} label={`Anything ${shown} must never touch or do?`} note={`For example: "my Tax folder", "never send emails". ${shown} will respect this. A future update will also make Mission Control enforce it.`}>
           <textarea style={{ ...input, minHeight: 60, resize: "vertical" }} value={neverTouch} maxLength={400} onChange={e => setNeverTouch(e.target.value)} />
         </Question>
         <Question n={6} label="What would you like to call your assistant?">

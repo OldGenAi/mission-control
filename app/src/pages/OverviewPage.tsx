@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { gateway } from '../lib/gateway-client'
+import { useAssistantName } from '../lib/assistant'
 import type { GatewayEvent } from '../lib/gateway-client'
 import { useSettings } from '../lib/settings'
 
@@ -79,6 +80,10 @@ const AgentsIcon = () => (
 )
 
 export const OverviewPage: React.FC = () => {
+  const assistant = useAssistantName()
+  // Event handlers are set up once; they read the latest name from here.
+  const assistantRef = useRef(assistant)
+  useEffect(() => { assistantRef.current = assistant }, [assistant])
   const navigate = useNavigate()
   const { settings } = useSettings()
   const [gatewayOk, setGatewayOk] = useState(false)
@@ -156,7 +161,7 @@ export const OverviewPage: React.FC = () => {
             : p.status
           setDaveStatus(mapped)
           setDaveDetail(p.detail ?? '')
-          addFeed({ label: 'Dave', detail: p.detail ?? p.status, kind: 'agent' })
+          addFeed({ label: assistantRef.current, detail: p.detail ?? p.status, kind: 'agent' })
         }
       }
       if (event.event === 'pipeline.tick' && event.payload) {
@@ -284,7 +289,7 @@ export const OverviewPage: React.FC = () => {
           />
           <div className="relative">
             <p className="text-xs uppercase tracking-widest text-gray-500 mb-3">Personal Agent</p>
-            <p className="text-3xl font-bold text-white mb-4">Dave</p>
+            <p className="text-3xl font-bold text-white mb-4">{assistant}</p>
             <div
               className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-sm font-medium"
               style={{ background: davePillBg, borderColor: davePillBorder, color: davePillText }}
@@ -379,7 +384,7 @@ export const OverviewPage: React.FC = () => {
           <p className="text-xs uppercase tracking-widest text-gray-500 mb-4">Recent Activity</p>
           {feed.length === 0 ? (
             <p className="text-sm text-gray-600 py-8 text-center">
-              No activity yet &mdash; send Dave a message to start.
+              No activity yet &mdash; send {assistant} a message to start.
             </p>
           ) : (
             <div className="space-y-0.5">
@@ -431,7 +436,7 @@ export const OverviewPage: React.FC = () => {
             }}
           >
             <PlusIcon />
-            New session with Dave
+            New session with {assistant}
           </button>
 
           <button
