@@ -103,7 +103,7 @@ export const MemoryPage: React.FC = () => {
               {assistant} writes milestones here using{' '}
               <code className="text-gray-500">memory_write</code> with{' '}
               <code className="text-gray-500">type: milestone</code>.
-              Only important checkpoints appear — not the full session history.
+              Only important checkpoints appear, not the full session history.
             </p>
           </div>
         ) : (

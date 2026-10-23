@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react"
 import { gateway, WS_URL } from "../lib/gateway-client"
+import { APP_VERSION } from "../lib/version"
 import { mcConfig } from "../lib/mc-config"
 import { useSettings, updateSettings, updateInstance, fetchShellAvailability, type ShellAvailability } from "../lib/settings"
 import { getPerfMode, setPerfMode, type PerfMode } from "../lib/perf"
@@ -234,11 +235,11 @@ function ExecConfirmModal({ onConfirm, onCancel }: { onConfirm: () => void; onCa
           <span style={{ color: T.amber }}>⚠</span> Enable shell access?
         </h3>
         <p style={{ margin: "0 0 12px", fontSize: 13, lineHeight: 1.6, color: T.text }}>
-          This lets {assistant} — and any pipeline worker — run <strong>shell commands on this machine</strong>. It is the
+          This lets {assistant}, and any pipeline worker, run <strong>shell commands on this machine</strong>. It is the
           most powerful capability you can grant: a command can read, change, or delete files.
         </p>
         <p style={{ margin: "0 0 16px", fontSize: 13, lineHeight: 1.6, color: T.muted }}>
-          The main risk is indirect — a web page or document {assistant} reads could try to trick it into running
+          The main risk is indirect: a web page or document {assistant} reads could try to trick it into running
           something harmful (prompt injection). Only enable this for a session you're actively supervising,
           and switch it back off when you're done.
         </p>
@@ -339,6 +340,10 @@ const ENTRY_LABELS: Record<string, string> = { identity: "its identity", soul: "
 
 function gatewayPort(): string {
   try { return new URL(WS_URL).port || "80" } catch { return "unknown" }
+}
+
+function providerPort(url: string | undefined): string {
+  try { return url ? new URL(url).port || "80" : "not set" } catch { return "unknown" }
 }
 
 function AssistantNameCard() {
@@ -477,7 +482,7 @@ function QuickTab() {
 
       <Card>
         <SectionTitle>Storage</SectionTitle>
-        {[["DB", "~/.missioncontrol/gateway.sqlite"], ["Config", "~/.missioncontrol/"], ["App", "v0.2.3"]].map(([k, v]) => (
+        {[["DB", "~/.missioncontrol/gateway.sqlite"], ["Config", "~/.missioncontrol/"], ["App", APP_VERSION]].map(([k, v]) => (
           <div key={k} style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
             <span style={{ fontSize: 12, color: T.muted }}>{k}</span>
             <span style={{ fontSize: 11, color: T.text, fontFamily: "monospace" }}>{v}</span>
@@ -564,10 +569,10 @@ function GatewayTab() {
         <p style={{ fontSize: 12, color: T.amber, margin: "0 0 16px", padding: "8px 12px", background: "rgba(255,184,0,0.08)", borderRadius: 6, border: `1px solid rgba(255,184,0,0.2)` }}>
           Changes require gateway restart. Edit <code style={{ color: T.text }}>gateway/.env</code> directly then run <code style={{ color: T.text }}>start.sh</code>.
         </p>
-        <ReadonlyField label="Host" value="127.0.0.1" note="Loopback only — intentional security constraint" />
+        <ReadonlyField label="Host" value="127.0.0.1" note="Loopback only, on purpose, for security" />
         <ReadonlyField label="Port" value={gatewayPort()} note="Set via GATEWAY_PORT in gateway/.env" />
-        <ReadonlyField label="Auth token" value="Auto-generated in ~/.missioncontrol/config.json" note="The app loads it automatically — no manual copy. Override with VITE_MC_TOKEN in app/.env.local if needed." />
-        <ReadonlyField label="Origin validation" value="Enabled — loopback only" />
+        <ReadonlyField label="Auth token" value="Auto-generated in ~/.missioncontrol/config.json" note="The app loads it automatically, no manual copy. Override with VITE_MC_TOKEN in app/.env.local if needed." />
+        <ReadonlyField label="Origin validation" value="Enabled, loopback only" />
       </Card>
     </div>
   )
@@ -619,7 +624,7 @@ function ProvidersTab() {
       providerKeys: { openrouter: orKey, anthropic: anthropicKey, local: localKey },
       searchApiKey: searchKey,
     })
-    if (!next) { setError("Save failed — gateway rejected the change."); return }
+    if (!next) { setError("Save failed: the gateway rejected the change."); return }
     markSaved()
   }
 
@@ -643,7 +648,7 @@ function ProvidersTab() {
         <Field label="API key (only if your server requires one)">
           <MaskedInput value={localKey} onChange={setLocalKey} placeholder="Leave empty if the server has no password" />
         </Field>
-        <p style={{ fontSize: 11, color: T.muted, margin: 0 }}>OpenAI-compatible REST. Loopback only. Applied immediately — no restart needed. For LM Studio's "Require Authentication", create a key in its Developer tab and paste it here. Save before pressing Test.</p>
+        <p style={{ fontSize: 11, color: T.muted, margin: 0 }}>OpenAI-compatible REST. Loopback only. Applied immediately, no restart needed. For LM Studio's "Require Authentication", create a key in its Developer tab and paste it here. Save before pressing Test.</p>
       </Card>
 
       <Card accent={T.violet}>
@@ -655,7 +660,7 @@ function ProvidersTab() {
           </div>
           {tstIcon("openrouter")}
         </Field>
-        <p style={{ fontSize: 11, color: T.muted, margin: 0 }}>Saved to <code style={{ color: T.text }}>~/.missioncontrol/settings.json</code>. Applied immediately — no restart needed. The key shown above is masked — leave it as-is to keep the existing key.</p>
+        <p style={{ fontSize: 11, color: T.muted, margin: 0 }}>Saved to <code style={{ color: T.text }}>~/.missioncontrol/settings.json</code>. Applied immediately, no restart needed. The key shown above is masked: leave it as-is to keep the existing key.</p>
       </Card>
 
       <Card>
@@ -667,7 +672,7 @@ function ProvidersTab() {
           </div>
           {tstIcon("anthropic")}
         </Field>
-        <p style={{ fontSize: 11, color: T.muted, margin: 0 }}>Saved to <code style={{ color: T.text }}>~/.missioncontrol/settings.json</code>. Applied immediately — no restart needed.</p>
+        <p style={{ fontSize: 11, color: T.muted, margin: 0 }}>Saved to <code style={{ color: T.text }}>~/.missioncontrol/settings.json</code>. Applied immediately, no restart needed.</p>
       </Card>
 
       <Card>
@@ -719,10 +724,10 @@ function ModelsTab() {
   const applyModel = async (m: string): Promise<boolean> => {
     if (activeInstance) {
       const next = await updateInstance(activeInstance.id, { model: m })
-      if (!next) { setError("Save failed — gateway rejected the change."); return false }
+      if (!next) { setError("Save failed: the gateway rejected the change."); return false }
     } else {
       const next = await updateSettings({ defaultModel: m })
-      if (!next) { setError("Save failed — gateway rejected the change."); return false }
+      if (!next) { setError("Save failed: the gateway rejected the change."); return false }
     }
     mcConfig.setSelectedModel(m)  // legacy mirror, until full removal
     return true
@@ -742,13 +747,13 @@ function ModelsTab() {
 
   const opts = loading
     ? [{ value: "", label: "Loading…" }]
-    : [{ value: "", label: "— select —" }, ...models.map(m => ({ value: m.id, label: m.label ?? m.id }))]
+    : [{ value: "", label: "Select a model" }, ...models.map(m => ({ value: m.id, label: m.label ?? m.id }))]
 
   return (
     <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 16 }}>
       <Card accent={T.cyan}>
         <SectionTitle>Active model</SectionTitle>
-        <p style={{ fontSize: 12, color: T.muted, margin: "0 0 20px" }}>Sets the model for your active instance{activeInstance ? ` (${activeInstance.name})` : ""}. {assistant}, the Orchestrator and all Workers use it — switch instance in the sidebar to configure another. Same control as the Chat model dropdown.</p>
+        <p style={{ fontSize: 12, color: T.muted, margin: "0 0 20px" }}>Sets the model for your active instance{activeInstance ? ` (${activeInstance.name})` : ""}. {assistant}, the Orchestrator and all Workers use it. Switch instance in the sidebar to configure another. Same control as the Chat model dropdown.</p>
 
         <Field label={`Model · ${activeInstance?.name ?? "active instance"}`}>
           <Select value={daveModel} onChange={setDaveModel} options={opts} />
@@ -825,7 +830,7 @@ function InfrastructureTab() {
           </Field>
         </div>
 
-        <ReadonlyField label="Watchdog" value="Auto-fails stuck runs every 2 min" note="Live status — last/next check and actions taken — on the Monitor page, right panel." />
+        <ReadonlyField label="Watchdog" value="Auto-fails stuck runs every 2 min" note="Live status (last and next check, actions taken) is on the Monitor page, right panel." />
       </Card>
 
       <Card>
@@ -844,7 +849,7 @@ function InfrastructureTab() {
       {health && (
         <Card>
           <SectionTitle>Process status</SectionTitle>
-          {[["Version", health.version ?? "—"], ["Uptime", health.uptime != null ? fmtUptime(health.uptime) : "—"], ["Port", "4747"], ["Provider port", "1234"]].map(([k, v]) => (
+          {[["Version", health.version ?? "—"], ["Uptime", health.uptime != null ? fmtUptime(health.uptime) : "—"], ["Port", gatewayPort()], ["Provider port", providerPort(settings?.localProviderUrl)]].map(([k, v]) => (
             <div key={k} style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
               <span style={{ fontSize: 12, color: T.muted }}>{k}</span>
               <span style={{ fontSize: 12, color: T.text, fontFamily: "monospace" }}>{v}</span>
@@ -931,7 +936,7 @@ function AppearanceTab() {
 
       <Card>
         <SectionTitle>Display</SectionTitle>
-        <Field label="Mode" note="Light mode not yet implemented — dark only for now">
+        <Field label="Mode" note="Light mode is not built yet, dark only for now">
           <Select value="dark" onChange={() => {}} options={[{ value: "dark", label: "Dark" }, { value: "light", label: "Light (coming soon)" }]} />
         </Field>
       </Card>
@@ -966,7 +971,7 @@ function DebugTab() {
 
   const copyDebug = () => {
     const info = {
-      appVersion: "v0.2.3", gateway: WS_URL,
+      appVersion: APP_VERSION, gateway: WS_URL,
       selectedModel: mcConfig.getSelectedModel(), thinking: mcConfig.getThinking(),
       localStorageKeys: Object.keys(localStorage).filter(k => k.startsWith("mc:")),
       healthRaw: healthRaw || "not fetched",
@@ -1012,7 +1017,7 @@ function DebugTab() {
 
       <Card>
         <SectionTitle>Build info</SectionTitle>
-        {[["App version", "v0.2.3"], ["Gateway WS", WS_URL], ["DB", "~/.missioncontrol/gateway.sqlite"], ["Runtime", "Node.js v22 (WSL2)"]].map(([k, v]) => (
+        {[["App version", APP_VERSION], ["Gateway WS", WS_URL], ["DB", "~/.missioncontrol/gateway.sqlite"], ["Runtime", "Node.js v22 (WSL2)"]].map(([k, v]) => (
           <div key={k} style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
             <span style={{ fontSize: 12, color: T.muted }}>{k}</span>
             <span style={{ fontSize: 12, color: T.text, fontFamily: "monospace" }}>{v}</span>

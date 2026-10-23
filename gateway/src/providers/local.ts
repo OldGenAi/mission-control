@@ -109,7 +109,7 @@ export class LocalProvider implements ProviderAdapter {
   }
 
   private stallMessage(): string {
-    return `local model did not send a token within ${this.stallMs / 1000}s — the server may be loading the model or wedged. Try again or check the local provider.`
+    return `local model did not send a token within ${this.stallMs / 1000}s. The server may be loading the model or stuck. Try again or check the local provider.`
   }
 
   async *complete(request: CompletionRequest): AsyncGenerator<StreamChunk> {

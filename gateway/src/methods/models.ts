@@ -57,7 +57,7 @@ export async function listLocalModels(baseUrl: string, apiKey?: string, timeoutM
     if (!res.ok) {
       const needsKey = res.status === 401 || res.status === 403
       const error = `local models endpoint at ${probedUrl} returned HTTP ${res.status}` +
-        (needsKey ? ' — the server wants an API key: add it in Settings, Providers, Local provider' : '')
+        (needsKey ? '. The server wants an API key: add it in Settings, Providers, Local provider' : '')
       console.warn(`[models] ${error}`)
       return { models: [], probedUrl, error }
     }
