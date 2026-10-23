@@ -337,6 +337,10 @@ interface RenameSummary { ok: boolean; error?: string; from?: string; name?: str
 
 const ENTRY_LABELS: Record<string, string> = { identity: "its identity", soul: "its personality", agents: "its working rules" }
 
+function gatewayPort(): string {
+  try { return new URL(WS_URL).port || "80" } catch { return "unknown" }
+}
+
 function AssistantNameCard() {
   const current = useAssistantName()
   const [typed, setTyped] = useState<string | null>(null)
@@ -379,7 +383,7 @@ function AssistantNameCard() {
       {pending && changes && (
         <div style={{ border: `1px solid ${T.violet}`, borderRadius: 8, padding: 12, margin: "0 0 8px" }}>
           <p style={{ fontSize: 12, color: T.text, margin: "0 0 6px" }}>
-            {pending.from === pending.name ? `This changes the old names left over to ${pending.name}:` : `This changes every ${pending.from} to ${pending.name}:`}
+            {pending.from === pending.name ? `This tidies up old names left over, so everything says ${pending.name}:` : `This changes every ${pending.from} to ${pending.name}:`}
           </p>
           <ul style={{ fontSize: 12, color: T.muted, margin: "0 0 10px", paddingLeft: 18 }}>
             {changes.map((c) => <li key={c}>{c}</li>)}
@@ -561,7 +565,7 @@ function GatewayTab() {
           Changes require gateway restart. Edit <code style={{ color: T.text }}>gateway/.env</code> directly then run <code style={{ color: T.text }}>start.sh</code>.
         </p>
         <ReadonlyField label="Host" value="127.0.0.1" note="Loopback only — intentional security constraint" />
-        <ReadonlyField label="Port" value={new URL(WS_URL).port || "80"} note="Set via GATEWAY_PORT in gateway/.env" />
+        <ReadonlyField label="Port" value={gatewayPort()} note="Set via GATEWAY_PORT in gateway/.env" />
         <ReadonlyField label="Auth token" value="Auto-generated in ~/.missioncontrol/config.json" note="The app loads it automatically — no manual copy. Override with VITE_MC_TOKEN in app/.env.local if needed." />
         <ReadonlyField label="Origin validation" value="Enabled — loopback only" />
       </Card>

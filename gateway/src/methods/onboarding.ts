@@ -197,10 +197,13 @@ export function registerOnboardingMethods(db: Database.Database, settings: Setti
     const summary = { from: changes.from, name: to, changed: changes.changed, entries: changes.entries, instances: changes.instances, chats: changes.chats.length }
     if (p?.['preview'] === true || !changes.changed) return { ok: true, ...summary }
 
-    renameAssistant(db, AGENT_ID, to)
-    settings.update({ instances: instancesRenamed(settings.get().instances, oldNames(changes.from, to), to) })
+    // Instructions and chat titles change together or not at all; the model setups live in the settings file.
     const setTitle = db.prepare<[string, string]>(`UPDATE sessions SET title = ? WHERE id = ?`)
-    db.transaction(() => { for (const chat of changes.chats) setTitle.run(chat.title, chat.id) })()
+    db.transaction(() => {
+      renameAssistant(db, AGENT_ID, to)
+      for (const chat of changes.chats) setTitle.run(chat.title, chat.id)
+    })()
+    settings.update({ instances: instancesRenamed(settings.get().instances, oldNames(changes.from, to), to) })
     return { ok: true, ...summary }
   })
 
