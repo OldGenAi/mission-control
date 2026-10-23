@@ -166,12 +166,15 @@ describe('engine rules', () => {
       s: { id: 's', tier: 'safe', label: 'Fix', change: 'x', apply: async () => { done.push('s'); return 'ok' } },
       q: { id: 'q', tier: 'approval', label: 'Ask', change: 'y', apply: async () => { done.push('q'); return 'ok' } },
     }
-    const { engine } = engineWith([a.check, b.check], fixes)
+    const c = scripted('c', { immediate: true })
+    fixes['notice'] = { id: 'notice', tier: 'safe', label: 'Got it', change: 'x', oneByOne: true, apply: async () => { done.push('notice'); return 'ok' } }
+    const { engine } = engineWith([a.check, b.check, c.check], fixes)
     a.set({ status: 'fail', summary: 'x', fix: 's' })
     b.set({ status: 'fail', summary: 'y', fix: 'q' })
+    c.set({ status: 'warn', summary: 'crashed', fix: 'notice' })
     await engine.sweep()
     assert.deepEqual(await engine.fixAllSafe(), { fixed: ['a'], failed: [] })
-    assert.deepEqual(done, ['s'])
+    assert.deepEqual(done, ['s'], 'approval fixes and one-by-one notices are left for the person')
   })
 
   test('ignored issues move aside and back, and the choice is saved in settings', async () => {
@@ -207,6 +210,18 @@ describe('engine rules', () => {
     assert.equal(runs, 1)
     await engine.sweep(true)
     assert.equal(runs, 2)
+  })
+
+  test('"check now" during a timer sweep still runs everything once that sweep ends', async () => {
+    let slowRuns = 0
+    const slow: Check = { id: 'slow', area: 'Storage', title: 'Slow', everySweeps: 10, run: async () => { slowRuns++; return { status: 'ok', summary: 'ok' } } }
+    const quick: Check = { id: 'quick', area: 'Gateway', title: 'Quick', run: () => new Promise((r) => setTimeout(() => r({ status: 'ok', summary: 'ok' }), 50)) }
+    const { engine } = engineWith([slow, quick])
+    await engine.sweep()   // the first sweep runs everything
+    const timer = engine.sweep()   // sweep 2: the slow check isn't due
+    await engine.sweep(true)
+    await timer
+    assert.equal(slowRuns, 2)
   })
 })
 

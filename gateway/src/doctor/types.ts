@@ -41,6 +41,8 @@ export interface Fix {
   label: string
   /** Exactly what will change, shown before an approval fix is applied. */
   change: string
+  /** Left out of "Fix all safe issues" (a notice the person should read and dismiss themselves). */
+  oneByOne?: boolean
   /** Applies the fix and returns a short note of what was done. Throws if it could not. */
   apply(ctx: DoctorContext): Promise<string>
 }
