@@ -879,7 +879,7 @@ export const MonitorPage: FC = () => {
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}><CostArc cost={tCost} /></div>
       <div><div style={{ fontSize: 9, color: C.muted, fontFamily: 'monospace', letterSpacing: '0.1em', marginBottom: 6 }}>CONTEXT</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-          {(agents.length > 0 ? agents : [{ agentId: 'dave', status: 'idle', lastUpdated: 0 } as AgentState]).map(a => <CtxRing key={a.agentId} label={a.agentId} pct={a.contextPct ?? 0} model={a.model} />)}
+          {(agents.length > 0 ? agents : [{ agentId: 'tier1_agent', status: 'idle', lastUpdated: 0 } as AgentState]).map(a => <CtxRing key={a.agentId} label={a.agentId} pct={a.contextPct ?? 0} model={a.model} />)}
         </div></div>
       <div><div style={{ fontSize: 9, color: C.muted, fontFamily: 'monospace', letterSpacing: '0.1em', marginBottom: 5 }}>LATENCY</div>
         <div style={{ height: 3, background: 'rgba(255,255,255,0.05)', borderRadius: 2, overflow: 'hidden' }}>

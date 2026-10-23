@@ -65,6 +65,22 @@ test('the model list sends the key, and a locked server without it says how to f
   })
 })
 
+test('a server that never answers the model list gives up with a clear error', async () => {
+  const server = http.createServer(() => { /* never answers */ })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const { port } = server.address() as { port: number }
+  try {
+    const started = Date.now()
+    const result = await listLocalModels(`http://127.0.0.1:${port}/v1`, undefined, 200)
+    assert.ok(Date.now() - started < 2000)
+    assert.deepEqual(result.models, [])
+    assert.match(result.error ?? '', /no answer within 0.2 s/)
+  } finally {
+    server.closeAllConnections()
+    server.close()
+  }
+})
+
 test('chat sends the key to the local server', async () => {
   await withLockedServer(async (baseUrl) => {
     const provider = new LocalProvider({ baseUrl, apiKey: KEY })

@@ -42,11 +42,18 @@ export type ModelsListResponse = {
   error?: string
 }
 
-export async function listLocalModels(baseUrl: string, apiKey?: string): Promise<ModelsListResponse> {
+// A local server that is stopped can leave the connection hanging (seen from WSL to a closed Windows port) instead of
+// refusing it, and the chat page waits for this list, so give up after a few seconds.
+const LOCAL_MODELS_TIMEOUT_MS = 5000
+
+export async function listLocalModels(baseUrl: string, apiKey?: string, timeoutMs = LOCAL_MODELS_TIMEOUT_MS): Promise<ModelsListResponse> {
   const probedUrl = `${baseUrl}/models`
   try {
     // The key is secret: it is only ever sent to an address the local provider itself would accept, never to whatever the setting says.
-    const res = await fetch(probedUrl, { headers: isLocalServerUrl(baseUrl) ? localAuthHeaders(apiKey) : {} })
+    const res = await fetch(probedUrl, {
+      headers: isLocalServerUrl(baseUrl) ? localAuthHeaders(apiKey) : {},
+      signal: AbortSignal.timeout(timeoutMs),
+    })
     if (!res.ok) {
       const needsKey = res.status === 401 || res.status === 403
       const error = `local models endpoint at ${probedUrl} returned HTTP ${res.status}` +
@@ -60,7 +67,9 @@ export async function listLocalModels(baseUrl: string, apiKey?: string): Promise
       probedUrl,
     }
   } catch (e) {
-    const detail = e instanceof Error ? e.message : String(e)
+    const detail = e instanceof Error && e.name === 'TimeoutError'
+      ? `no answer within ${timeoutMs / 1000} s`
+      : e instanceof Error ? e.message : String(e)
     const error = `could not reach local models endpoint at ${probedUrl} (${detail}). Is your local server (LM Studio / Ollama / llama.cpp) running on that port?`
     console.warn(`[models] ${error}`)
     return { models: [], probedUrl, error }
