@@ -289,6 +289,21 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_videos_created ON videos(deleted_at, created_at);
     `,
   },
+  {
+    version: 15,
+    sql: `
+      -- What the doctor found and did (doctor/engine.ts): shown as the Health page feed's history.
+      -- Notes are redacted before they are stored. Rows older than 30 days are removed at start.
+      CREATE TABLE IF NOT EXISTS doctor_log (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        at        INTEGER NOT NULL,
+        check_id  TEXT    NOT NULL,
+        kind      TEXT    NOT NULL,
+        note      TEXT    NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_doctor_log_at ON doctor_log(at);
+    `,
+  },
 ]
 
 function runMigrations(db: Database.Database): void {

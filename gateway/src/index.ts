@@ -18,6 +18,8 @@ import { MonitorTracker } from './monitor.js'
 import { registerMemoryMilestonesMethod } from './methods/memory-milestones.js'
 import { registerMemoryIdentityMethods } from './methods/memory-identity.js'
 import { registerOnboardingMethods } from './methods/onboarding.js'
+import { registerDoctorMethods } from './methods/doctor.js'
+import { startDoctor } from './doctor/index.js'
 import { seedStarterEntries } from './memory/starter-entries.js'
 import { registerAgentToolsMethods } from './methods/agent-tools.js'
 import { makeHealthHandler } from './methods/health.js'
@@ -215,6 +217,9 @@ setVideoFileResolver((id) => videoJobs.filePath(id))
 const watchdog     = startWatchdog(db, monitorBuffer)
 monitorTracker.setWatchdogSource(watchdog.getStats)
 const stopSweep    = startDailyNoteSweep(db)
+// The doctor checks Mission Control every minute and shows what it finds on the Health page (doctor/engine.ts).
+const doctor       = startDoctor(db, settingsStore, (event) => broadcastEvent('doctor.event', { ...event }))
+registerDoctorMethods(doctor)
 startPricingRefresh(() => settingsStore.get().localProviderUrl, () => settingsStore.get().providerKeys.local || undefined)
 
 // ---------------------------------------------------------------------------
@@ -229,6 +234,7 @@ startServer().catch((err: unknown) => {
 const shutdown = async () => {
   watchdog.stop()
   stopSweep()
+  doctor.stop()
   monitorBuffer.stop()
   monitorTracker.stop()
   await stopServer()

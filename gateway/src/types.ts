@@ -53,7 +53,8 @@ export type PushEventName =
   | 'shutdown'
   | 'error.occurred'
   | 'settings.changed'
-  | 'video.event';
+  | 'video.event'
+  | 'doctor.event';
 
 // Agent status
 export type AgentStatus =
