@@ -106,6 +106,7 @@ export function HealthPage() {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
   const [showPassed, setShowPassed] = useState(false)
+  const [restartAsk, setRestartAsk] = useState(false)
   const [feed, setFeed] = useState<DoctorEvent[]>([])
   const feedBox = useRef<HTMLDivElement>(null)
   const feedStick = useRef(true)   // follows new lines while the feed is scrolled to its end
@@ -179,8 +180,21 @@ export function HealthPage() {
                 })} />
             )}
             <Button label={busy ? "Working..." : "Check now"} disabled={busy} onClick={() => void run("doctor.check", {})} />
+            <Button label="Restart Mission Control" tone="quiet" disabled={busy} onClick={() => setRestartAsk(true)} />
           </div>
         </div>
+        {restartAsk && (
+          <div style={{ padding: 10, borderRadius: 8, border: `1px solid ${C.amber}55`, background: `${C.amber}0d` }}>
+            <div style={{ fontSize: 12, color: C.text, marginBottom: 8 }}>
+              This will: restart Mission Control. Replies being written right now stop; everything saved stays. It takes about 10 seconds.
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Button label="Yes, restart" tone="primary" disabled={busy}
+                onClick={() => { setRestartAsk(false); void run("doctor.restart", {}, () => "Restarting. This page reconnects by itself.") }} />
+              <Button label="Cancel" onClick={() => setRestartAsk(false)} />
+            </div>
+          </div>
+        )}
         {unreachable && <div style={{ fontSize: 12, color: C.error }}>Lost touch with Mission Control. Showing the last answer.</div>}
         {message && <div style={{ fontSize: 12, color: message.ok ? C.success : C.error }}>{message.text}</div>}
 

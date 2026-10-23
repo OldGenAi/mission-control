@@ -17,7 +17,7 @@ import { shortcuts, uninstall } from './install-commands.js'
 import { openSignedIn } from './launch.js'
 import { formatDoctor, formatStatus, helpText } from './format.js'
 import type { DoctorCheck } from './report-types.js'
-import { DATA_DIR, LOG_FILE, PID_FILE, SETTINGS_FILE, gatewayPort, resolveUiDir } from '../paths.js'
+import { DATA_DIR, LOG_FILE, PID_FILE, SETTINGS_FILE, SUPERVISOR_PID_FILE, gatewayPort, resolveUiDir } from '../paths.js'
 import { GATEWAY_VERSION } from '../version.js'
 import { redact } from '../store/redact.js'
 import { shellAvailability } from '../tools/shell-policy.js'
@@ -26,12 +26,13 @@ import { comfyChecks } from './comfy-check.js'
 
 const PORT = gatewayPort()
 const BASE = `http://127.0.0.1:${PORT}`
-const GATEWAY_ENTRY = join(__dirname, '..', 'index.js')
+// mc start runs the supervisor, which runs the gateway and restarts it after a crash (cli/supervise.ts).
+const SUPERVISOR_ENTRY = join(__dirname, 'supervise.js')
 const START_TIMEOUT_MS = 20_000
 const STOP_TIMEOUT_MS = 10_000
 const LOG_MAX_BYTES = 5 * 1024 * 1024
 
-interface Health { pid: number; uptime: number; version: string }
+interface Health { pid: number; uptime: number; version: string; supervisor?: number | null }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -49,9 +50,9 @@ async function health(): Promise<Health | null> {
   }
 }
 
-function pidFromFile(): number | null {
+function pidFromFile(file = PID_FILE): number | null {
   try {
-    const pid = (JSON.parse(readFileSync(PID_FILE, 'utf-8')) as { pid?: unknown }).pid
+    const pid = (JSON.parse(readFileSync(file, 'utf-8')) as { pid?: unknown }).pid
     return typeof pid === 'number' ? pid : null
   } catch {
     // No pid file (never started, or stopped cleanly).
@@ -72,19 +73,44 @@ function portIsFree(): Promise<boolean> {
   })
 }
 
+/** What would stop the gateway starting, in plain words, checked before it is started. Empty = good to go. */
+async function startProblems(): Promise<string[]> {
+  const problems: string[] = []
+  const nodeMajor = Number(process.versions.node.split('.')[0])
+  if (nodeMajor < 22) problems.push(`Node.js ${process.version} is too old. Install Node.js 22 or newer from nodejs.org.`)
+  if (!resolveUiDir()) problems.push('The app screens are not built. In the app folder run: npm run build')
+  if (!(await portIsFree())) {
+    problems.push(`Port ${PORT} is already used by another program. Close it, or set GATEWAY_PORT to another port.`)
+  }
+  if (existsSync(SETTINGS_FILE)) {
+    try {
+      JSON.parse(readFileSync(SETTINGS_FILE, 'utf-8'))
+    } catch {
+      // Starting anyway would replace the unreadable file with defaults and lose the saved keys.
+      problems.push(`The settings file ${redact(SETTINGS_FILE)} is damaged. Restore it from a backup, or rename it to start with fresh settings.`)
+    }
+  }
+  return problems
+}
+
 async function start(): Promise<boolean> {
   if (await health()) {
     console.log(`Mission Control is already running at ${BASE}`)
     return true
   }
+  const problems = await startProblems()
+  if (problems.length > 0) {
+    console.error(`Mission Control can't start yet:\n${problems.map((p) => `  - ${p}`).join('\n')}`)
+    return false
+  }
   mkdirSync(dirname(LOG_FILE), { recursive: true, mode: 0o700 })
   // Keep the log from growing forever: one previous log is kept beside it.
   if (existsSync(LOG_FILE) && statSync(LOG_FILE).size > LOG_MAX_BYTES) renameSync(LOG_FILE, `${LOG_FILE}.1`)
   const log = openSync(LOG_FILE, 'a', 0o600)
-  const gateway = spawn(process.execPath, [GATEWAY_ENTRY], { detached: true, stdio: ['ignore', log, log], windowsHide: true })
+  const supervisor = spawn(process.execPath, [SUPERVISOR_ENTRY], { detached: true, stdio: ['ignore', log, log], windowsHide: true })
   let exited = false
-  gateway.once('exit', () => { exited = true })
-  gateway.unref()
+  supervisor.once('exit', () => { exited = true })
+  supervisor.unref()
 
   const deadline = Date.now() + START_TIMEOUT_MS
   while (Date.now() < deadline && !exited) {
@@ -110,11 +136,17 @@ async function stop(): Promise<boolean> {
     console.error(`Something is answering at ${BASE}, but it is not a Mission Control started by this user (no matching pid file). Stop it where it was started.`)
     return false
   }
-  process.kill(running.pid, 'SIGTERM')
+  // Stop the supervisor first so it doesn't start the gateway again. On Linux and macOS it stops the gateway itself; on
+  // Windows a stop is immediate, so the gateway is stopped here too. Only a supervisor the gateway itself names, with a
+  // matching pid file, is ever stopped.
+  const supervisor = typeof running.supervisor === 'number' && running.supervisor === pidFromFile(SUPERVISOR_PID_FILE) ? running.supervisor : null
+  if (supervisor !== null) process.kill(supervisor, 'SIGTERM')
+  if (supervisor === null || process.platform === 'win32') process.kill(running.pid, 'SIGTERM')
   const deadline = Date.now() + STOP_TIMEOUT_MS
   while (Date.now() < deadline) {
     await sleep(300)
     if (!(await health())) {
+      if (supervisor !== null && pidFromFile(SUPERVISOR_PID_FILE) === supervisor) rmSync(SUPERVISOR_PID_FILE, { force: true })
       // A forced stop (Windows always, POSIX if it hung) skips the gateway's own cleanup.
       if (pidFromFile() === running.pid) rmSync(PID_FILE, { force: true })
       console.log('Mission Control stopped.')

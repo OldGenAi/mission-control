@@ -20,6 +20,7 @@ import { registerMemoryIdentityMethods } from './methods/memory-identity.js'
 import { registerOnboardingMethods } from './methods/onboarding.js'
 import { registerDoctorMethods } from './methods/doctor.js'
 import { startDoctor } from './doctor/index.js'
+import { RESTART_EXIT_CODE } from './paths.js'
 import { seedStarterEntries } from './memory/starter-entries.js'
 import { registerAgentToolsMethods } from './methods/agent-tools.js'
 import { makeHealthHandler } from './methods/health.js'
@@ -219,7 +220,8 @@ monitorTracker.setWatchdogSource(watchdog.getStats)
 const stopSweep    = startDailyNoteSweep(db)
 // The doctor checks Mission Control every minute and shows what it finds on the Health page (doctor/engine.ts).
 const doctor       = startDoctor(db, settingsStore, (event) => broadcastEvent('doctor.event', { ...event }))
-registerDoctorMethods(doctor)
+// Restart only when a supervisor will start it again (mc start); run any other way, the page says how to restart.
+registerDoctorMethods(doctor, process.env['MC_SUPERVISED'] === '1' ? () => void shutdown(RESTART_EXIT_CODE) : null)
 startPricingRefresh(() => settingsStore.get().localProviderUrl, () => settingsStore.get().providerKeys.local || undefined)
 
 // ---------------------------------------------------------------------------
@@ -231,7 +233,7 @@ startServer().catch((err: unknown) => {
   process.exit(1)
 })
 
-const shutdown = async () => {
+async function shutdown(exitCode = 0): Promise<void> {
   watchdog.stop()
   stopSweep()
   doctor.stop()
@@ -239,8 +241,8 @@ const shutdown = async () => {
   monitorTracker.stop()
   await stopServer()
   db.close()
-  process.exit(0)
+  process.exit(exitCode)
 }
 
-process.on('SIGTERM', shutdown)
-process.on('SIGINT', shutdown)
+process.on('SIGTERM', () => void shutdown())
+process.on('SIGINT', () => void shutdown())
