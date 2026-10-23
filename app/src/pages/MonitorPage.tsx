@@ -292,7 +292,7 @@ function drawTicks(ctx: CanvasRenderingContext2D, r1: number, r2step: number, co
   }
 }
 
-function drawDave(ctx: CanvasRenderingContext2D, cx: number, cy: number, state: AgentState, r1: number, r2: number, r3: number, breathe: number) {
+function drawDave(ctx: CanvasRenderingContext2D, cx: number, cy: number, state: AgentState, r1: number, r2: number, r3: number, breathe: number, name: string) {
   const active = state.status !== 'idle'
   const col = state.status === 'error' ? C.error : state.status === 'context_warning' ? C.amber : C.cyan
   const a = active ? 1 : 0.5, bs = 1 + Math.sin(breathe) * 0.018
@@ -327,7 +327,7 @@ function drawDave(ctx: CanvasRenderingContext2D, cx: number, cy: number, state: 
   ctx.save(); ctx.globalAlpha = active ? 0.7 : 0.35; ctx.fillStyle = col; ctx.font = '8px monospace'; ctx.textAlign = 'left'
   ;[`STATUS  ${state.status.toUpperCase()}`, `CTX     ${Math.round(state.contextPct ?? 0)}%`, `SES     ${state.sessionId ? '1' : '0'}`].forEach((l, i) => ctx.fillText(l, cx + 105, cy - 16 + i * 13))
   ctx.restore()
-  txt(ctx, cx, cy + 108, 'DAVE', active ? col : col, 9, 'center', active ? 10 : 4)
+  txt(ctx, cx, cy + 108, name.toUpperCase(), active ? col : col, 9, 'center', active ? 10 : 4)
 }
 
 function drawOrch(ctx: CanvasRenderingContext2D, cx: number, cy: number, state: AgentState, rot: number, breathe: number) {
@@ -395,12 +395,13 @@ interface MemStats { currentEntries: number; supersededEntries: number; totalByt
 interface CanvasProps { agents: AgentState[]; tick: MonitorTick | null; totalTokens: number; totalCost: number; toolCount: number; lastToolName: string; lastToolMs: number; toolErrors: number; memStats: MemStats; activeProvider: string; onHoverPanel?: (p: HoverPanel | null) => void }
 
 const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, toolCount, lastToolName, lastToolMs, toolErrors, memStats, activeProvider, onHoverPanel }) => {
+  const assistant    = useAssistantName()
   const canvasRef    = useRef<HTMLCanvasElement>(null)
-  const propsRef     = useRef({ agents, tick, totalTokens, totalCost, toolCount, lastToolName, lastToolMs, toolErrors, memStats, activeProvider })
+  const propsRef     = useRef({ agents, tick, totalTokens, totalCost, toolCount, lastToolName, lastToolMs, toolErrors, memStats, activeProvider, assistant })
   const mouseRef     = useRef<{ x: number; y: number } | null>(null)
   const onHoverRef   = useRef(onHoverPanel)
   const prevHovIdRef = useRef('')
-  useEffect(() => { propsRef.current = { agents, tick, totalTokens, totalCost, toolCount, lastToolName, lastToolMs, toolErrors, memStats, activeProvider } })
+  useEffect(() => { propsRef.current = { agents, tick, totalTokens, totalCost, toolCount, lastToolName, lastToolMs, toolErrors, memStats, activeProvider, assistant } })
   useEffect(() => { onHoverRef.current = onHoverPanel })
 
   useEffect(() => {
@@ -457,7 +458,7 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
       scanLine(ctx, W, H, anim.scan)
       drawP(ctx, particles)
 
-      const { agents: ag, tick: t, totalTokens: tTok, totalCost: tCost, toolCount: tc, lastToolName: lt, lastToolMs: ltMs, toolErrors: te, memStats: mst, activeProvider: aProv } = propsRef.current
+      const { agents: ag, tick: t, totalTokens: tTok, totalCost: tCost, toolCount: tc, lastToolName: lt, lastToolMs: ltMs, toolErrors: te, memStats: mst, activeProvider: aProv, assistant: who } = propsRef.current
       const providerLabel = aProv === 'openrouter' ? 'OPENROUTER' : aProv === 'local' ? 'LOCAL' : aProv.toUpperCase()
       const pipelines = t?.pipelines ?? []
       // Only show ACTIVE pipelines here — without the explicit running/paused filter we'd
@@ -569,7 +570,7 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
       // Nodes — workers first (back), then orch, then dave (front)
       wPos.forEach((wp, i) => drawWorker(ctx, wp.x, wp.y, workers[i], anim.breathe, i, anim.r1))
       drawOrch(ctx, orchPos.x, orchPos.y, orch, anim.r1, anim.breathe)
-      drawDave(ctx, davePos.x, davePos.y, dave, anim.r1, anim.r2, anim.r3, anim.breathe)
+      drawDave(ctx, davePos.x, davePos.y, dave, anim.r1, anim.r2, anim.r3, anim.breathe, who)
 
       // ── HOVER HIT TEST — panels (rect) + nodes (circle) ─────────────────────
       const pw = 140, ph = 110
@@ -589,7 +590,7 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
       const nodeSpecs = [
         {
           id: 'node-dave', cx: davePos.x, cy: davePos.y, r: 86,
-          title: 'DAVE',
+          title: who.toUpperCase(),
           posStyle: { left: `${clamp(davePos.x + 92, 4, W - 218)}px`, top: `${clamp(davePos.y - 70, 4, H - 200)}px` } as React.CSSProperties,
           rows: [
             ['STATUS',  dave.status.toUpperCase(),                 daveCol],

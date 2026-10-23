@@ -13,7 +13,7 @@ import type Database from 'better-sqlite3'
 import { registerMethod } from '../router.js'
 import type { SettingsStore } from '../store/settings.js'
 import {
-  DEFAULT_ASSISTANT_NAME, currentEntry, renameAssistant, setEntry, starterIdentity, starterSoul,
+  DEFAULT_ASSISTANT_NAME, currentEntry, oldNames, planRename, renameAssistant, replaceName, setEntry, starterIdentity, starterSoul,
 } from '../memory/starter-entries.js'
 import type { Instance } from '../store/settings.js'
 
@@ -125,9 +125,46 @@ export function parseAssistantName(input: unknown): { ok: true; name: string } |
   return { ok: true, name }
 }
 
-/** Model setups that carry the old assistant name take the new one; setups the person named themselves are left alone. */
-export function instancesRenamed(instances: Instance[], from: string, to: string): Instance[] {
-  return instances.map((i) => (i.name === from ? { ...i, name: to } : i))
+/** Model setups whose name starts a word with an old assistant name take the new one: "Dave", "Dave local" and "davelocal" all follow. */
+export function instancesRenamed(instances: Instance[], from: string | readonly string[], to: string): Instance[] {
+  return instances.map((i) => ({ ...i, name: replaceName(i.name, from, to, 'start') }))
+}
+
+/**
+ * Chats keep the title they were given when they started ("davelocal · 10/22 10:40"). Titles that begin with a renamed model
+ * setup's old name, or with the old assistant name, follow the rename. Returns the new titles by chat id.
+ */
+export function chatTitlesRenamed(chats: Array<{ id: string; title: string }>, renames: Array<{ from: string; to: string }>): Array<{ id: string; title: string }> {
+  const out: Array<{ id: string; title: string }> = []
+  for (const chat of chats) {
+    const match = renames.find((r) => chat.title.startsWith(`${r.from} · `))
+    if (match) out.push({ id: chat.id, title: `${match.to}${chat.title.slice(match.from.length)}` })
+  }
+  return out
+}
+
+interface RenameChanges {
+  from: string
+  /** False when the name is the same and there is nothing left over to tidy. */
+  changed: boolean
+  entries: string[]
+  instances: Array<{ from: string; to: string }>
+  chats: Array<{ id: string; title: string }>
+}
+
+/** Everything a rename would change, so the person can see it before saying yes. Writes nothing. */
+function renameChanges(db: Database.Database, settings: SettingsStore, to: string): RenameChanges {
+  const plan = planRename(db, AGENT_ID, to)
+  const names = oldNames(plan.from, to)
+  const current = settings.get().instances
+  const renamed = instancesRenamed(current, names, to)
+  const instances = current.flatMap((inst, i) => (renamed[i]!.name !== inst.name ? [{ from: inst.name, to: renamed[i]!.name }] : []))
+  const chats = chatTitlesRenamed(
+    db.prepare<[], { id: string; title: string }>(`SELECT id, title FROM sessions WHERE title IS NOT NULL`).all(),
+    [...instances, ...names.map((from) => ({ from, to }))],
+  )
+  const changed = plan.updates.length > 0 || instances.length > 0 || chats.length > 0
+  return { from: plan.from, changed, entries: plan.updates.map((u) => u.key), instances, chats }
 }
 
 export function registerOnboardingMethods(db: Database.Database, settings: SettingsStore): void {
@@ -150,14 +187,21 @@ export function registerOnboardingMethods(db: Database.Database, settings: Setti
   })
 
   // Settings > Assistant name. Only the person can reach this (the UI): agents have no tool for it, and the identity entries stay protected from them.
+  // With preview: true it only reports what would change, for the confirm box.
   registerMethod('assistant.rename', async (params) => {
-    const parsed = parseAssistantName((params as Record<string, unknown> | undefined)?.['name'])
+    const p = params as Record<string, unknown> | undefined
+    const parsed = parseAssistantName(p?.['name'])
     if (!parsed.ok) return parsed
-    const result = renameAssistant(db, AGENT_ID, parsed.name)
-    if (result.from !== parsed.name) {
-      settings.update({ instances: instancesRenamed(settings.get().instances, result.from, parsed.name) })
-    }
-    return { ok: true, name: parsed.name, soulKept: result.soulKept }
+    const to = parsed.name
+    const changes = renameChanges(db, settings, to)
+    const summary = { from: changes.from, name: to, changed: changes.changed, entries: changes.entries, instances: changes.instances, chats: changes.chats.length }
+    if (p?.['preview'] === true || !changes.changed) return { ok: true, ...summary }
+
+    renameAssistant(db, AGENT_ID, to)
+    settings.update({ instances: instancesRenamed(settings.get().instances, oldNames(changes.from, to), to) })
+    const setTitle = db.prepare<[string, string]>(`UPDATE sessions SET title = ? WHERE id = ?`)
+    db.transaction(() => { for (const chat of changes.chats) setTitle.run(chat.title, chat.id) })()
+    return { ok: true, ...summary }
   })
 
   registerMethod('onboarding.skip', async () => {

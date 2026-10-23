@@ -13,7 +13,7 @@
 
 import { loadSession, saveSession, clearSession } from './session'
 
-const WS_URL  = (import.meta.env.VITE_MC_GATEWAY_URL as string | undefined)
+export const WS_URL = (import.meta.env.VITE_MC_GATEWAY_URL as string | undefined)
   ?? (import.meta.env.DEV ? 'ws://127.0.0.1:4747' : `ws://${location.host}`)
 const TOKEN   = import.meta.env.DEV ? ((import.meta.env.VITE_MC_TOKEN as string | undefined) ?? '') : ''
 

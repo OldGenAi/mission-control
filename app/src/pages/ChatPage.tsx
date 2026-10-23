@@ -2,7 +2,7 @@ import { Component, useCallback, useEffect, useRef, useState } from "react"
 import Markdown from "react-markdown"
 import { gateway } from "../lib/gateway-client"
 import { mcConfig } from "../lib/mc-config"
-import { useAssistantName } from "../lib/assistant"
+import { initials, useAssistantName, usePersonName } from "../lib/assistant"
 import { useSettings, updateSettings, updateInstance } from "../lib/settings"
 
 // ---------- types --------------------------------------------------
@@ -388,6 +388,8 @@ function MessageGroup({
   const role = (message.role as string) ?? "unknown"
   const isUser = role === "user"
   const isTool = role === "tool"
+  const assistant = useAssistantName()
+  const person = usePersonName()
   const allParts = extractParts(message).filter(p => p.text.trim())
   const visibleParts = allParts.filter(p => {
     if (p.kind === "thought" && !showThinking) return false
@@ -400,7 +402,7 @@ function MessageGroup({
 
   const avatar = (
     <div className={`chat-avatar ${isUser ? "user" : "assistant"}`}>
-      {isUser ? "JB" : "D"}
+      {isUser ? initials(person, "You") : initials(assistant, "?")}
     </div>
   )
 
@@ -1045,7 +1047,7 @@ export function ChatPage() {
             })}
             {isGenerating && streamingText === null && (
               <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "6px 0", width: "100%" }}>
-                <div className="chat-avatar assistant">D</div>
+                <div className="chat-avatar assistant">{initials(assistant, "?")}</div>
                 <div className="chat-bubble assistant chat-typing-indicator">
                   <span /><span /><span />
                 </div>
@@ -1053,7 +1055,7 @@ export function ChatPage() {
             )}
             {streamingText !== null && (
               <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "6px 0", width: "100%" }}>
-                <div className="chat-avatar assistant">D</div>
+                <div className="chat-avatar assistant">{initials(assistant, "?")}</div>
                 <div className="chat-bubble assistant" style={{ flex: 1, whiteSpace: "pre-wrap" }}>
                   {streamingText || <span className="streaming-cursor" />}
                 </div>

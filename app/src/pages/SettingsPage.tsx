@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react"
-import { gateway } from "../lib/gateway-client"
+import { gateway, WS_URL } from "../lib/gateway-client"
 import { mcConfig } from "../lib/mc-config"
 import { useSettings, updateSettings, updateInstance, fetchShellAvailability, type ShellAvailability } from "../lib/settings"
 import { getPerfMode, setPerfMode, type PerfMode } from "../lib/perf"
@@ -206,6 +206,7 @@ function ReadonlyField({ label, value, note }: { label: string; value: string; n
 // consent); turning it OFF is always frictionless. Shared by the Quick and
 // Infrastructure tabs so the consent step can't be sidestepped from one screen.
 function ExecConfirmModal({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
+  const assistant = useAssistantName()
   const limits = [
     "Starts in your workspace folder (it is not a sandbox: commands can reach other files this app can)",
     "API keys are not passed in the command's environment variables (files on disk are still readable)",
@@ -233,11 +234,11 @@ function ExecConfirmModal({ onConfirm, onCancel }: { onConfirm: () => void; onCa
           <span style={{ color: T.amber }}>⚠</span> Enable shell access?
         </h3>
         <p style={{ margin: "0 0 12px", fontSize: 13, lineHeight: 1.6, color: T.text }}>
-          This lets Dave — and any pipeline worker — run <strong>shell commands on this machine</strong>. It is the
+          This lets {assistant} — and any pipeline worker — run <strong>shell commands on this machine</strong>. It is the
           most powerful capability you can grant: a command can read, change, or delete files.
         </p>
         <p style={{ margin: "0 0 16px", fontSize: 13, lineHeight: 1.6, color: T.muted }}>
-          The main risk is indirect — a web page or document Dave reads could try to trick him into running
+          The main risk is indirect — a web page or document {assistant} reads could try to trick it into running
           something harmful (prompt injection). Only enable this for a session you're actively supervising,
           and switch it back off when you're done.
         </p>
@@ -330,45 +331,68 @@ function useSaved() {
 }
 
 // ── ASSISTANT NAME ───────────────────────────────────────────────────────────
-// Renames the assistant after setup, without reinstalling. The gateway changes the identity entry (and the starter instructions
-// while they are untouched) and any model setup still named after the old name.
+// Renames the assistant after setup, without reinstalling. Save first asks the gateway what would change (instructions, model
+// setups, chat titles) and shows it; nothing is written until the person confirms.
+interface RenameSummary { ok: boolean; error?: string; from?: string; name?: string; changed?: boolean; entries?: string[]; instances?: { from: string; to: string }[]; chats?: number }
+
+const ENTRY_LABELS: Record<string, string> = { identity: "its identity", soul: "its personality", agents: "its working rules" }
+
 function AssistantNameCard() {
   const current = useAssistantName()
   const [typed, setTyped] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [pending, setPending] = useState<RenameSummary | null>(null)
   const shown = typed ?? current
 
-  const save = async () => {
-    setSaving(true)
-    setMessage(null)
+  const rename = async (preview: boolean) => {
+    setBusy(true)
+    setError(null)
     try {
-      const r = await gateway.request<{ ok: boolean; error?: string; name?: string; soulKept?: boolean }>("assistant.rename", { name: shown })
-      if (!r.ok) {
-        setMessage({ kind: "error", text: r.error ?? "Could not save the name." })
-      } else if (r.soulKept) {
-        setMessage({ kind: "ok", text: `Saved. Instructions you wrote yourself still use the old name: edit them on the Agents page. Reload the page to see ${r.name} everywhere.` })
-      } else {
-        window.location.reload()
-      }
+      const r = await gateway.request<RenameSummary>("assistant.rename", { name: shown, preview })
+      if (!r.ok) setError(r.error ?? "Could not save the name.")
+      else if (!r.changed) setError(`It's already called ${r.name} everywhere.`)
+      else if (preview) setPending(r)
+      else window.location.reload()   // every label on every page picks up the new name
     } catch (e) {
-      setMessage({ kind: "error", text: e instanceof Error ? e.message : "Could not save the name." })
+      setError(e instanceof Error ? e.message : "Could not save the name.")
     } finally {
-      setSaving(false)
+      setBusy(false)
     }
   }
+
+  const changes = pending && [
+    `Instructions: the name in ${(pending.entries ?? []).map((k) => ENTRY_LABELS[k] ?? k).join(", ") || "its identity"}`,
+    ...(pending.instances ?? []).map((i) => `Model setup: ${i.from} becomes ${i.to}`),
+    ...(pending.chats ? [`Chat titles: ${pending.chats} that start with an old name`] : []),
+  ]
 
   return (
     <Card accent={T.violet}>
       <SectionTitle>Assistant name</SectionTitle>
       <Field label="What you call your assistant">
         <div style={{ display: "flex", gap: 8 }}>
-          <div style={{ flex: 1 }}><Input value={shown} onChange={setTyped} placeholder="Dave" /></div>
-          <Btn label={saving ? "Saving..." : "Save"} onClick={() => void save()} variant="ghost" />
+          <div style={{ flex: 1 }}><Input value={shown} onChange={(v) => { setTyped(v); setPending(null) }} placeholder="Dave" /></div>
+          <Btn label={busy && !pending ? "Checking..." : "Save"} onClick={() => void rename(true)} variant="ghost" />
         </div>
       </Field>
-      {message && <p style={{ fontSize: 11, color: message.kind === "ok" ? T.success : T.error, margin: "0 0 8px" }}>{message.text}</p>}
-      <p style={{ fontSize: 11, color: T.muted, margin: 0 }}>Up to 30 characters. Your chats, memory and settings stay as they are.</p>
+      {pending && changes && (
+        <div style={{ border: `1px solid ${T.violet}`, borderRadius: 8, padding: 12, margin: "0 0 8px" }}>
+          <p style={{ fontSize: 12, color: T.text, margin: "0 0 6px" }}>
+            {pending.from === pending.name ? `This changes the old names left over to ${pending.name}:` : `This changes every ${pending.from} to ${pending.name}:`}
+          </p>
+          <ul style={{ fontSize: 12, color: T.muted, margin: "0 0 10px", paddingLeft: 18 }}>
+            {changes.map((c) => <li key={c}>{c}</li>)}
+          </ul>
+          <p style={{ fontSize: 11, color: T.muted, margin: "0 0 10px" }}>Old messages keep what they said.</p>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn label={busy ? "Saving..." : `Change to ${pending.name}`} onClick={() => void rename(false)} variant="primary" />
+            <Btn label="Cancel" onClick={() => setPending(null)} variant="ghost" />
+          </div>
+        </div>
+      )}
+      {error && <p style={{ fontSize: 11, color: T.error, margin: "0 0 8px" }}>{error}</p>}
+      <p style={{ fontSize: 11, color: T.muted, margin: 0 }}>Up to 30 characters. You'll see what changes before anything is saved.</p>
     </Card>
   )
 }
@@ -376,6 +400,7 @@ function AssistantNameCard() {
 // ── QUICK TAB ────────────────────────────────────────────────────────────────
 function QuickTab() {
   const { settings } = useSettings()
+  const assistant = useAssistantName()
   const [connStatus, setConnStatus] = useState<"ok" | "error" | "loading" | "unknown">("loading")
   const [uptime, setUptime] = useState<string>("—")
   const [version, setVersion] = useState<string>("—")
@@ -409,7 +434,7 @@ function QuickTab() {
             <span style={{ fontSize: 12, color: T.muted }}>Status</span>
             <StatusPill status={connStatus} />
           </div>
-          {[["Endpoint", "ws://127.0.0.1:4747"], ["Uptime", uptime], ["Version", version]].map(([k, v]) => (
+          {[["Endpoint", WS_URL], ["Uptime", uptime], ["Version", version]].map(([k, v]) => (
             <div key={k} style={{ display: "flex", justifyContent: "space-between" }}>
               <span style={{ fontSize: 12, color: T.muted }}>{k}</span>
               <span style={{ fontSize: 12, color: T.text, fontFamily: "monospace" }}>{v}</span>
@@ -439,7 +464,7 @@ function QuickTab() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
               <div style={{ fontSize: 13, color: T.text }}>Exec tool</div>
-              <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>Allow Dave to run shell commands</div>
+              <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>Allow {assistant} to run shell commands</div>
             </div>
             <GatedExecToggle checked={execEnabled} />
           </div>
@@ -502,7 +527,7 @@ function GatewayTab() {
       <Card accent={T.error}>
         <SectionTitle>Gateway offline</SectionTitle>
         <p style={{ fontSize: 13, color: T.muted, margin: "0 0 16px" }}>
-          Cannot reach <code style={{ color: T.text }}>ws://127.0.0.1:4747</code>. Start the gateway first.
+          Cannot reach <code style={{ color: T.text }}>{WS_URL}</code>. Start the gateway first.
         </p>
         <code style={{ display: "block", background: "rgba(0,0,0,0.4)", padding: "10px 14px", borderRadius: 6, fontSize: 12, color: T.cyan, marginBottom: 16 }}>
           ~/mission-control/gateway/start.sh
@@ -536,7 +561,7 @@ function GatewayTab() {
           Changes require gateway restart. Edit <code style={{ color: T.text }}>gateway/.env</code> directly then run <code style={{ color: T.text }}>start.sh</code>.
         </p>
         <ReadonlyField label="Host" value="127.0.0.1" note="Loopback only — intentional security constraint" />
-        <ReadonlyField label="Port" value="4747" note="Set via GATEWAY_PORT in gateway/.env" />
+        <ReadonlyField label="Port" value={new URL(WS_URL).port || "80"} note="Set via GATEWAY_PORT in gateway/.env" />
         <ReadonlyField label="Auth token" value="Auto-generated in ~/.missioncontrol/config.json" note="The app loads it automatically — no manual copy. Override with VITE_MC_TOKEN in app/.env.local if needed." />
         <ReadonlyField label="Origin validation" value="Enabled — loopback only" />
       </Card>
@@ -658,6 +683,7 @@ function ProvidersTab() {
 // ── MODELS TAB ────────────────────────────────────────────────────────────────
 function ModelsTab() {
   const { settings } = useSettings()
+  const assistant = useAssistantName()
   const [models, setModels]   = useState<{ id: string; label?: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState<string | null>(null)
@@ -718,7 +744,7 @@ function ModelsTab() {
     <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 16 }}>
       <Card accent={T.cyan}>
         <SectionTitle>Active model</SectionTitle>
-        <p style={{ fontSize: 12, color: T.muted, margin: "0 0 20px" }}>Sets the model for your active instance{activeInstance ? ` (${activeInstance.name})` : ""}. Dave, the Orchestrator and all Workers use it — switch instance in the sidebar to configure another. Same control as the Chat model dropdown.</p>
+        <p style={{ fontSize: 12, color: T.muted, margin: "0 0 20px" }}>Sets the model for your active instance{activeInstance ? ` (${activeInstance.name})` : ""}. {assistant}, the Orchestrator and all Workers use it — switch instance in the sidebar to configure another. Same control as the Chat model dropdown.</p>
 
         <Field label={`Model · ${activeInstance?.name ?? "active instance"}`}>
           <Select value={daveModel} onChange={setDaveModel} options={opts} />
@@ -748,6 +774,7 @@ function ModelsTab() {
 // ── INFRASTRUCTURE TAB ────────────────────────────────────────────────────────
 function InfrastructureTab() {
   const { settings } = useSettings()
+  const assistant = useAssistantName()
   const [health, setHealth] = useState<{ uptime?: number; version?: string } | null>(null)
   const execEnabled = settings?.execEnabled ?? false
   const [copied, setCopied] = useState<string | null>(null)
@@ -787,7 +814,7 @@ function InfrastructureTab() {
         <div style={{ marginTop: 16 }}>
           <Field label="Exec tool policy">
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ fontSize: 13, color: T.text }}>Allow Dave to run shell commands (exec tool)</span>
+              <span style={{ fontSize: 13, color: T.text }}>Allow {assistant} to run shell commands (exec tool)</span>
               <GatedExecToggle checked={execEnabled} />
             </div>
             <p style={{ fontSize: 11, color: T.muted, margin: "6px 0 0" }}>Locked until Mission Control can run commands in a sandbox, because a command can reach anything your user account can. When it can be switched on, it is off by default and asks for confirmation first. Same toggle as Quick → Exec tool.</p>
@@ -935,7 +962,7 @@ function DebugTab() {
 
   const copyDebug = () => {
     const info = {
-      appVersion: "v0.2.3", gateway: "ws://127.0.0.1:4747",
+      appVersion: "v0.2.3", gateway: WS_URL,
       selectedModel: mcConfig.getSelectedModel(), thinking: mcConfig.getThinking(),
       localStorageKeys: Object.keys(localStorage).filter(k => k.startsWith("mc:")),
       healthRaw: healthRaw || "not fetched",
@@ -981,7 +1008,7 @@ function DebugTab() {
 
       <Card>
         <SectionTitle>Build info</SectionTitle>
-        {[["App version", "v0.2.3"], ["Gateway WS", "ws://127.0.0.1:4747"], ["DB", "~/.missioncontrol/gateway.sqlite"], ["Runtime", "Node.js v22 (WSL2)"]].map(([k, v]) => (
+        {[["App version", "v0.2.3"], ["Gateway WS", WS_URL], ["DB", "~/.missioncontrol/gateway.sqlite"], ["Runtime", "Node.js v22 (WSL2)"]].map(([k, v]) => (
           <div key={k} style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
             <span style={{ fontSize: 12, color: T.muted }}>{k}</span>
             <span style={{ fontSize: 12, color: T.text, fontFamily: "monospace" }}>{v}</span>

@@ -11,6 +11,7 @@ import path from 'node:path'
 import type Database from 'better-sqlite3'
 import { workspacePath } from '../store/redact.js'
 import { shellAvailability, type ShellAvailability } from '../tools/shell-policy.js'
+import { DEFAULT_ASSISTANT_NAME, assistantName, replaceName } from './starter-entries.js'
 
 interface EntryRow {
   content: string
@@ -101,14 +102,17 @@ export function loadSystemPrompt(db: Database.Database, agentId: string, live?: 
   const get = (key: string): string | null =>
     stmt.get(agentId, key)?.content ?? null
 
-  const soul      = get('soul')      ?? FALLBACK_SOUL
-  const agents    = get('agents')
   const identity  = get('identity')
+  // The built-in texts call the assistant Dave; they use the name the person chose instead.
+  const name      = assistantName(identity)
+  const soul      = get('soul')      ?? replaceName(FALLBACK_SOUL, DEFAULT_ASSISTANT_NAME, name, 'word')
+  const agents    = get('agents')
   const user      = get('user')
   const today     = get(todayKey())
   const yesterday = get(yesterdayKey())
 
-  const specBody = loadSpecBody(agentId)
+  const spec     = loadSpecBody(agentId)
+  const specBody = spec && replaceName(spec, DEFAULT_ASSISTANT_NAME, name, 'word')
 
   const parts: string[] = [soul]
 
