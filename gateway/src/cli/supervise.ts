@@ -8,10 +8,10 @@
 // /health, so `mc stop` stops it only when both agree.
 
 import { spawn, type ChildProcess } from 'node:child_process'
-import { openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { LOG_FILE, SUPERVISOR_PID_FILE } from '../paths.js'
-import { CrashGuard } from './crash-guard.js'
+import { CrashGuard, liveSupervisor } from './crash-guard.js'
 
 // The gateway next to this file. The tests pass a stand-in gateway as the first argument; mc start never passes one.
 const GATEWAY_ENTRY = process.argv[2] ?? join(__dirname, '..', 'index.js')
@@ -33,6 +33,7 @@ function startGateway(): void {
     env: { ...process.env, MC_SUPERVISED: '1' },
     windowsHide: true,
   })
+  closeSync(log)   // the gateway has its own copy
   child.once('exit', (code, signal) => {
     child = null
     if (stopping) return finish(0)
@@ -68,7 +69,13 @@ function stop(): void {
   setTimeout(() => { child?.kill('SIGKILL'); finish(0) }, STOP_TIMEOUT_MS).unref()
 }
 
+const other = liveSupervisor()
+if (other !== null) {
+  note(`another supervisor (pid ${other}) is already running Mission Control; this one stops`)
+  process.exit(0)
+}
 process.on('SIGTERM', stop)
 process.on('SIGINT', stop)
-writeFileSync(SUPERVISOR_PID_FILE, JSON.stringify({ pid: process.pid }) + '\n', { mode: 0o600 })
+rmSync(SUPERVISOR_PID_FILE, { force: true })   // a stale file from a supervisor that was killed
+writeFileSync(SUPERVISOR_PID_FILE, JSON.stringify({ pid: process.pid }) + '\n', { mode: 0o600, flag: 'wx' })
 startGateway()

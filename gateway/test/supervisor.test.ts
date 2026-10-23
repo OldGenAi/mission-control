@@ -27,10 +27,13 @@ test('a restart request is not a crash, and a clean exit stays stopped', () => {
 })
 
 /** Runs the real supervisor with a stand-in gateway that exits with the codes given, one per start. */
-function supervise(codes: number[]): { starts: number; status: number | null; log: string } {
+function supervise(codes: number[], otherSupervisorPid?: number): { starts: number; status: number | null; log: string } {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-supervise-test-'))
   try {
     fs.mkdirSync(path.join(home, '.missioncontrol', 'logs'), { recursive: true })
+    if (otherSupervisorPid !== undefined) {
+      fs.writeFileSync(path.join(home, '.missioncontrol', 'supervisor.pid'), JSON.stringify({ pid: otherSupervisorPid }))
+    }
     const counter = path.join(home, 'starts')
     const fake = path.join(home, 'fake-gateway.js')
     fs.writeFileSync(fake, `
@@ -44,9 +47,12 @@ function supervise(codes: number[]): { starts: number; status: number | null; lo
     const result = spawnSync(tsx, [path.join(__dirname, '..', 'src', 'cli', 'supervise.ts'), fake], {
       env: { ...process.env, HOME: home, USERPROFILE: home, MC_RESTART_DELAY_MS: '10' }, timeout: 30_000,
     })
-    const log = fs.readFileSync(path.join(home, '.missioncontrol', 'logs', 'gateway.log'), 'utf-8') + result.stdout.toString()
-    assert.ok(!fs.existsSync(path.join(home, '.missioncontrol', 'supervisor.pid')), 'the supervisor removes its pid file')
-    return { starts: Number(fs.readFileSync(counter, 'utf-8')), status: result.status, log }
+    const logFile = path.join(home, '.missioncontrol', 'logs', 'gateway.log')
+    const log = (fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf-8') : '') + result.stdout.toString()
+    if (otherSupervisorPid === undefined) {
+      assert.ok(!fs.existsSync(path.join(home, '.missioncontrol', 'supervisor.pid')), 'the supervisor removes its pid file')
+    }
+    return { starts: fs.existsSync(counter) ? Number(fs.readFileSync(counter, 'utf-8')) : 0, status: result.status, log }
   } finally {
     fs.rmSync(home, { recursive: true, force: true })
   }
@@ -57,6 +63,15 @@ test('a gateway that keeps crashing is restarted 3 times, then left stopped', ()
   assert.equal(run.starts, 4)
   assert.equal(run.status, 1)
   assert.match(run.log, /crashed 3 times in 30 minutes/)
+})
+
+test('a second supervisor stops at once when one is already running; a stale pid file is ignored', () => {
+  const busy = supervise([0], process.pid)   // this test process stands in for a live supervisor
+  assert.equal(busy.starts, 0)
+  assert.equal(busy.status, 0)
+  assert.match(busy.log, /already running/)
+  const stale = supervise([0], 2_147_000_000)   // no such process
+  assert.equal(stale.starts, 1)
 })
 
 test('a restart request starts it again at once; a clean exit ends the supervisor', () => {

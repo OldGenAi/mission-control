@@ -69,7 +69,8 @@ export interface DoctorContext {
   now(): number
 }
 
-export type DoctorEventKind = 'checked' | 'issue' | 'cleared' | 'fixing' | 'fixed' | 'fix_failed' | 'ignored' | 'unignored'
+export type DoctorEventKind =
+  'checked' | 'issue' | 'cleared' | 'fixing' | 'fixed' | 'fix_failed' | 'ignored' | 'unignored' | 'restarting'
 
 export interface DoctorEvent {
   at: number

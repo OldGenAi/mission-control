@@ -1,7 +1,7 @@
 // What the doctor checks, and the fixes it can make (see doctor-build-spec-2026-10-23.md). Every check is read-only and
 // gives up within the engine's time limit; every fix is a fixed code path. Text is plain English for the Health page.
 
-import { chmodSync, existsSync, readdirSync, readFileSync, statfsSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, closeSync, existsSync, openSync, readdirSync, readSync, statfsSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { comfyChecks } from '../cli/comfy-check.js'
 import { exposedAddress } from '../cli/network-exposure.js'
@@ -463,8 +463,13 @@ export const FIXES: Record<string, Fix> = {
       for (const name of readdirSync(dir)) {
         const path = join(dir, name)
         if (name === basename(ctx.logFile)) {
-          const content = readFileSync(path)
-          if (content.length > LOG_KEEP_BYTES) writeFileSync(path, content.subarray(content.length - LOG_KEEP_BYTES))
+          const size = statSync(path).size
+          if (size > LOG_KEEP_BYTES) {  // read only the newest part, however big the log has grown
+            const newest = Buffer.alloc(LOG_KEEP_BYTES)
+            const fd = openSync(path, 'r')
+            try { readSync(fd, newest, 0, LOG_KEEP_BYTES, size - LOG_KEEP_BYTES) } finally { closeSync(fd) }
+            writeFileSync(path, newest)
+          }
         } else if (name.startsWith(basename(ctx.logFile))) {
           unlinkSync(path)
           removed++

@@ -28,6 +28,11 @@ export function unregisterRun(correlationId: string): void {
   runs.delete(correlationId)
 }
 
+/** How many chat replies are being written right now. */
+export function activeRunCount(): number {
+  return runs.size
+}
+
 export function getRun(correlationId: string): ActiveRun | undefined {
   return runs.get(correlationId)
 }

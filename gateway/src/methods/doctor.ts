@@ -30,6 +30,9 @@ export function registerDoctorMethods(doctor: DoctorHandle, restart: (() => void
         error: 'Mission Control was not started with Start Mission Control or mc start, so it can\'t restart itself. Stop it and start it again the way you started it.',
       }
     }
+    const busy = doctor.busy()
+    if (busy.length > 0) return { ok: false, code: 'BUSY', error: `Not now: ${busy.join(', ')}. Restart when it has finished.` }
+    doctor.engine.record('restarting', 'restarting Mission Control (Restart button)')
     setTimeout(restart, 300).unref()   // answer the page first
     return { ok: true }
   })

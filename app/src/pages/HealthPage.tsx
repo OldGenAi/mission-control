@@ -16,12 +16,12 @@ const STATUS_COLOR: Record<string, string> = { fail: C.error, warn: C.amber, ok:
 
 const FEED_COLOR: Record<DoctorEvent["kind"], string> = {
   checked: C.muted, issue: C.amber, cleared: C.success, fixing: C.cyan, fixed: C.success,
-  fix_failed: C.error, ignored: C.muted, unignored: C.violet,
+  fix_failed: C.error, ignored: C.muted, unignored: C.violet, restarting: C.cyan,
 }
 
 const FEED_LABEL: Record<DoctorEvent["kind"], string> = {
   checked: "checked", issue: "found", cleared: "cleared", fixing: "fixing", fixed: "fixed",
-  fix_failed: "fix failed", ignored: "ignored", unignored: "watching",
+  fix_failed: "fix failed", ignored: "ignored", unignored: "watching", restarting: "restarting",
 }
 
 const TIER_LABEL = { safe: "Safe fix", approval: "Asks first", last_resort: "Last resort" }
