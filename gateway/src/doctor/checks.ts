@@ -28,6 +28,7 @@ const LOGS_TOO_BIG_BYTES = 50 * 1024 * 1024
 const LOG_KEEP_BYTES = 5 * 1024 * 1024
 const SLOW_LOOP_MS = 200
 const BIG_MEMORY_BYTES = 2 * GB
+const COMFY_WAIT_MS = 4000
 
 const ok = (summary: string): CheckResult => ({ status: 'ok', summary })
 
@@ -387,7 +388,13 @@ export const CHECKS: Check[] = [
     area: 'Video',
     title: 'ComfyUI is set up safely',
     async run(ctx) {
-      const checks = await comfyChecks(ctx.settings.get().comfyUrl)
+      const address = ctx.settings.get().comfyUrl
+      // A stopped ComfyUI can leave the connection hanging (seen from WSL to a closed Windows port), so don't wait long.
+      const checks = await Promise.race([
+        comfyChecks(address),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), COMFY_WAIT_MS).unref()),
+      ])
+      if (checks === null) return { status: 'info', summary: `ComfyUI is not answering at ${address} (only needed for the Video page).` }
       const problem = checks.find((c) => c.status === 'warn' || c.status === 'fail')
       if (problem) {
         return {
@@ -403,7 +410,7 @@ export const CHECKS: Check[] = [
 
 export const FIXES: Record<string, Fix> = {
   acknowledge_unclean: {
-    id: 'acknowledge_unclean', tier: 'safe', label: 'Got it',
+    id: 'acknowledge_unclean', tier: 'safe', label: 'Got it', oneByOne: true,
     change: 'Clears this notice. Nothing else changes.',
     async apply(ctx) {
       ctx.acknowledgeUncleanStart()

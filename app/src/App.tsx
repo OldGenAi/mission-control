@@ -13,6 +13,7 @@ import { ChannelsPage } from "./pages/ChannelsPage"
 import { MonitorPage } from "./pages/MonitorPage"
 import { ArtifactsPage } from "./pages/ArtifactsPage"
 import { VideoPage } from "./pages/VideoPage"
+import { HealthPage } from "./pages/HealthPage"
 
 // ---------- breadcrumb -------------------------------------------
 
@@ -29,6 +30,7 @@ const PAGE_META: Record<string, { label: string }> = {
   "/monitor/live":        { label: "Live"      },
   "/monitor/history":     { label: "History"   },
   "/monitor/errors":      { label: "Errors"    },
+  "/health":              { label: "Health"    },
   "/channels":            { label: "Channels"  },
   "/settings":            { label: "Settings"  },
 }
@@ -84,6 +86,7 @@ function Shell() {
             <Route path="/monitor/live"    element={<MonitorPage />} />
             <Route path="/monitor/history" element={<MonitorPage />} />
             <Route path="/monitor/errors"  element={<MonitorPage />} />
+            <Route path="/health"          element={<HealthPage />} />
 
             <Route path="/settings" element={<SettingsPage />} />
 

@@ -43,7 +43,7 @@ export interface IssueView {
   why?: string
   steps?: string[]
   open?: { label: string; page: string }
-  fix?: { id: string; label: string; tier: FixTier; change: string }
+  fix?: { id: string; label: string; tier: FixTier; change: string; inFixAll: boolean }
   fixesLeft: number
 }
 
@@ -68,6 +68,7 @@ export class DoctorEngine {
   private checkedAt: number | null = null
   private fixing = false
   private sweeping: Promise<void> | null = null
+  private sweepingAll = false
   private timers: NodeJS.Timeout[] = []
 
   constructor(
@@ -95,9 +96,17 @@ export class DoctorEngine {
     this.timers = []
   }
 
-  /** Runs every check that is due. A sweep already running is joined, not started twice. */
-  sweep(all = false): Promise<void> {
-    this.sweeping ??= this.runSweep(all).finally(() => { this.sweeping = null })
+  /** Runs every check that is due (all of them for "Check now"). A sweep already running is joined, not started twice;
+   *  "Check now" during a timer sweep waits for it, then runs everything. */
+  async sweep(all = false): Promise<void> {
+    if (this.sweeping) {
+      const joinedAll = this.sweepingAll
+      await this.sweeping
+      if (!all || joinedAll) return
+      return this.sweep(true)
+    }
+    this.sweepingAll = all
+    this.sweeping = this.runSweep(all).finally(() => { this.sweeping = null })
     return this.sweeping
   }
 
@@ -201,7 +210,7 @@ export class DoctorEngine {
     const fixed: string[] = []
     const failed: string[] = []
     for (const issue of this.status().issues) {
-      if (issue.fix?.tier !== 'safe' || issue.fixesLeft === 0) continue
+      if (!issue.fix?.inFixAll || issue.fixesLeft === 0) continue
       try {
         await this.fix(issue.id)
         fixed.push(issue.id)
@@ -246,7 +255,9 @@ export class DoctorEngine {
       out.push({
         id: check.id, area: check.area, title: check.title, status: r.status, summary: r.summary,
         why: r.why, steps: r.steps, open: r.open,
-        fix: fix && fix.tier !== 'last_resort' ? { id: fix.id, label: fix.label, tier: fix.tier, change: fix.change } : undefined,
+        fix: fix && fix.tier !== 'last_resort'
+          ? { id: fix.id, label: fix.label, tier: fix.tier, change: fix.change, inFixAll: fix.tier === 'safe' && !fix.oneByOne }
+          : undefined,
         fixesLeft: Math.max(0, this.opts.fixLimit - recent),
       })
     }

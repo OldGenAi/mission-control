@@ -882,3 +882,16 @@ html[data-theme='matrix'] body::before {
     radial-gradient(ellipse at 98% 60%, rgba(0, 130, 26, 0.68) 0%, transparent 35%),
     radial-gradient(ellipse at 22% 85%, rgba(0, 255, 65, 0.22) 0%, transparent 30%);
 }
+
+/* The doctor's dot next to Health in the sidebar (lib/doctor.ts): green all good, amber worth a look, red needs you */
+.doctor-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.doctor-dot--ok { background: #00FF88; box-shadow: 0 0 6px #00FF88; }
+.doctor-dot--warn { background: #FFB800; box-shadow: 0 0 6px #FFB800; }
+.doctor-dot--fail { background: #FF4444; box-shadow: 0 0 8px #FF4444; animation: doctor-pulse 1s ease-in-out infinite; }
+@keyframes doctor-pulse { 50% { opacity: 0.45; } }
