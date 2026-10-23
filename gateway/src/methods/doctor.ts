@@ -1,4 +1,5 @@
-// The Health page's buttons: doctor.status / doctor.check / doctor.fix / doctor.fixSafe / doctor.ignore / doctor.history.
+// The Health page's buttons: doctor.status / doctor.check / doctor.fix / doctor.fixSafe / doctor.ignore / doctor.history /
+// doctor.restart.
 // Only the signed-in app can call these; agents have no tool for them.
 
 import { registerMethod } from '../router.js'
@@ -20,7 +21,19 @@ async function answer(work: () => Promise<Record<string, unknown>>): Promise<Rec
   }
 }
 
-export function registerDoctorMethods(doctor: DoctorHandle): void {
+/** restart: stops the gateway cleanly so its supervisor starts it again; null when nothing would start it again. */
+export function registerDoctorMethods(doctor: DoctorHandle, restart: (() => void) | null): void {
+  registerMethod('doctor.restart', async () => {
+    if (!restart) {
+      return {
+        ok: false, code: 'NO_SUPERVISOR',
+        error: 'Mission Control was not started with Start Mission Control or mc start, so it can\'t restart itself. Stop it and start it again the way you started it.',
+      }
+    }
+    setTimeout(restart, 300).unref()   // answer the page first
+    return { ok: true }
+  })
+
   registerMethod('doctor.status', async (params) => {
     if (typeof params['appVersion'] === 'string') doctor.setAppVersion(params['appVersion'])
     return { ok: true, ...doctor.engine.status() }

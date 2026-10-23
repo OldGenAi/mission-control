@@ -66,8 +66,10 @@ export function buildHttpApp(uiDir: string | null): Express {
   app.use('/auth', (_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next() })
 
   app.get('/health', (_req, res) => {
-    // pid lets `mc stop` confirm the process it is about to stop really is this gateway.
-    res.json({ ok: true, uptime: process.uptime(), version: GATEWAY_VERSION, pid: process.pid })
+    // pid lets `mc stop` confirm the process it is about to stop really is this gateway, and supervisor the process that
+    // restarts it (cli/supervise.ts), so `mc stop` stops that first.
+    const supervisor = process.env['MC_SUPERVISED'] === '1' ? process.ppid : null
+    res.json({ ok: true, uptime: process.uptime(), version: GATEWAY_VERSION, pid: process.pid, supervisor })
   })
 
   // Launcher only. Browsers always send Origin on a POST, so refusing any Origin keeps

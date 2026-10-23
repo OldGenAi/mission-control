@@ -261,6 +261,10 @@ Use a local model and leave the web tools alone, and nothing leaves your machine
 
 ## Troubleshooting
 
+Start with the **Health** page (under Monitor in the sidebar). The doctor checks Mission Control every minute: the gateway, Node.js, your model server, pipelines, errors, security, disk space, the database and ComfyUI. Each problem comes with a plain explanation and a button. Safe fixes run when you press them, fixes that change a setting say exactly what will change and wait for your yes, and nothing is ever fixed without you pressing a button. The live feed on the right shows everything it checks and does. The dot next to Health is green when all is well.
+
+If Mission Control crashes, `mc start` restarts it by itself, at most 3 times in 30 minutes, and then leaves it stopped with the reason at the end of `mc logs`. `mc start` also says in plain words why it can't start (port in use, Node.js too old, a damaged settings file) instead of failing quietly.
+
 The model list says "Loading…" and never shows any models.
 Mission Control can't reach your local model server. Check that LM Studio, Ollama or llama.cpp is running, and that the local server address in Settings matches its port (LM Studio 1234, Ollama 11434, llama.cpp 8080). Hover over the model selector to see the exact address it tried and the error it got.
 
