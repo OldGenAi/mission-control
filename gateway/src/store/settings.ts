@@ -32,6 +32,7 @@ export interface SettingsSnapshot {
   comfyUrl:         string    // ComfyUI on this computer, for the Video page (loopback only, checked on use)
   videoFreeAfterJob: boolean  // ask ComfyUI to give the graphics memory back after each video
   welcomeDone:      boolean  // the first-run "tell Dave about you" form was saved or skipped
+  doctorIgnored:    string[] // doctor checks the person chose to ignore on the Health page
 }
 
 interface SettingsFile {
@@ -54,6 +55,7 @@ const DEFAULTS: SettingsSnapshot = {
   comfyUrl:         'http://127.0.0.1:8188',
   videoFreeAfterJob: true,
   welcomeDone:      false,
+  doctorIgnored:    [],
 }
 
 // ── At-rest encryption for the secret fields ──────────────────────────────────

@@ -27,6 +27,9 @@ const AVAILABLE_EVENTS = [
   'presence',
   'shutdown',
   'error.occurred',
+  'settings.changed',
+  'video.event',
+  'doctor.event',
 ] as const
 
 /**
