@@ -634,16 +634,18 @@ export function ChatPage() {
     ;(async () => {
       try {
         await gateway.connect()
-        const [sessRes, modRes] = await Promise.all([
-          gateway.request<SessionsListResponse>("sessions.list", {}),
-          gateway.request<ModelsResponse>("models.list", {}),
-        ])
+        // The chats show as soon as they arrive: a slow or stopped model server must not hold them back.
+        const modelsReq = gateway.request<ModelsResponse>("models.list", {})
+          .catch((err): ModelsResponse => ({ models: [], error: err instanceof Error ? err.message : String(err) }))
+        const sessRes = await gateway.request<SessionsListResponse>("sessions.list", {})
         if (cancelled) return
         const list = sessRes.sessions ?? []
         setSessions(list)
         const savedSession = mcConfig.getLastSession()
         const match = savedSession && list.find(s => s.id === savedSession)
         if (!match && list.length > 0) setSelectedId(list[0].id)
+        const modRes = await modelsReq
+        if (cancelled) return
         setModels(modRes.models ?? [])
         setModelsError(modRes.error ?? null)
         setModelsProbedUrl(modRes.probedUrl ?? null)
