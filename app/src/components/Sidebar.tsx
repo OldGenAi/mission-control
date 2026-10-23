@@ -3,6 +3,7 @@ import { NavLink, useNavigate, useLocation } from "react-router-dom"
 import { gateway } from "../lib/gateway-client"
 import { useAssistantName } from '../lib/assistant'
 import { listInstances, createInstance, setActiveInstance, deleteInstance, type Instance, type ProviderName } from "../lib/settings"
+import { APP_VERSION } from "../lib/version"
 
 // SVG icon helper
 const Icon = ({ d, children }: { d?: string; children?: React.ReactNode }) => (
@@ -175,7 +176,7 @@ export function Sidebar() {
       {/* Footer */}
       <div className="sidebar-footer">
         <a href="#" className="nav-item" style={{ color: 'inherit', textDecoration: 'none' }}>Docs</a>
-        <span className="sidebar-version">v0.2.3</span>
+        <span className="sidebar-version">{APP_VERSION}</span>
         <span className="sidebar-status-dot" title="Gateway online" />
       </div>
     </aside>
@@ -309,7 +310,7 @@ function AddInstanceModal({ available, onClose, onCreated }: { available: Provid
     setBusy(true)
     const created = await createInstance(name.trim(), provider, model.trim(), type)
     setBusy(false)
-    if (!created) { setError('Create failed — gateway rejected the request. Check provider credentials.'); return }
+    if (!created) { setError('Create failed: the gateway rejected the request. Check provider credentials.'); return }
     onCreated()
     onClose()
   }

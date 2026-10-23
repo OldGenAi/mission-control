@@ -81,7 +81,7 @@ function decryptSecret(stored: string | undefined, keyHex: string): string {
     decipher.setAuthTag(Buffer.from(tagB64 ?? '', 'base64'))
     return Buffer.concat([decipher.update(Buffer.from(ctB64 ?? '', 'base64')), decipher.final()]).toString('utf8')
   } catch {
-    console.warn('[settings] could not decrypt a stored key (lost/rotated encryption key?) — treating as unset; re-enter it in Settings → Providers')
+    console.warn('[settings] could not decrypt a stored key (lost or changed encryption key?), treating it as unset. Re-enter it in Settings, Providers')
     return ''
   }
 }

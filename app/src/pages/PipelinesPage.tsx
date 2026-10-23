@@ -205,7 +205,7 @@ const PipelineModelPicker: React.FC = () => {
   if (!pipelineInst) {
     return (
       <div className="rounded-xl p-3 text-xs text-gray-500" style={{ background: 'rgba(6,10,16,0.88)', border: '1px solid rgba(255,255,255,0.07)' }}>
-        No pipeline instance yet — in the sidebar, add one with Workspace = Pipeline.
+        No pipeline instance yet. In the sidebar, add one with Workspace = Pipeline.
       </div>
     )
   }
@@ -300,7 +300,7 @@ export const PipelinesPage: React.FC = () => {
       return
     }
     if (!row.resumeToken) {
-      setRunError('no resume token on this run — cannot decide (run may have moved off paused)')
+      setRunError('no resume token on this run, so it cannot be decided (the run may have moved off paused)')
       return
     }
     try {
@@ -354,7 +354,7 @@ export const PipelinesPage: React.FC = () => {
                 {available.length === 0 && <option value="">Loading…</option>}
                 {available.map(p => (
                   <option key={p.name} value={p.name}>
-                    {p.title ? `${p.title} (${p.name})` : p.name}{p.source === 'user' ? ' — user' : ''}
+                    {p.title ? `${p.title} (${p.name})` : p.name}{p.source === 'user' ? ' · user' : ''}
                   </option>
                 ))}
               </select>

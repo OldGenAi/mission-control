@@ -20,15 +20,17 @@ function gatewayTokenFromConfig(): string {
 // https://vite.dev/config/
 export default defineConfig(({ command, mode }) => {
   const envToken = loadEnv(mode, process.cwd(), 'VITE_').VITE_MC_TOKEN
+  const appVersion = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf-8')).version as string
   const config: UserConfig = {
     plugins: [react(), tailwindcss()],
+    define: { 'import.meta.env.VITE_MC_APP_VERSION': JSON.stringify(appVersion) },
   }
   // Dev server only, and only when the user hasn't set one explicitly. A build must never
   // contain the token: the built UI is served by the gateway and signs in with a session.
   if (command === 'serve' && !envToken) {
     const token = gatewayTokenFromConfig()
     if (token) {
-      config.define = { 'import.meta.env.VITE_MC_TOKEN': JSON.stringify(token) }
+      config.define = { ...config.define, 'import.meta.env.VITE_MC_TOKEN': JSON.stringify(token) }
     }
   }
   return config

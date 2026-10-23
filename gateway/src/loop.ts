@@ -413,7 +413,7 @@ export class AgentLoop {
           message: redact(`chat turn stopped — exceeded ${timeoutSeconds}s wall-clock deadline`),
         })
         this.broadcast(clientId, 'chat.final', {
-          text: `[Turn stopped — it ran past the ${timeoutSeconds}s time limit.]`,
+          text: `[Turn stopped: it ran past the ${timeoutSeconds}s time limit.]`,
           sessionId,
           correlationId,
           error: 'turn_timeout',
@@ -428,14 +428,14 @@ export class AgentLoop {
           message: redact(`chat turn stopped — ${failureTracker.limit} consecutive tool failures; last: ${failureTracker.lastError ?? 'unknown'}`),
         })
         this.broadcast(clientId, 'chat.final', {
-          text: `[Stopped after ${failureTracker.limit} consecutive tool failures. Last error: ${failureTracker.lastError ?? 'unknown'}. I stopped to avoid looping — tell me how you'd like to proceed.]`,
+          text: `[Stopped after ${failureTracker.limit} consecutive tool failures. Last error: ${failureTracker.lastError ?? 'unknown'}. I stopped to avoid looping. Tell me how you'd like to proceed.]`,
           sessionId,
           correlationId,
           error: 'consecutive_tool_failures',
         })
       } else if (iterations >= maxIterations) {
         this.broadcast(clientId, 'chat.final', {
-          text: '[Loop limit reached — the agent stopped after the maximum number of iterations.]',
+          text: '[Loop limit reached: the agent stopped after the maximum number of steps.]',
           sessionId,
           correlationId,
           error: 'max_iterations_exceeded',

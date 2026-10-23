@@ -225,7 +225,7 @@ export const webSearch: RegisteredTool = {
         'web_search',
         start,
         '',
-        'web_search is not configured — add a key in Settings → Providers → Web Search (or set SEARCH_API_KEY)'
+        'web_search is not configured. Add a key in Settings, Providers, Web Search (or set SEARCH_API_KEY)'
       )
     }
 

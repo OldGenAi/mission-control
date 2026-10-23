@@ -356,7 +356,7 @@ function ApprovalCard({ appr, onDecide }: { appr: PipelineApproval; onDecide: (i
         <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
       </svg>
       <div style={{ flex: 1 }}>
-        <p style={{ fontSize: 12.5, fontWeight: 600, color: "#f59e0b", margin: 0 }}>Approval required — {appr.name}</p>
+        <p style={{ fontSize: 12.5, fontWeight: 600, color: "#f59e0b", margin: 0 }}>Approval required: {appr.name}</p>
         <p style={{ fontSize: 12, color: "var(--muted)", margin: "4px 0 10px" }}>{appr.prompt}</p>
         <div style={{ display: "flex", gap: 8 }}>
           <button
@@ -620,7 +620,7 @@ export function ChatPage() {
         setPendingApprovals(paused.map(pl => ({
           id: pl.id,
           name: pl.name ?? pl.id.slice(0, 8),
-          prompt: pl.approvalPrompt ?? "Pipeline paused — approve to continue",
+          prompt: pl.approvalPrompt ?? "Pipeline paused. Approve to continue.",
           resumeToken: pl.resumeToken ?? "",
         })))
       }
@@ -891,7 +891,7 @@ export function ChatPage() {
       const preview = text.length > 2000 ? text.slice(0, 2000) + "\n…[truncated]" : text
       setDraft(prev => prev + (prev ? "\n\n" : "") + `[File: ${file.name}]\n\`\`\`\n${preview}\n\`\`\``)
     } catch {
-      setDraft(prev => prev + (prev ? "\n\n" : "") + `[File: ${file.name} — binary/unreadable]`)
+      setDraft(prev => prev + (prev ? "\n\n" : "") + `[File: ${file.name} (binary, can't be read)]`)
     }
     e.target.value = ""
   }

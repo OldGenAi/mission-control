@@ -286,7 +286,7 @@ export const AgentsPage: React.FC = () => {
             <div className="flex items-center gap-2">
               <StatusDot status={agentStatus.status} />
               <span className="capitalize text-sm text-white">{agentStatus.status.replace('_', ' ')}</span>
-              {agentStatus.detail && <span className="text-sm" style={{ color: C.muted }}>— {agentStatus.detail}</span>}
+              {agentStatus.detail && <span className="text-sm" style={{ color: C.muted }}>· {agentStatus.detail}</span>}
             </div>
           ),
         },
@@ -367,7 +367,7 @@ export const AgentsPage: React.FC = () => {
               style={{ background: 'rgba(2,4,8,0.9)', border: `1px solid ${C.cyanBorder}`, color: '#9CA3AF' }}
               autoFocus
               value={fileContents[name] ?? ''}
-              placeholder={`No ${name.toLowerCase()} content yet — paste or type here`}
+              placeholder={`No ${name.toLowerCase()} content yet. Paste or type here`}
               onChange={(e) => setFileContents((prev) => ({ ...prev, [name]: e.target.value }))}
               onBlur={() => setRevealed((prev) => ({ ...prev, [name]: false }))}
             />
@@ -484,7 +484,7 @@ export const AgentsPage: React.FC = () => {
                       </span>
                     ) : (
                       <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(239,68,68,0.1)', color: '#f87171', border: '1px solid rgba(239,68,68,0.25)' }}>
-                        {shell && !shell.available ? 'shell locked: no sandbox yet' : 'shell access off — enable in Settings'}
+                        {shell && !shell.available ? 'shell locked: no sandbox yet' : 'shell access off: enable in Settings'}
                       </span>
                     ))}
                     {isOrchestratorOnly && selectedAgent.tier !== 2 && (
@@ -542,9 +542,9 @@ export const AgentsPage: React.FC = () => {
   // ── Presets ───────────────────────────────────────────────────────────────
 
   const PRESET_DESCRIPTIONS: Record<string, string> = {
-    Minimal:  '3 tools — file_read, memory_get, memory_search',
-    Research: '5 tools — adds web_fetch, web_search',
-    Build:    '8 tools — adds file_write, file_edit, artifact_write',
+    Minimal:  '3 tools: file_read, memory_get, memory_search',
+    Research: '5 tools: adds web_fetch, web_search',
+    Build:    '8 tools: adds file_write, file_edit, artifact_write',
     Full:     'All credentialed tools',
   }
 

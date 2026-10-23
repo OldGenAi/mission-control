@@ -9,12 +9,12 @@ interface Channel {
 }
 
 const CHANNELS: Channel[] = [
-  { id: 'telegram',  name: 'Telegram',  description: 'Bot API — receive and send messages via Telegram',          color: '#229ED9' },
-  { id: 'discord',   name: 'Discord',   description: 'Bot — {name} in your Discord server or DM',                   color: '#5865F2' },
-  { id: 'slack',     name: 'Slack',     description: 'App — {name} in your Slack workspace',                         color: '#4A154B' },
-  { id: 'whatsapp',  name: 'WhatsApp',  description: 'Cloud API — {name} via WhatsApp Business',                     color: '#25D366' },
-  { id: 'signal',    name: 'Signal',    description: 'Signal CLI — end-to-end encrypted messaging',               color: '#3A76F0' },
-  { id: 'imessage',  name: 'iMessage',  description: 'AppleScript bridge — {name} via iMessage on macOS',           color: '#1C8EF9' },
+  { id: 'telegram',  name: 'Telegram',  description: 'Bot API: receive and send messages via Telegram',          color: '#229ED9' },
+  { id: 'discord',   name: 'Discord',   description: 'Bot: {name} in your Discord server or DM',                   color: '#5865F2' },
+  { id: 'slack',     name: 'Slack',     description: 'App: {name} in your Slack workspace',                         color: '#4A154B' },
+  { id: 'whatsapp',  name: 'WhatsApp',  description: 'Cloud API: {name} via WhatsApp Business',                     color: '#25D366' },
+  { id: 'signal',    name: 'Signal',    description: 'Signal CLI: end-to-end encrypted messaging',               color: '#3A76F0' },
+  { id: 'imessage',  name: 'iMessage',  description: 'AppleScript bridge: {name} via iMessage on macOS',           color: '#1C8EF9' },
 ]
 
 const ChannelIcon: React.FC<{ color: string; name: string }> = ({ color, name }) => (
@@ -32,7 +32,7 @@ export const ChannelsPage: React.FC = () => {
   <div className="p-6 h-full overflow-y-auto">
     <div className="mb-6">
       <p className="text-xs text-gray-500">
-        Connect {assistant} to external messaging platforms. Channels are coming in a future phase — the infrastructure is ready, wiring is next.
+        Connect {assistant} to external messaging platforms. Channels are coming in a future phase. The groundwork is ready, connecting them is next.
       </p>
     </div>
     <div className="grid grid-cols-3 gap-4">
