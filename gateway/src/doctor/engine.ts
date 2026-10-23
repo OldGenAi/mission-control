@@ -84,8 +84,9 @@ export class DoctorEngine {
   }
 
   start(): void {
-    const first = setTimeout(() => void this.sweep(), this.opts.firstSweepAfterMs)
-    const every = setInterval(() => void this.sweep(), this.opts.intervalMs)
+    const sweep = () => this.sweep().catch((err) => console.error('[doctor] sweep failed:', err))
+    const first = setTimeout(sweep, this.opts.firstSweepAfterMs)
+    const every = setInterval(sweep, this.opts.intervalMs)
     first.unref()
     every.unref()
     this.timers = [first, every]
@@ -268,10 +269,19 @@ export class DoctorEngine {
     return new Set(this.ctx.settings.get().doctorIgnored)
   }
 
+  /** Something the doctor did outside a check (a restart), for the feed and the log. */
+  record(kind: DoctorEventKind, note: string): void {
+    this.event('doctor', 'Doctor', kind, note)
+  }
+
   private event(checkId: string, title: string, kind: DoctorEventKind, note: string): void {
     const event: DoctorEvent = { at: this.ctx.now(), checkId, title, kind, note: redact(note) }
     if (kind !== 'checked') {  // the once-a-minute "checked" line is live only; everything else is kept
-      this.ctx.db.prepare(`INSERT INTO doctor_log (at, check_id, kind, note) VALUES (?, ?, ?, ?)`).run(event.at, checkId, kind, event.note)
+      try {
+        this.ctx.db.prepare(`INSERT INTO doctor_log (at, check_id, kind, note) VALUES (?, ?, ?, ?)`).run(event.at, checkId, kind, event.note)
+      } catch (err) {  // a full disk or a locked database must not take Mission Control down: the live feed still gets it
+        console.error('[doctor] could not save to doctor_log:', err)
+      }
     }
     this.emit(event)
   }

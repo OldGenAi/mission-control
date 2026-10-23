@@ -1,22 +1,21 @@
 // Starts the doctor inside the gateway: builds what the checks may look at, then runs the engine on its timer.
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { monitorEventLoopDelay } from 'node:perf_hooks'
 import type Database from 'better-sqlite3'
 import { ownAddresses } from '../cli/network-exposure.js'
-import { DATA_DIR, LOG_FILE, SETTINGS_FILE, gatewayPort } from '../paths.js'
+import { activeRunCount } from '../active-runs.js'
+import { DATA_DIR, LOG_FILE, RUNNING_MARKER, SETTINGS_FILE, gatewayPort } from '../paths.js'
 import type { SettingsStore } from '../store/settings.js'
 import { GATEWAY_VERSION } from '../version.js'
 import { CHECKS, FIXES } from './checks.js'
 import { DoctorEngine } from './engine.js'
 import type { DoctorContext, DoctorEvent } from './types.js'
 
-// Written while the gateway runs and removed on a clean shutdown, so a leftover file means the last run ended badly.
-const RUNNING_MARKER = join(DATA_DIR, 'gateway.running')
-
 export interface DoctorHandle {
   engine: DoctorEngine
+  /** What a restart would cut short right now, in plain words; empty when it's safe to restart. */
+  busy(): string[]
   setAppVersion(version: string): void
   stop(): void
 }
@@ -59,6 +58,7 @@ export function startDoctor(db: Database.Database, settings: SettingsStore, emit
   engine.start()
   return {
     engine,
+    busy: () => busyWork(db),
     setAppVersion: (version) => { appVersion = version.slice(0, 32) },
     stop: () => {
       engine.stop()
@@ -66,4 +66,16 @@ export function startDoctor(db: Database.Database, settings: SettingsStore, emit
       rmSync(RUNNING_MARKER, { force: true })
     },
   }
+}
+
+/** What a restart would cut short: chat replies being written, pipeline runs in progress, videos being made. */
+export function busyWork(db: Database.Database): string[] {
+  const busy: string[] = []
+  const chats = activeRunCount()
+  if (chats > 0) busy.push(`${chats} chat repl${chats === 1 ? 'y is' : 'ies are'} being written`)
+  const runs = db.prepare(`SELECT COUNT(*) AS n FROM pipeline_runs WHERE status = 'running'`).get() as { n: number }
+  if (runs.n > 0) busy.push(`${runs.n} pipeline run${runs.n === 1 ? ' is' : 's are'} in progress`)
+  const videos = db.prepare(`SELECT COUNT(*) AS n FROM videos WHERE status IN ('queued', 'running') AND deleted_at IS NULL`).get() as { n: number }
+  if (videos.n > 0) busy.push(`${videos.n} video${videos.n === 1 ? ' is' : 's are'} being made`)
+  return busy
 }

@@ -17,7 +17,8 @@ import { shortcuts, uninstall } from './install-commands.js'
 import { openSignedIn } from './launch.js'
 import { formatDoctor, formatStatus, helpText } from './format.js'
 import type { DoctorCheck } from './report-types.js'
-import { DATA_DIR, LOG_FILE, PID_FILE, SETTINGS_FILE, SUPERVISOR_PID_FILE, gatewayPort, resolveUiDir } from '../paths.js'
+import { DATA_DIR, LOG_FILE, PID_FILE, RUNNING_MARKER, SETTINGS_FILE, SUPERVISOR_PID_FILE, gatewayPort, resolveUiDir } from '../paths.js'
+import { liveSupervisor } from './crash-guard.js'
 import { GATEWAY_VERSION } from '../version.js'
 import { redact } from '../store/redact.js'
 import { shellAvailability } from '../tools/shell-policy.js'
@@ -78,7 +79,6 @@ async function startProblems(): Promise<string[]> {
   const problems: string[] = []
   const nodeMajor = Number(process.versions.node.split('.')[0])
   if (nodeMajor < 22) problems.push(`Node.js ${process.version} is too old. Install Node.js 22 or newer from nodejs.org.`)
-  if (!resolveUiDir()) problems.push('The app screens are not built. In the app folder run: npm run build')
   if (!(await portIsFree())) {
     problems.push(`Port ${PORT} is already used by another program. Close it, or set GATEWAY_PORT to another port.`)
   }
@@ -98,6 +98,12 @@ async function start(): Promise<boolean> {
     console.log(`Mission Control is already running at ${BASE}`)
     return true
   }
+  const starting = liveSupervisor()
+  if (starting !== null) {
+    console.log(`Mission Control is already starting (supervisor pid ${starting}). Give it a few seconds, then check with mc status.`)
+    return true
+  }
+  if (!resolveUiDir()) console.warn('Note: the app screens are not built, so only the developer server (npm run dev in app) can show them.')
   const problems = await startProblems()
   if (problems.length > 0) {
     console.error(`Mission Control can't start yet:\n${problems.map((p) => `  - ${p}`).join('\n')}`)
@@ -140,13 +146,19 @@ async function stop(): Promise<boolean> {
   // Windows a stop is immediate, so the gateway is stopped here too. Only a supervisor the gateway itself names, with a
   // matching pid file, is ever stopped.
   const supervisor = typeof running.supervisor === 'number' && running.supervisor === pidFromFile(SUPERVISOR_PID_FILE) ? running.supervisor : null
-  if (supervisor !== null) process.kill(supervisor, 'SIGTERM')
-  if (supervisor === null || process.platform === 'win32') process.kill(running.pid, 'SIGTERM')
+  try {
+    if (supervisor !== null) process.kill(supervisor, 'SIGTERM')
+    if (supervisor === null || process.platform === 'win32') process.kill(running.pid, 'SIGTERM')
+  } catch {
+    // It ended between the health check and here: the wait below confirms it is gone.
+  }
   const deadline = Date.now() + STOP_TIMEOUT_MS
   while (Date.now() < deadline) {
     await sleep(300)
     if (!(await health())) {
       if (supervisor !== null && pidFromFile(SUPERVISOR_PID_FILE) === supervisor) rmSync(SUPERVISOR_PID_FILE, { force: true })
+      // A forced stop skips the gateway's own cleanup, which would leave a false "didn't shut down properly" notice.
+      rmSync(RUNNING_MARKER, { force: true })
       // A forced stop (Windows always, POSIX if it hung) skips the gateway's own cleanup.
       if (pidFromFile() === running.pid) rmSync(PID_FILE, { force: true })
       console.log('Mission Control stopped.')

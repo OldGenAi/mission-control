@@ -32,7 +32,7 @@ export interface DoctorEvent {
   at: number
   checkId: string
   title: string
-  kind: "checked" | "issue" | "cleared" | "fixing" | "fixed" | "fix_failed" | "ignored" | "unignored"
+  kind: "checked" | "issue" | "cleared" | "fixing" | "fixed" | "fix_failed" | "ignored" | "unignored" | "restarting"
   note: string
 }
 

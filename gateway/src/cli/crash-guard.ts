@@ -2,7 +2,8 @@
 // minutes, then give up and leave the error in the log (no restart loops). Exit code 75 is the Health page's Restart
 // button: restarted at once and not counted as a crash. A clean exit (code 0, e.g. mc stop) is left stopped.
 
-import { RESTART_EXIT_CODE } from '../paths.js'
+import { readFileSync } from 'node:fs'
+import { RESTART_EXIT_CODE, SUPERVISOR_PID_FILE } from '../paths.js'
 
 export type ExitDecision = 'restart_now' | 'restart_after_crash' | 'stay_stopped' | 'give_up'
 
@@ -23,5 +24,22 @@ export class CrashGuard {
   /** Crashes counted in the current window (for the log line). */
   get recent(): number {
     return this.crashes.length
+  }
+}
+
+/** The pid of a supervisor that is still running, from its pid file, or null. */
+export function liveSupervisor(): number | null {
+  let pid: unknown
+  try {
+    pid = (JSON.parse(readFileSync(SUPERVISOR_PID_FILE, 'utf-8')) as { pid?: unknown }).pid
+  } catch {
+    return null  // no file: none running
+  }
+  if (typeof pid !== 'number' || pid === process.pid) return null
+  try {
+    process.kill(pid, 0)  // signal 0 only asks whether the process exists
+    return pid
+  } catch {
+    return null  // stale file from a supervisor that was killed
   }
 }

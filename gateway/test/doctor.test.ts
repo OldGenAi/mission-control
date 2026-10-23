@@ -202,6 +202,17 @@ describe('engine rules', () => {
     assert.doesNotMatch(JSON.stringify(engine.history(10)), /0123456789abcdef0123/)
   })
 
+  test('a full disk or locked database never takes Mission Control down: the feed still gets the event', async () => {
+    const lockedDb = {
+      prepare: (sql: string) => (sql.startsWith('INSERT INTO doctor_log') ? { run: () => { throw new Error('database or disk is full') } } : db.prepare(sql)),
+    } as unknown as Database.Database
+    const a = scripted('a', { immediate: true })
+    const { engine, events } = engineWith([a.check], {}, context({ db: lockedDb }))
+    a.set({ status: 'fail', summary: 'disk nearly full' })
+    await engine.sweep()
+    assert.equal(events.at(-2)?.kind, 'issue')
+  })
+
   test('slow checks run every n-th sweep, and "check now" runs everything', async () => {
     let runs = 0
     const slow: Check = { id: 'slow', area: 'Storage', title: 'Slow', everySweeps: 10, run: async () => { runs++; return { status: 'ok', summary: 'ok' } } }
@@ -326,6 +337,14 @@ describe('real checks and fixes', () => {
     } finally {
       await new Promise<void>((r) => server.close(() => r()))
     }
+  })
+
+  test('a restart waits while something is in progress', async () => {
+    const { busyWork } = await import('../src/doctor/index.js')
+    db.prepare(`DELETE FROM pipeline_runs`).run()
+    assert.deepEqual(busyWork(db), [])
+    db.prepare(`INSERT INTO pipeline_runs (id, name, status, created_at, updated_at) VALUES ('busy-1', 'p', 'running', ?, ?)`).run(Date.now(), Date.now())
+    assert.deepEqual(busyWork(db), ['1 pipeline run is in progress'])
   })
 
   test('versions, clean start and a slow gateway', async () => {

@@ -14,6 +14,7 @@ import { validateHost, isOwnOrigin, getConfig } from './auth.js'
 import { issueLaunchChallenge, issueLaunchCode, redeemLaunchCode, issueSession } from './login.js'
 import { GATEWAY_VERSION } from './version.js'
 import { checkMediaLink } from './video/media-links.js'
+import { supervisedBy } from './supervision.js'
 
 /** Finds a finished video's file by id; set by the gateway once the video queue exists. */
 let videoFile: (id: string) => string | null = () => null
@@ -68,8 +69,7 @@ export function buildHttpApp(uiDir: string | null): Express {
   app.get('/health', (_req, res) => {
     // pid lets `mc stop` confirm the process it is about to stop really is this gateway, and supervisor the process that
     // restarts it (cli/supervise.ts), so `mc stop` stops that first.
-    const supervisor = process.env['MC_SUPERVISED'] === '1' ? process.ppid : null
-    res.json({ ok: true, uptime: process.uptime(), version: GATEWAY_VERSION, pid: process.pid, supervisor })
+    res.json({ ok: true, uptime: process.uptime(), version: GATEWAY_VERSION, pid: process.pid, supervisor: supervisedBy() })
   })
 
   // Launcher only. Browsers always send Origin on a POST, so refusing any Origin keeps

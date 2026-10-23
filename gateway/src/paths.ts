@@ -11,6 +11,8 @@ export const SETTINGS_FILE = join(DATA_DIR, 'settings.json')
 export const PID_FILE = join(DATA_DIR, 'gateway.pid')
 export const LOG_FILE = join(DATA_DIR, 'logs', 'gateway.log')
 export const SUPERVISOR_PID_FILE = join(DATA_DIR, 'supervisor.pid')
+/** Written while the gateway runs and removed on a clean stop, so a leftover file means the last run ended badly. */
+export const RUNNING_MARKER = join(DATA_DIR, 'gateway.running')
 /** The gateway exits with this to ask its supervisor for a restart (the Health page's Restart button). */
 export const RESTART_EXIT_CODE = 75
 
