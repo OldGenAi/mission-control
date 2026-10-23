@@ -43,10 +43,12 @@ function supervise(codes: number[], otherSupervisorPid?: number): { starts: numb
       if (process.env.MC_SUPERVISED !== '1') process.exit(9)
       process.exit(${JSON.stringify(codes)}[n] ?? 0)
     `)
-    const tsx = path.join(__dirname, '..', 'node_modules', '.bin', 'tsx')
-    const result = spawnSync(tsx, [path.join(__dirname, '..', 'src', 'cli', 'supervise.ts'), fake], {
+    // node --import tsx rather than node_modules/.bin/tsx, which is a .cmd file on Windows that spawn can't run directly.
+    const result = spawnSync(process.execPath, ['--import', 'tsx', path.join(__dirname, '..', 'src', 'cli', 'supervise.ts'), fake], {
+      cwd: path.join(__dirname, '..'),
       env: { ...process.env, HOME: home, USERPROFILE: home, MC_RESTART_DELAY_MS: '10' }, timeout: 30_000,
     })
+    assert.ok(result.stdout, `the supervisor did not run: ${result.error?.message ?? 'no output'}`)
     const logFile = path.join(home, '.missioncontrol', 'logs', 'gateway.log')
     const log = (fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf-8') : '') + result.stdout.toString()
     if (otherSupervisorPid === undefined) {
