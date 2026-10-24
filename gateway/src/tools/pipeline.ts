@@ -4,7 +4,7 @@ import type Database from 'better-sqlite3'
 import type { AgentRegistry } from '../agents/registry.js'
 import type { MonitorBuffer } from '../store/monitor-buffer.js'
 import type { ProviderAdapter } from '../providers/types.js'
-import { loadPipeline } from '../pipeline/loader.js'
+import { isPipelineName, loadPipeline } from '../pipeline/loader.js'
 import { makePipelineRunner } from '../pipeline/runner.js'
 import type { PipelineRunnerConfig } from '../pipeline/types.js'
 import type { RegisteredTool, ToolContext, ToolResult } from './types.js'
@@ -120,6 +120,9 @@ export function makePipelineRunTool(config: PipelineRunToolConfig): RegisteredTo
       const passedContext = (args['context'] ?? {}) as unknown
       if (typeof name !== 'string' || !name.trim()) {
         return { correlationId: ctx.correlationId, toolName: 'pipeline_run', status: 'error', output: '', error: 'PIPELINE_NAME_REQUIRED: name must be a non-empty string', durationMs: Date.now() - start }
+      }
+      if (!isPipelineName(name)) {
+        return { correlationId: ctx.correlationId, toolName: 'pipeline_run', status: 'error', output: '', error: 'PIPELINE_NAME_INVALID: use a pipeline name such as "research_task", not a path', durationMs: Date.now() - start }
       }
       if (typeof passedContext !== 'object' || passedContext === null || Array.isArray(passedContext)) {
         return { correlationId: ctx.correlationId, toolName: 'pipeline_run', status: 'error', output: '', error: 'PIPELINE_CONTEXT_INVALID: context must be a plain object', durationMs: Date.now() - start }

@@ -114,6 +114,11 @@ export function contextWindow(model: string): number {
   return ctxMap.get(model) ?? DEFAULT_CONTEXT
 }
 
+/** The window only when a source actually reported it: decisions that cut a turn short must not act on the default. */
+export function knownContextWindow(model: string): number | undefined {
+  return ctxMap.get(model)
+}
+
 /** Context fill as a 0–100 percentage, for the Monitor ring. */
 export function contextPercent(model: string, inputTokens: number): number {
   const win = contextWindow(model)

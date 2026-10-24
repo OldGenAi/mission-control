@@ -19,6 +19,7 @@ allowed-tools:
   - memory_promote
   - pipeline_run
   - pipeline_status
+  - doctor_status
 max-iterations: 10
 max-cost-usd: 10.00
 timeout-seconds: 600

@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3'
 import { loadSystemPrompt, currentDateTimeNote } from './memory/loader.js'
 import type { ProviderAdapter, Message, StreamChunk, ToolCall, ToolDefinition } from './providers/types.js'
 import { withoutUnopenedThinking } from './providers/think-tags.js'
-import { computeCost, contextPercent } from './providers/pricing.js'
+import { computeCost, contextPercent, knownContextWindow } from './providers/pricing.js'
 import { AgentRegistry } from './agents/registry.js'
 import type { AgentStatus } from './types.js'
 import type { MonitorBuffer } from './store/monitor-buffer.js'
@@ -13,6 +13,33 @@ import { toolOverrides } from './store/tool-overrides.js'
 import { ConsecutiveFailureTracker } from './failure-tracker.js'
 
 const THINKING_UNFINISHED_REPLY = '[The model ran out of room while thinking and wrote no answer. Try again, or give it a larger context length.]'
+
+// A turn the loop has to cut short (step limit, failing tools, context nearly full) ends with one more model call that is
+// offered no tools, so the person gets an answer built from what was found instead of a bare stop notice.
+type WrapUp = { reason: 'steps' } | { reason: 'failures' } | { reason: 'context'; usage: string }
+
+// Share of the model's context window a turn may fill before it is wrapped up. Tool results are what grow a turn, and the
+// next model call would otherwise fail outright once the window is full.
+const CONTEXT_WRAP_UP_SHARE = 0.75
+// With no known window (unlisted model, local server not reporting), the old fixed warning level applies and nothing is cut short.
+const FALLBACK_CONTEXT_WARNING_TOKENS = 100_000
+
+const REPEATED_CALL_ERROR = 'Same tool, same arguments and same result as an earlier call this turn (its result is above). Repeating it will not change anything: use that result, try something different, or answer.'
+
+// The note goes out with the person's role, so it only ever carries the loop's own words and numbers. Error text can come from
+// a web page or a file, and stays in the tool results where the model already treats it as data.
+function wrapUpNote(wrapUp: WrapUp): string {
+  const answer = 'Tools are off now. Answer the person using only what you have already found: say what you found, what you could not finish, and what you would do next.'
+  if (wrapUp.reason === 'steps') return `[You have used all your tool steps for this turn. ${answer}]`
+  if (wrapUp.reason === 'failures') return `[Your last tool calls kept failing (the errors are in the results above). ${answer}]`
+  return `[This conversation is nearly out of room (${wrapUp.usage}). ${answer} Suggest a new chat if there is more to do.]`
+}
+
+function wrapUpFallback(wrapUp: WrapUp): string {
+  if (wrapUp.reason === 'steps') return '[Loop limit reached: the agent stopped after the maximum number of steps.]'
+  if (wrapUp.reason === 'failures') return '[Stopped after repeated tool failures, to avoid looping. The errors are in the tool results. Tell me how you\'d like to proceed.]'
+  return `[Stopped: the conversation is nearly out of room (${wrapUp.usage}). Start a new chat to carry on.]`
+}
 
 interface MessageStats {
   inputTokens: number
@@ -131,7 +158,10 @@ export class AgentLoop {
       const timeoutSeconds = this.config.timeoutSeconds ?? 600
       const deadline = Date.now() + timeoutSeconds * 1000
       const failureTracker = new ConsecutiveFailureTracker()
-      let stopReason: 'normal' | 'timeout' | 'failures' | 'aborted' = 'normal'
+      let stopReason: 'normal' | 'timeout' | 'aborted' = 'normal'
+      let wrapUp: WrapUp | null = null
+      // Tool name + argument hash of each call this turn -> hash of what the model was sent back, to spot a model repeating itself.
+      const earlierCalls = new Map<string, string>()
       // Per-assistant-message stats, keyed by index in `messages`. Persisted with the row.
       const assistantStats = new Map<number, MessageStats>()
       let thoughtInTurn = false
@@ -149,16 +179,17 @@ export class AgentLoop {
           break
         }
         iterations++
+        if (!wrapUp && iterations === maxIterations) wrapUp = { reason: 'steps' }
 
-        // Call provider
+        // Call provider. The wrap-up note is outgoing only, like the clock note, so it never enters stored history.
         const callStartMs = Date.now()
         let inputTokens = 0
         let outputTokens = 0
         let modelDurationMs = 0
         const stream = this.config.provider.complete({
           model: activeModel,
-          messages,
-          tools,
+          messages: wrapUp ? [...messages, { role: 'user', content: wrapUpNote(wrapUp) }] : messages,
+          tools: wrapUp ? undefined : tools,
           correlationId,
           ...(params.reasoning ? { reasoning: params.reasoning } : {}),
           ...(params.abortSignal ? { signal: params.abortSignal } : {}),
@@ -248,10 +279,11 @@ export class AgentLoop {
           return
         }
 
-        // No tool calls – finish
-        if (pendingToolCalls.length === 0) {
+        // No tool calls – finish. A wrap-up round always finishes: any tool call a model makes there anyway is dropped.
+        if (pendingToolCalls.length === 0 || wrapUp) {
           // Thinking is never saved, so a model that used up its room mid-thought would otherwise leave a blank reply.
           if (thoughtThisRound && !responseText.trim()) responseText = THINKING_UNFINISHED_REPLY
+          else if (wrapUp && !responseText.trim()) responseText = wrapUpFallback(wrapUp)
           messages.push({ role: 'assistant', content: responseText })
           assistantStats.set(messages.length - 1, { inputTokens, outputTokens, durationMs: modelDurationMs })
           const tokensPerSecond = modelDurationMs > 0 ? Math.round(outputTokens / (modelDurationMs / 1000)) : 0
@@ -262,6 +294,7 @@ export class AgentLoop {
             inputTokens,
             outputTokens,
             tokensPerSecond,
+            ...(wrapUp ? { wrapUp: wrapUp.reason } : {}),
             ...(params.autoNotify ? { autoNotify: true } : {}),
           })
           break
@@ -366,23 +399,40 @@ export class AgentLoop {
             durationMs,
           })
 
+          // A repeat that changed nothing is sent back as a short error instead of the same result again: it costs no context,
+          // and the failure count stops a model that keeps doing it.
+          const reply = toolStatus === 'ok' ? toolOutput : JSON.stringify({ error: toolError })
+          const callKey = `${toolCall.name}:${inputHash}`
+          const replyHash = createHash('sha256').update(reply).digest('hex')
+          const repeated = earlierCalls.get(callKey) === replyHash
+          earlierCalls.set(callKey, replyHash)
+
           messages.push({
             role: 'tool',
-            content: toolStatus === 'ok' ? toolOutput : JSON.stringify({ error: toolError }),
+            content: repeated ? JSON.stringify({ error: REPEATED_CALL_ERROR }) : reply,
             tool_call_id: toolCall.id,
           })
 
-          failureTracker.record(toolStatus, toolError)
+          if (repeated) failureTracker.record('error', `repeated ${toolCall.name} with the same arguments`)
+          else failureTracker.record(toolStatus, toolError)
         }
 
-        if (failureTracker.tripped) {
-          stopReason = 'failures'
-          break
+        if (failureTracker.tripped && !wrapUp) {
+          this.config.monitorBuffer.enqueue({
+            kind: 'error',
+            correlationId,
+            agentId: this.config.agentId,
+            sessionId,
+            code: 'CONSECUTIVE_TOOL_FAILURES',
+            message: redact(`chat turn wrapped up after ${failureTracker.limit} consecutive tool failures; last: ${failureTracker.lastError ?? 'unknown'}`),
+          })
+          wrapUp = { reason: 'failures' }
         }
 
-        // Context budget warning
+        // Context budget: warn, and wrap the turn up before the next model call would overflow the window.
         const estimatedTokens = estimateTokens(messages)
-        if (estimatedTokens > 100_000) {
+        const contextLimit = knownContextWindow(activeModel)
+        if (estimatedTokens > (contextLimit ? contextLimit * CONTEXT_WRAP_UP_SHARE : FALLBACK_CONTEXT_WARNING_TOKENS)) {
           this.broadcast(clientId, 'agent.status', {
             agentId: this.config.agentId,
             sessionId,
@@ -390,6 +440,9 @@ export class AgentLoop {
             estimatedTokens,
             correlationId,
           })
+          if (contextLimit && !wrapUp) {
+            wrapUp = { reason: 'context', usage: `about ${Math.round(estimatedTokens / 1000)}k of ${Math.round(contextLimit / 1000)}k tokens used` }
+          }
         }
       }
 
@@ -432,28 +485,6 @@ export class AgentLoop {
           sessionId,
           correlationId,
           error: 'turn_timeout',
-        })
-      } else if (stopReason === 'failures') {
-        this.config.monitorBuffer.enqueue({
-          kind: 'error',
-          correlationId,
-          agentId: this.config.agentId,
-          sessionId,
-          code: 'CONSECUTIVE_TOOL_FAILURES',
-          message: redact(`chat turn stopped — ${failureTracker.limit} consecutive tool failures; last: ${failureTracker.lastError ?? 'unknown'}`),
-        })
-        this.broadcast(clientId, 'chat.final', {
-          text: `[Stopped after ${failureTracker.limit} consecutive tool failures. Last error: ${failureTracker.lastError ?? 'unknown'}. I stopped to avoid looping. Tell me how you'd like to proceed.]`,
-          sessionId,
-          correlationId,
-          error: 'consecutive_tool_failures',
-        })
-      } else if (iterations >= maxIterations) {
-        this.broadcast(clientId, 'chat.final', {
-          text: '[Loop limit reached: the agent stopped after the maximum number of steps.]',
-          sessionId,
-          correlationId,
-          error: 'max_iterations_exceeded',
         })
       }
     } catch (err: unknown) {

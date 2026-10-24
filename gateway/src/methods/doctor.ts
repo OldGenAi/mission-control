@@ -1,6 +1,6 @@
 // The Health page's buttons: doctor.status / doctor.check / doctor.fix / doctor.fixSafe / doctor.ignore / doctor.history /
 // doctor.restart.
-// Only the signed-in app can call these; agents have no tool for them.
+// Only the signed-in app can call these. Agents can only read the doctor's status (tools/doctor.ts); every change stays here.
 
 import { registerMethod } from '../router.js'
 import { DoctorError } from '../doctor/engine.js'
