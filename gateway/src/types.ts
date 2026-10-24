@@ -42,6 +42,7 @@ export interface ConnectedClient {
 export type PushEventName =
   | 'connect.challenge'
   | 'chat.delta'
+  | 'chat.thinking'
   | 'chat.final'
   | 'agent.status'
   | 'session.tool'

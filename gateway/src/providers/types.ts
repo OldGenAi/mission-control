@@ -72,6 +72,8 @@ export interface TokenUsage {
  * StreamChunk — what complete() yields on each iteration.
  *
  * text_delta  — a token or partial token of text output. Stream to the client.
+ * thinking_delta — the model's reasoning before it answers. Shown live, but never
+ *               part of the reply: not saved, not sent back to the model.
  * tool_call   — the model wants to call a tool. Execute it, append result, loop.
  * done        — stream is finished. usage is always present. `error` is set when
  *               the stream ended because of an upstream failure (e.g. a 429
@@ -80,6 +82,7 @@ export interface TokenUsage {
  */
 export type StreamChunk =
   | { type: 'text_delta'; delta: string }
+  | { type: 'thinking_delta'; delta: string }
   | { type: 'tool_call'; toolCall: ToolCall }
   | { type: 'done'; usage: TokenUsage; error?: string }
 

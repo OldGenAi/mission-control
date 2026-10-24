@@ -13,6 +13,7 @@ import type {
 import { issueResumeToken } from './approval.js';
 import { evaluateCondition } from './safe-expr.js';
 import { runWorker } from '../worker-loop.js';
+import { withoutUnopenedThinking } from '../providers/think-tags.js';
 
 export function makePipelineRunner(config: PipelineRunnerConfig) {
   const TERMINAL_STATUSES: PipelineStatus[] = ['completed', 'failed', 'aborted'];
@@ -137,6 +138,7 @@ export function makePipelineRunner(config: PipelineRunnerConfig) {
             })
           }
         }
+        responseText = withoutUnopenedThinking(responseText)
 
         const tokensUsed = inputTokens + outputTokens
 

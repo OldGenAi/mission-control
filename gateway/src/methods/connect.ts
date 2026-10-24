@@ -17,6 +17,7 @@ import type { MethodHandler } from '../types.js'
 const AVAILABLE_EVENTS = [
   'connect.challenge',
   'chat.delta',
+  'chat.thinking',
   'chat.final',
   'agent.status',
   'session.tool',

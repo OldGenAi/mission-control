@@ -19,6 +19,7 @@ import type {
   ToolCall,
   ToolDefinition,
 } from './providers/types.js'
+import { withoutUnopenedThinking } from './providers/think-tags.js'
 import type { AgentRegistry } from './agents/registry.js'
 import type { MonitorBuffer } from './store/monitor-buffer.js'
 import type { RegisteredTool } from './tools/types.js'
@@ -185,6 +186,7 @@ export async function runWorker(config: WorkerRunConfig): Promise<WorkerResult> 
           })
         }
       }
+      responseText = withoutUnopenedThinking(responseText)
 
       // Provider surfaced an upstream error (e.g. a 429) as a graceful done.
       // Record it in error_log and fail the worker cleanly so the orchestrator

@@ -18,6 +18,7 @@ import type {
   ToolCall,
 } from './types.js'
 import { toOpenAIMessages, createStallGuard, parseToolArguments } from './utils.js'
+import { ThinkTagSplitter } from './think-tags.js'
 
 // Abort a stalled stream after this long with no chunk. Generous headroom for local
 // cold-start (model load can take tens of seconds), but bounded so a wedged local server
@@ -68,6 +69,14 @@ function assertLoopbackUrl(baseUrl: string): void {
       `For cloud providers use the openrouter or anthropic adapter.`
     )
   }
+}
+
+// Servers that keep a reasoning model's thinking out of the reply send it in a field the OpenAI types don't
+// know: LM Studio and llama.cpp call it reasoning_content, Ollama calls it reasoning.
+function reasoningFieldText(delta: object): string {
+  if ('reasoning_content' in delta && typeof delta.reasoning_content === 'string') return delta.reasoning_content
+  if ('reasoning' in delta && typeof delta.reasoning === 'string') return delta.reasoning
+  return ''
 }
 
 /** True when the address is one LocalProvider would accept (loopback, host.docker.internal or a private network). */
@@ -135,6 +144,7 @@ export class LocalProvider implements ProviderAdapter {
 
     let inputTokens = 0
     let outputTokens = 0
+    const thinkTags = new ThinkTagSplitter()
 
     // Per the ProviderAdapter contract this generator must never throw: an
     // upstream error (429, dropped connection) is surfaced as a final `done`
@@ -166,10 +176,9 @@ export class LocalProvider implements ProviderAdapter {
 
         const delta = choice.delta
 
-        // Text delta
-        if (delta.content) {
-          yield { type: 'text_delta', delta: delta.content }
-        }
+        const thinking = reasoningFieldText(delta)
+        if (thinking) yield { type: 'thinking_delta', delta: thinking }
+        if (delta.content) yield* thinkTags.push(delta.content)
 
         // Tool call fragments — accumulate by index
         if (delta.tool_calls) {
@@ -205,6 +214,7 @@ export class LocalProvider implements ProviderAdapter {
           toolAccumulator.clear()
         }
       }
+      yield* thinkTags.flush()
 
       // The stall abort can end the stream quietly rather than throw. Without this check that looked like an empty, successful reply
       // (no text, no tool call, no error), and a worker was told it had simply finished without saving its report.
