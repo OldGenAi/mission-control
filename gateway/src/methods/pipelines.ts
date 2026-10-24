@@ -12,7 +12,7 @@ import type { MethodHandler } from '../types.js'
 import { registerMethod } from '../router.js'
 import { verifyResumeToken } from '../pipeline/approval.js'
 import { makePipelineRunner } from '../pipeline/runner.js'
-import { loadPipeline } from '../pipeline/loader.js'
+import { isPipelineName, loadPipeline } from '../pipeline/loader.js'
 import type { PipelineRunRow, PipelineStatus, PipelineRunnerConfig } from '../pipeline/types.js'
 import type { SettingsStore, Instance } from '../store/settings.js'
 import type { ProviderRegistry } from '../providers/registry.js'
@@ -147,6 +147,7 @@ export function registerPipelineMethods(db: Database.Database, deps: PipelineMet
     const context = (params['context'] ?? {}) as Record<string, unknown>
 
     if (typeof name !== 'string' || !name.trim()) return { error: 'name is required' }
+    if (!isPipelineName(name)) return { error: 'name must be a pipeline name, not a path' }
     if (typeof context !== 'object' || context === null || Array.isArray(context)) {
       return { error: 'context must be an object' }
     }

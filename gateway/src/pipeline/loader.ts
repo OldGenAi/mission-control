@@ -2,6 +2,12 @@ import { readFileSync } from 'node:fs'
 import { load as loadYaml } from 'js-yaml'
 import type { PipelineDefinition, StepType } from './types.js'
 
+/** A pipeline is named by its file name. Callers join the name into a path, so it must stay a single file name: with "../" a
+ *  name could load a YAML file from anywhere, including one an agent wrote with its file tools. */
+export function isPipelineName(name: string): boolean {
+  return name.length > 0 && name.length <= 100 && !/[/\\\0]/.test(name) && !name.startsWith('.')
+}
+
 export function loadPipeline(filePath: string): PipelineDefinition {
   const content = readFileSync(filePath, 'utf-8')
   let parsed: unknown

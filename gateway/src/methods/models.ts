@@ -1,6 +1,7 @@
 import { registerMethod } from '../router.js'
 import type { MethodHandler } from '../types.js'
 import { isLocalServerUrl } from '../providers/local.js'
+import { knownContextWindow } from '../providers/pricing.js'
 
 export type ModelsConfig =
   | { mode: 'local'; baseUrl: string; apiKey?: string }
@@ -62,8 +63,10 @@ export async function listLocalModels(baseUrl: string, apiKey?: string, timeoutM
       return { models: [], probedUrl, error }
     }
     const data = await res.json() as { data?: Array<{ id: string }> }
+    // /v1/models carries no context size; the window the model was loaded with comes from the context refresh in pricing.ts.
+    // Without it the chat's context gauge fell back to a fixed 32k whatever the person loaded.
     return {
-      models: (data.data ?? []).map((m) => ({ id: m.id, label: m.id })),
+      models: (data.data ?? []).map((m) => ({ id: m.id, label: m.id, contextLength: knownContextWindow(m.id) })),
       probedUrl,
     }
   } catch (e) {

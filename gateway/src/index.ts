@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { startServer, stopServer } from './server.js'
 import { openDatabase, installFtsTriggers } from './store/db.js'
@@ -44,6 +45,8 @@ import { makeArtifactWrite } from './tools/artifact.js'
 import { makeMemoryTools } from './tools/memory.js'
 import { makeSpawnTool } from './tools/spawn.js'
 import { makePipelineRunTool, makePipelineStatusTool } from './tools/pipeline.js'
+import { makeDoctorStatusTool } from './tools/doctor.js'
+import { workspacePath } from './store/redact.js'
 import { PipelineNotifier } from './notify/pipeline-notify.js'
 import type { RegisteredTool } from './tools/types.js'
 import type { ProviderAdapter } from './providers/types.js'
@@ -66,6 +69,9 @@ const SPECS_DIR     = path.join(__dirname, 'agents', 'specs')
 
 const db = openDatabase(DB_PATH)
 installFtsTriggers(db)
+// The assistant's file tools work inside this folder only. Nothing else creates it, and on a fresh install every file
+// call failed with "no such file or directory" until someone made it by hand.
+mkdirSync(workspacePath(), { recursive: true, mode: 0o700 })
 // A fresh install gets Dave's starter instructions; entries the person already has are untouched.
 const seeded = seedStarterEntries(db, 'tier1_agent')
 if (seeded.length > 0) console.log(`[gateway] wrote starter instructions for Dave: ${seeded.join(', ')}`)
@@ -221,6 +227,7 @@ monitorTracker.setWatchdogSource(watchdog.getStats)
 const stopSweep    = startDailyNoteSweep(db)
 // The doctor checks Mission Control every minute and shows what it finds on the Health page (doctor/engine.ts).
 const doctor       = startDoctor(db, settingsStore, (event) => broadcastEvent('doctor.event', { ...event }))
+tools.set('doctor_status', makeDoctorStatusTool(doctor.engine))
 // Restart only when a supervisor will start it again (mc start); run any other way, the page says how to restart.
 registerDoctorMethods(doctor, supervisedBy() !== null ? () => void shutdown(RESTART_EXIT_CODE) : null)
 startPricingRefresh(() => settingsStore.get().localProviderUrl, () => settingsStore.get().providerKeys.local || undefined)
