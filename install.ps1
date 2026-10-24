@@ -12,7 +12,7 @@
 # Your data in %USERPROFILE%\.missioncontrol (settings, chats, memory) is never touched.
 #
 # Options, as environment variables set before running it:
-#   $env:MC_VERSION = 'v0.2.3'        install that release instead of the latest
+#   $env:MC_VERSION = 'v0.2.4'        install that release instead of the latest
 #   $env:MC_NO_ICONS = '1'            skip the desktop icons
 #   $env:MC_NO_PATH = '1'             leave your PATH alone
 #   $env:MC_NO_OPEN = '1'             don't start and open it at the end
