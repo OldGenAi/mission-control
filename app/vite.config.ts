@@ -27,6 +27,9 @@ export default defineConfig(({ command, mode }) => {
   }
   // Dev server only, and only when the user hasn't set one explicitly. A build must never
   // contain the token: the built UI is served by the gateway and signs in with a session.
+  // The dev page runs on Vite's port while video links are relative (/media/video/...), so pass them on to the gateway
+  // (the same 127.0.0.1:4747 that gateway-client.ts connects to). The built UI is served by the gateway itself.
+  config.server = { proxy: { '/media': 'http://127.0.0.1:4747' } }
   if (command === 'serve' && !envToken) {
     const token = gatewayTokenFromConfig()
     if (token) {
