@@ -2,6 +2,7 @@ import { randomUUID, createHash } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import { loadSystemPrompt, currentDateTimeNote } from './memory/loader.js'
 import type { ProviderAdapter, Message, StreamChunk, ToolCall, ToolDefinition } from './providers/types.js'
+import { withoutUnopenedThinking } from './providers/think-tags.js'
 import { computeCost, contextPercent } from './providers/pricing.js'
 import { AgentRegistry } from './agents/registry.js'
 import type { AgentStatus } from './types.js'
@@ -10,6 +11,8 @@ import { redact } from './store/redact.js'
 import type { RegisteredTool } from './tools/types.js'
 import { toolOverrides } from './store/tool-overrides.js'
 import { ConsecutiveFailureTracker } from './failure-tracker.js'
+
+const THINKING_UNFINISHED_REPLY = '[The model ran out of room while thinking and wrote no answer. Try again, or give it a larger context length.]'
 
 interface MessageStats {
   inputTokens: number
@@ -131,6 +134,7 @@ export class AgentLoop {
       let stopReason: 'normal' | 'timeout' | 'failures' | 'aborted' = 'normal'
       // Per-assistant-message stats, keyed by index in `messages`. Persisted with the row.
       const assistantStats = new Map<number, MessageStats>()
+      let thoughtInTurn = false
 
       while (iterations < maxIterations) {
         // User pressed Stop between iterations — bail before another model round.
@@ -161,6 +165,7 @@ export class AgentLoop {
         }) as AsyncIterable<StreamChunk>
 
         let responseText = ''
+        let thoughtThisRound = false
         let providerError: string | undefined
         const pendingToolCalls: ToolCall[] = []
 
@@ -169,6 +174,13 @@ export class AgentLoop {
           if (chunk.type === 'text_delta') {
             responseText += chunk.delta
             this.broadcast(clientId, 'chat.delta', { delta: chunk.delta, correlationId, sessionId })
+          }
+          // Thinking is shown live only. Kept out of responseText so it is never saved as the reply or sent back to the model.
+          if (chunk.type === 'thinking_delta') {
+            // The page shows one box per turn, so an earlier tool round's thinking is already in it: start a new paragraph.
+            const delta = thoughtInTurn && !thoughtThisRound ? `\n\n${chunk.delta}` : chunk.delta
+            thoughtInTurn = thoughtThisRound = true
+            this.broadcast(clientId, 'chat.thinking', { delta, correlationId, sessionId })
           }
           if (chunk.type === 'tool_call') {
             pendingToolCalls.push(chunk.toolCall)
@@ -192,6 +204,7 @@ export class AgentLoop {
             })
           }
         }
+        responseText = withoutUnopenedThinking(responseText)
 
         // User hit Stop mid-stream — the provider cancelled the in-flight request
         // (request.signal). End the turn cleanly: keep whatever text already
@@ -237,6 +250,8 @@ export class AgentLoop {
 
         // No tool calls – finish
         if (pendingToolCalls.length === 0) {
+          // Thinking is never saved, so a model that used up its room mid-thought would otherwise leave a blank reply.
+          if (thoughtThisRound && !responseText.trim()) responseText = THINKING_UNFINISHED_REPLY
           messages.push({ role: 'assistant', content: responseText })
           assistantStats.set(messages.length - 1, { inputTokens, outputTokens, durationMs: modelDurationMs })
           const tokensPerSecond = modelDurationMs > 0 ? Math.round(outputTokens / (modelDurationMs / 1000)) : 0

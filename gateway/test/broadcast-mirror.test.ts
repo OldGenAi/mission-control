@@ -25,12 +25,12 @@ test('a chat turn started by one client is mirrored to the other signed-in windo
   })
 })
 
-test('the events a chat page needs are mirrored: delta, final and status', () => {
+test('the events a chat page needs are mirrored: delta, thinking, final and status', () => {
   withClients((_sender, page) => {
-    for (const event of ['chat.delta', 'chat.final', 'agent.status'] as const) {
+    for (const event of ['chat.delta', 'chat.thinking', 'chat.final', 'agent.status'] as const) {
       mirrorToOtherClients('sender', event, { sessionId: 's1' })
     }
-    assert.deepEqual(page.sent.map((m) => m.event), ['chat.delta', 'chat.final', 'agent.status'])
+    assert.deepEqual(page.sent.map((m) => m.event), ['chat.delta', 'chat.thinking', 'chat.final', 'agent.status'])
   })
 })
 

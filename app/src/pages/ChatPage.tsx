@@ -521,6 +521,8 @@ export function ChatPage() {
   const [sending, setSending] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [streamingText, setStreamingText] = useState<string | null>(null)
+  // The model's thinking for the turn in flight. Live only: it is never saved, so it is gone once the reply is final.
+  const [streamingThinking, setStreamingThinking] = useState<string | null>(null)
   const [streamStats, setStreamStats] = useState<StreamStats | null>(null)
   const [isRecording, setIsRecording] = useState(false)
   const [pendingApprovals, setPendingApprovals] = useState<PipelineApproval[]>([])
@@ -541,6 +543,7 @@ export function ChatPage() {
   if (shownSessionId !== selectedId) {
     setShownSessionId(selectedId)
     setStreamingText(null)
+    setStreamingThinking(null)
     setStreamStats(null)
     setHistory(null)
     setHistoryError(null)
@@ -564,6 +567,16 @@ export function ChatPage() {
 
   // Subscribe to live chat + monitor events
   useEffect(() => {
+    // First words (or first thinking) of a new turn: by now the question is saved, so load it (a turn started elsewhere has no optimistic copy here).
+    const showTurnQuestion = (correlationId: string | undefined) => {
+      if (!correlationId || correlationId === deltaTurnRef.current) return
+      deltaTurnRef.current = correlationId
+      ;(async () => {
+        try {
+          setHistory(await gateway.request<ChatHistoryResponse>("sessions.history", { sessionId: selectedId }))
+        } catch { /* the final event reloads it anyway */ }
+      })()
+    }
     return gateway.onEvent(e => {
       if (e.event === "agent.status") {
         // Drive the "Dave is working" bubble + Stop button off Dave's real
@@ -582,15 +595,12 @@ export function ChatPage() {
         const p = e.payload as { delta?: string; sessionId?: string; correlationId?: string }
         if (p.sessionId && p.sessionId !== selectedId) return
         setStreamingText(prev => (prev ?? "") + (p.delta ?? ""))
-        if (p.correlationId && p.correlationId !== deltaTurnRef.current) {
-          // First words of a new turn: by now the question is saved, so load it (a turn started elsewhere has no optimistic copy here).
-          deltaTurnRef.current = p.correlationId
-          ;(async () => {
-            try {
-              setHistory(await gateway.request<ChatHistoryResponse>("sessions.history", { sessionId: selectedId }))
-            } catch { /* the final event reloads it anyway */ }
-          })()
-        }
+        showTurnQuestion(p.correlationId)
+      } else if (e.event === "chat.thinking") {
+        const p = e.payload as { delta?: string; sessionId?: string; correlationId?: string }
+        if (p.sessionId && p.sessionId !== selectedId) return
+        setStreamingThinking(prev => (prev ?? "") + (p.delta ?? ""))
+        showTurnQuestion(p.correlationId)
       } else if (e.event === "chat.final") {
         const p = e.payload as {
           sessionId?: string
@@ -608,6 +618,7 @@ export function ChatPage() {
           })
         }
         setStreamingText(null)
+        setStreamingThinking(null)
         ;(async () => {
           try {
             const res = await gateway.request<ChatHistoryResponse>("sessions.history", { sessionId: selectedId })
@@ -1047,6 +1058,14 @@ export function ChatPage() {
                 />
               )
             })}
+            {thinking && streamingThinking?.trim() && (
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "6px 0", width: "100%" }}>
+                <div className="chat-avatar assistant">{initials(assistant, "?")}</div>
+                <div style={{ flex: 1 }}>
+                  <Part part={{ kind: "thought", text: streamingThinking }} showTools={showTools} showThinking />
+                </div>
+              </div>
+            )}
             {isGenerating && streamingText === null && (
               <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "6px 0", width: "100%" }}>
                 <div className="chat-avatar assistant">{initials(assistant, "?")}</div>

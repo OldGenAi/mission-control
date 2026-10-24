@@ -53,7 +53,7 @@ export function sendEvent(
 // A chat turn started by one client (the voice bridge, say) is also shown live in every other open window, so the chat page
 // works as the place to watch it. Only the events a chat page needs, and only when they say which session they belong to:
 // the page filters by session, so a window looking at another chat ignores them.
-const MIRRORED_EVENTS: ReadonlySet<string> = new Set(['chat.delta', 'chat.final', 'agent.status'])
+const MIRRORED_EVENTS: ReadonlySet<string> = new Set(['chat.delta', 'chat.thinking', 'chat.final', 'agent.status'])
 
 export function mirrorToOtherClients(
   senderId: string,
