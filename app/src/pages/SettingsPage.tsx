@@ -4,6 +4,7 @@ import { APP_VERSION } from "../lib/version"
 import { mcConfig } from "../lib/mc-config"
 import { useSettings, updateSettings, updateInstance, fetchShellAvailability, type ShellAvailability } from "../lib/settings"
 import { getHudScale, getPerfMode, HUD_SCALE_OPTIONS, setHudScale, setPerfMode, type PerfMode } from "../lib/perf"
+import { getUiScale, setUiScale, UI_SCALE_OPTIONS } from "../lib/ui-scale"
 import { useAssistantName } from "../lib/assistant"
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
@@ -867,6 +868,7 @@ function AppearanceTab() {
   const [saved, markSaved] = useSaved()
   const [perf, setPerf] = useState<PerfMode>(getPerfMode)
   const [hudScale, setHudScaleState] = useState(getHudScale)
+  const [uiScale, setUiScaleState] = useState(getUiScale)
 
   const themes = [
     { id: "aurora", label: "Aurora", desc: "Deep space with cyan + violet glow (default)" },
@@ -929,7 +931,7 @@ function AppearanceTab() {
 
       <Card>
         <SectionTitle>Performance</SectionTitle>
-        <Field label="Monitor animations" note="The Monitor pages animate constantly, which uses the graphics chip. Auto keeps them light: about 15 updates a second while something is running, about 5 when idle. Full is the original smooth look and can use a lot of GPU on a computer without a separate graphics card.">
+        <Field label="Monitor animations" note="The Monitor pages animate constantly, which uses the graphics chip. Auto keeps them light: about 24 updates a second while something is running, about 15 when idle. Full is the original smooth look and can use a lot of GPU on a computer without a separate graphics card.">
           <Select value={perf} onChange={(v: string) => { const m = (v === "full" || v === "low" ? v : "auto") as PerfMode; setPerf(m); setPerfMode(m) }}
             options={[{ value: "auto", label: "Auto (recommended)" }, { value: "low", label: "Low (lightest)" }, { value: "full", label: "Full (smoothest, heavy)" }]} />
         </Field>
@@ -941,6 +943,10 @@ function AppearanceTab() {
 
       <Card>
         <SectionTitle>Display</SectionTitle>
+        <Field label="Interface size" note="Mission Control grows to suit a big screen by itself. Pick Larger or Smaller to taste. Browser zoom (Ctrl + and Ctrl -) still works on top.">
+          <Select value={String(uiScale)} onChange={(v: string) => { const s = Number(v); setUiScaleState(s); setUiScale(s) }}
+            options={UI_SCALE_OPTIONS.map((o) => ({ value: String(o.value), label: o.label }))} />
+        </Field>
         <Field label="Mode" note="Light mode is not built yet, dark only for now">
           <Select value="dark" onChange={() => {}} options={[{ value: "dark", label: "Dark" }, { value: "light", label: "Light (coming soon)" }]} />
         </Field>

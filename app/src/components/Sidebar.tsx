@@ -115,7 +115,7 @@ const ChevronIcon = () => (
 
 export function Sidebar() {
   const { status: health } = useDoctor()
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set(["settings"]))
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
 
   const toggle = (id: string) => {
     setCollapsed(prev => {
@@ -140,10 +140,13 @@ export function Sidebar() {
       {/* Nav */}
       <nav className="sidebar-nav">
         {SECTIONS.map(section => {
-          const isCollapsed = collapsed.has(section.id)
+          // A section with one link needs no heading of its own ("CHAT" over "Chat"); leaving it out keeps the
+          // sidebar short enough for a 1080-line screen.
+          const single = section.items.length === 1
+          const isCollapsed = !single && collapsed.has(section.id)
           return (
             <div key={section.id} className="nav-section">
-              <button
+              {!single && <button
                 className="nav-section__label"
                 onClick={() => toggle(section.id)}
                 type="button"
@@ -152,7 +155,7 @@ export function Sidebar() {
                 <span className={`nav-section__chevron${isCollapsed ? " nav-section__chevron--collapsed" : ""}`}>
                   <ChevronIcon />
                 </span>
-              </button>
+              </button>}
               {!isCollapsed && (
                 <div className="nav-section__items">
                   {section.items.map(item => (
@@ -325,7 +328,7 @@ function AddInstanceModal({ available, onClose, onCreated }: { available: Provid
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-[#0a0f1a] border border-white/10 rounded-lg p-5 w-[360px] max-w-[90vw]" onClick={e => e.stopPropagation()}>
+      <div className="bg-[#0a0f1a] border border-white/10 rounded-lg p-5 w-[360px] max-w-[90%]" onClick={e => e.stopPropagation()}>
         <h3 className="text-sm font-medium text-white mb-3">Add instance</h3>
         <label className="block text-[11px] uppercase tracking-wider text-gray-500 mb-1">Name</label>
         <input value={name} onChange={e => setName(e.target.value)} autoFocus

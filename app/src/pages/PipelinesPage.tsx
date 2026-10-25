@@ -131,7 +131,7 @@ const RunDetailModal: React.FC<{ run: Pipeline; onClose: () => void }> = ({ run,
   return (
     <div onClick={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-6"
       style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(2px)' }}>
-      <div onClick={e => e.stopPropagation()} className="rounded-xl w-full max-w-3xl max-h-[80vh] flex flex-col"
+      <div onClick={e => e.stopPropagation()} className="rounded-xl w-full max-w-3xl max-h-[80%] flex flex-col"
         style={{ background: 'rgba(8,12,20,0.98)', border: '1px solid rgba(0,200,255,0.25)', boxShadow: '0 0 40px rgba(0,0,0,0.6)' }}>
 
         {/* header */}

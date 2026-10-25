@@ -522,8 +522,10 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
     let zoom = 1, W = 0, H = 0
 
     const onMouseMove = (e: MouseEvent) => {
+      // The mouse and the rect are in screen-side pixels, which differ from CSS pixels under the page zoom (lib/ui-scale.ts).
       const rect = canvas.getBoundingClientRect()
-      mouseRef.current = { x: (e.clientX - rect.left) / zoom, y: (e.clientY - rect.top) / zoom }
+      const toCss = canvas.offsetWidth / rect.width || 1
+      mouseRef.current = { x: (e.clientX - rect.left) * toCss / zoom, y: (e.clientY - rect.top) * toCss / zoom }
     }
     const onMouseLeave = () => { mouseRef.current = null }
     canvas.addEventListener('mousemove', onMouseMove)
@@ -540,8 +542,10 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
 
     const resize = () => {
       const cssW = canvas.offsetWidth, cssH = canvas.offsetHeight
-      // Real screen pixels (browser zoom, Windows scaling), capped at 2: beyond that the cost grows faster than the gain.
-      const dpr = Math.min(window.devicePixelRatio || 1, 2)
+      // Real screen pixels (browser zoom, Windows scaling, and the page zoom from lib/ui-scale.ts, which devicePixelRatio
+      // leaves out), capped at 2: beyond that the cost grows faster than the gain.
+      const pageZoom = canvas.getBoundingClientRect().width / cssW || 1
+      const dpr = Math.min((window.devicePixelRatio || 1) * pageZoom, 2)
       zoom = Math.min(Math.max(Math.min(cssW / DESIGN_W, cssH / DESIGN_H), 1), 2.2) * getHudScale()
       canvas.width = Math.round(cssW * dpr); canvas.height = Math.round(cssH * dpr)
       W = cssW / zoom; H = cssH / zoom
