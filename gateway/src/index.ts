@@ -33,7 +33,7 @@ import { startWatchdog } from './pipeline/watchdog.js'
 import { startDailyNoteSweep } from './memory/sweep.js'
 import { ProviderRegistry } from './providers/registry.js'
 import { resolveBootProvider } from './providers/unconfigured.js'
-import { startPricingRefresh } from './providers/pricing.js'
+import { pricesWanted, startPricingRefresh } from './providers/pricing.js'
 import { registerInstancesMethods } from './methods/instances.js'
 import { registerVideoMethods } from './methods/video.js'
 import { VideoJobs } from './video/jobs.js'
@@ -237,7 +237,11 @@ const doctor       = startDoctor(db, settingsStore, (event) => broadcastEvent('d
 tools.set('doctor_status', makeDoctorStatusTool(doctor.engine))
 // Restart only when a supervisor will start it again (mc start); run any other way, the page says how to restart.
 registerDoctorMethods(doctor, supervisedBy() !== null ? () => void shutdown(RESTART_EXIT_CODE) : null)
-startPricingRefresh(() => settingsStore.get().localProviderUrl, () => settingsStore.get().providerKeys.local || undefined)
+startPricingRefresh(
+  () => settingsStore.get().localProviderUrl,
+  () => settingsStore.get().providerKeys.local || undefined,
+  () => pricesWanted(settingsStore.get()),
+)
 
 // ---------------------------------------------------------------------------
 // Start
