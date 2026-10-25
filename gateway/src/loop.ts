@@ -132,7 +132,8 @@ export class AgentLoop {
       const toolDefs: ToolDefinition[] = []
       for (const [name, tool] of this.config.tools) {
         // A proactive pipeline notice only reports what the pipeline wrote. Its message carries report text from the web and from worker
-        // agents (untrusted), so that turn is offered no tools: nothing written in a report can make Dave act.
+        // agents (untrusted), so that turn is offered no tools: a report arriving on its own can't make Dave act. (In a turn the person
+        // started, artifact_read and web_fetch can still bring such text in with tools on; those results are marked as information.)
         if (params.autoNotify) break
         if (tool.requiresExplicitEnable && !this.config.execEnabled) continue
         if (!this.config.registry.hasCapability(this.config.agentId, name)) continue
@@ -215,6 +216,7 @@ export class AgentLoop {
         const stream = this.config.provider.complete({
           model: activeModel,
           messages: wrapUp ? withWrapUpNote(messages, wrapUpNote(wrapUp)) : messages,
+          // Known cost: dropping the tool list changes the prompt prefix, so a local server re-reads the whole prompt for the wrap-up.
           tools: wrapUp ? undefined : tools,
           correlationId,
           ...(params.reasoning ? { reasoning: params.reasoning } : {}),
@@ -344,7 +346,7 @@ export class AgentLoop {
           agentId: this.config.agentId,
           sessionId,
           status: 'thinking' as AgentStatus,
-          contextPct: contextPercent(activeModel, inputTokens),
+          contextPct: contextPercent(activeModel, inputTokens, this.config.provider.name === 'local' ? 'local' : 'cloud'),
           correlationId,
         })
 

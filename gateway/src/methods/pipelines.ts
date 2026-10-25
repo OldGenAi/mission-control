@@ -278,7 +278,7 @@ export function registerPipelineMethods(db: Database.Database, deps: PipelineMet
         for (const file of readdirSync(dir)) {
           if (!file.endsWith('.yaml') && !file.endsWith('.yml')) continue
           const name = file.replace(/\.ya?ml$/, '')
-          if (seen.has(name)) continue
+          if (seen.has(name) || !isPipelineName(name)) continue   // a name that can't be run isn't offered
           seen.add(name)
           try {
             const def = loadPipeline(path.join(dir, file))
