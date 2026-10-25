@@ -4,7 +4,7 @@ import { APP_VERSION } from "../lib/version"
 import { mcConfig } from "../lib/mc-config"
 import { useSettings, updateSettings, updateInstance, fetchShellAvailability, type ShellAvailability } from "../lib/settings"
 import { getHudScale, getPerfMode, HUD_SCALE_OPTIONS, setHudScale, setPerfMode, type PerfMode } from "../lib/perf"
-import { getUiScale, setUiScale, UI_SCALE_OPTIONS } from "../lib/ui-scale"
+import { getUiScale, setUiScale, UI_SCALE_OPTIONS, uiScaleActive } from "../lib/ui-scale"
 import { useAssistantName } from "../lib/assistant"
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
@@ -943,10 +943,12 @@ function AppearanceTab() {
 
       <Card>
         <SectionTitle>Display</SectionTitle>
-        <Field label="Interface size" note="Mission Control grows to suit a big screen by itself. Pick a size to taste. Browser zoom (Ctrl + and Ctrl -) still changes the size too.">
-          <Select value={String(uiScale)} onChange={(v: string) => { const s = Number(v); setUiScaleState(s); setUiScale(s) }}
-            options={UI_SCALE_OPTIONS.map((o) => ({ value: String(o.value), label: o.label }))} />
-        </Field>
+        {uiScaleActive() && (
+          <Field label="Interface size" note="In Chrome and Edge, Mission Control grows to suit a big screen by itself. Pick a size to taste. Browser zoom (Ctrl + and Ctrl -) still changes the size too.">
+            <Select value={String(uiScale)} onChange={(v: string) => { const s = Number(v); setUiScaleState(s); setUiScale(s) }}
+              options={UI_SCALE_OPTIONS.map((o) => ({ value: String(o.value), label: o.label }))} />
+          </Field>
+        )}
         <Field label="Mode" note="Light mode is not built yet, dark only for now">
           <Select value="dark" onChange={() => {}} options={[{ value: "dark", label: "Dark" }, { value: "light", label: "Light (coming soon)" }]} />
         </Field>
