@@ -58,28 +58,36 @@ export function usePerfMode(): PerfMode {
 // Monitor size: the Live monitor scales itself to its panel, and this multiplies that (Settings > Appearance).
 const SCALE_KEY = 'mc-hud-scale'
 const SCALE_EVENT = 'mc-hud-scale'
-export const HUD_SCALES = [0.85, 1, 1.2, 1.4] as const
+export const HUD_SCALE_OPTIONS = [
+  { value: 0.85, label: 'Smaller' },
+  { value: 1, label: 'Normal' },
+  { value: 1.2, label: 'Larger' },
+  { value: 1.4, label: 'Largest' },
+] as const
+const isHudScale = (v: number) => HUD_SCALE_OPTIONS.some((o) => o.value === v)
 
 export function getHudScale(): number {
   try {
     const v = Number(localStorage.getItem(SCALE_KEY))
-    return (HUD_SCALES as readonly number[]).includes(v) ? v : 1
+    return isHudScale(v) ? v : 1
   } catch {
     return 1   // storage blocked: the default size
   }
 }
 
 export function setHudScale(scale: number): void {
+  if (!isHudScale(scale)) return
   try { localStorage.setItem(SCALE_KEY, String(scale)) } catch { /* storage blocked: applies for this page load only */ }
   window.dispatchEvent(new Event(SCALE_EVENT))
 }
 
 export function onHudScaleChange(listener: () => void): () => void {
+  const onStorage = (e: StorageEvent) => { if (e.key === SCALE_KEY) listener() }   // another window changed the size
   window.addEventListener(SCALE_EVENT, listener)
-  window.addEventListener('storage', listener)
+  window.addEventListener('storage', onStorage)
   return () => {
     window.removeEventListener(SCALE_EVENT, listener)
-    window.removeEventListener('storage', listener)
+    window.removeEventListener('storage', onStorage)
   }
 }
 

@@ -59,11 +59,11 @@ let feedSeq = 0
 function gArc(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, sa: number, ea: number, col: string, blur: number, alpha: number, lw: number) {
   if (r <= 0 || alpha <= 0) return
   ctx.save()
-  ctx.globalAlpha = Math.min(1, alpha * 0.25); ctx.shadowBlur = blurUnit * (blur * 2.5); ctx.shadowColor = col; ctx.strokeStyle = col; ctx.lineWidth = lw * 2.2
+  ctx.globalAlpha = Math.min(1, alpha * 0.25); ctx.shadowBlur = spriteScale * (blur * 2.5); ctx.shadowColor = col; ctx.strokeStyle = col; ctx.lineWidth = lw * 2.2
   ctx.beginPath(); ctx.arc(cx, cy, r, sa, ea); ctx.stroke()
-  ctx.globalAlpha = Math.min(1, alpha * 0.65); ctx.shadowBlur = blurUnit * (blur); ctx.lineWidth = lw
+  ctx.globalAlpha = Math.min(1, alpha * 0.65); ctx.shadowBlur = spriteScale * blur; ctx.lineWidth = lw
   ctx.beginPath(); ctx.arc(cx, cy, r, sa, ea); ctx.stroke()
-  ctx.globalAlpha = Math.min(1, alpha); ctx.shadowBlur = blurUnit * (blur * 0.3); ctx.lineWidth = lw * 0.5
+  ctx.globalAlpha = Math.min(1, alpha); ctx.shadowBlur = spriteScale * (blur * 0.3); ctx.lineWidth = lw * 0.5
   ctx.beginPath(); ctx.arc(cx, cy, r, sa, ea); ctx.stroke()
   ctx.restore()
 }
@@ -72,17 +72,17 @@ function gRing(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number,
 }
 function gDot(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, col: string, blur: number, alpha: number) {
   ctx.save()
-  ctx.globalAlpha = alpha * 0.28; ctx.shadowBlur = blurUnit * (blur * 2.5); ctx.shadowColor = col; ctx.fillStyle = col
+  ctx.globalAlpha = alpha * 0.28; ctx.shadowBlur = spriteScale * (blur * 2.5); ctx.shadowColor = col; ctx.fillStyle = col
   ctx.beginPath(); ctx.arc(cx, cy, r * 2.2, 0, Math.PI * 2); ctx.fill()
-  ctx.globalAlpha = alpha; ctx.shadowBlur = blurUnit * (blur)
+  ctx.globalAlpha = alpha; ctx.shadowBlur = spriteScale * blur
   ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill()
-  ctx.globalAlpha = alpha * 0.85; ctx.shadowBlur = blurUnit * (blur * 0.3); ctx.fillStyle = '#ffffff'
+  ctx.globalAlpha = alpha * 0.85; ctx.shadowBlur = spriteScale * (blur * 0.3); ctx.fillStyle = '#ffffff'
   ctx.beginPath(); ctx.arc(cx, cy, r * 0.35, 0, Math.PI * 2); ctx.fill()
   ctx.restore()
 }
 function txt(ctx: CanvasRenderingContext2D, x: number, y: number, s: string, col: string, size: number, align: CanvasTextAlign = 'center', blur = 0) {
   ctx.save(); ctx.font = `600 ${size}px monospace`; ctx.textAlign = align
-  ctx.fillStyle = col; ctx.shadowBlur = blurUnit * (blur); ctx.shadowColor = col; ctx.fillText(s, x, y); ctx.restore()
+  ctx.fillStyle = col; ctx.shadowBlur = spriteScale * blur; ctx.shadowColor = col; ctx.fillText(s, x, y); ctx.restore()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -91,20 +91,27 @@ function txt(ctx: CanvasRenderingContext2D, x: number, y: number, s: string, col
 
 // The monitor is drawn in its own units, scaled to fill the panel and to the screen's real pixels (so it stays sharp
 // at any browser zoom or Windows scaling). shadowBlur ignores the canvas transform, so every glow is multiplied by the
-// current device-pixels-per-unit, kept here.
-let blurUnit = 1
+// device pixels per unit, `spriteScale`, which the main canvas, the sprites and the layers all share.
+let spriteScale = 0   // 0 until the first resize, and again after the page closes, so nothing stale is reused
 
 // Glow (shadowBlur) is what costs the most per frame on an integrated GPU. Parts that only rotate, slide or breathe are
 // drawn once into an off-screen canvas at full resolution and copied each frame, which is a texture copy, not a blur.
 // That is what lets the rings and the radar move smoothly without the old GPU cost.
 const sprites = new Map<string, { canvas: HTMLCanvasElement; size: number }>()
-let spriteScale = 1
 
 function setDrawingScale(scale: number) {
   if (scale === spriteScale) return
+  dropCaches()
   spriteScale = scale
+}
+
+/** Frees every cached canvas. Called on a scale change and when the page closes (they can add up to tens of MB). */
+function dropCaches() {
   sprites.clear()
+  beamRadius = 0
+  staticLayer = null
   hexCache = null
+  spriteScale = 0
 }
 
 /** Copies the sprite `key` (painted once by `paint`, centred, `size` units square) to (cx, cy), rotated and scaled. */
@@ -117,10 +124,7 @@ function stamp(ctx: CanvasRenderingContext2D, key: string, size: number, paint: 
     if (!g) return
     g.scale(spriteScale, spriteScale)
     g.translate(size / 2, size / 2)
-    const outer = blurUnit
-    blurUnit = spriteScale
     paint(g)
-    blurUnit = outer
     s = { canvas, size }
     sprites.set(key, s)
   }
@@ -129,25 +133,29 @@ function stamp(ctx: CanvasRenderingContext2D, key: string, size: number, paint: 
   ctx.restore()
 }
 
-/** Sprite size that holds a ring of radius r with its glow. */
-const spriteSize = (r: number, blur: number) => 2 * Math.ceil(r + blur * 3 + 6)
+/** Sprite size that holds a ring of radius r with its glow (a canvas shadow reaches about 1.5 x shadowBlur). */
+const spriteSize = (r: number, blur: number) => 2 * Math.ceil(r + blur * 1.5 + 4)
 
-// The panels, the radar's dial and the lines between them only change when a number changes: drawn into one layer and
-// reused until its content key changes.
+// The panels, the radar's dial and the lines between them only change when a number changes: drawn into one layer the
+// size of the canvas and copied 1:1 (any resampling would soften the panel text), repainted when its content key changes.
 let staticLayer: { key: string; canvas: HTMLCanvasElement } | null = null
-function drawStaticLayer(ctx: CanvasRenderingContext2D, key: string, W: number, H: number, paint: (g: CanvasRenderingContext2D) => void) {
-  const fullKey = `${key}|${W}x${H}@${spriteScale}`
+function drawStaticLayer(ctx: CanvasRenderingContext2D, key: string, deviceW: number, deviceH: number, paint: (g: CanvasRenderingContext2D) => void) {
+  const fullKey = `${key}|${deviceW}x${deviceH}@${spriteScale}`
   if (!staticLayer || staticLayer.key !== fullKey) {
     const canvas = staticLayer?.canvas ?? document.createElement('canvas')
-    canvas.width = Math.ceil(W * spriteScale); canvas.height = Math.ceil(H * spriteScale)
+    canvas.width = deviceW; canvas.height = deviceH
     const g = canvas.getContext('2d')
     if (!g) return
+    g.setTransform(1, 0, 0, 1, 0, 0)
+    g.clearRect(0, 0, deviceW, deviceH)
     g.setTransform(spriteScale, 0, 0, spriteScale, 0, 0)
-    g.clearRect(0, 0, W, H)
     paint(g)
     staticLayer = { key: fullKey, canvas }
   }
-  ctx.drawImage(staticLayer.canvas, 0, 0, W, H)
+  ctx.save()
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.drawImage(staticLayer.canvas, 0, 0)
+  ctx.restore()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -183,8 +191,9 @@ function hexGrid(ctx: CanvasRenderingContext2D, W: number, H: number, t: number)
     }
     hexCache = { canvas, w: W, h: H }
   }
-  const dx = t % gw, dy = (t * 0.22) % gh
-  ctx.drawImage(hexCache.canvas, dx - gw, dy - gh, hexCache.canvas.width / spriteScale, hexCache.canvas.height / spriteScale)
+  // Alternate columns sit half a hex lower, so the pattern only repeats every two columns: wrapping at one made it jump.
+  const dx = t % (2 * gw), dy = (t * 0.22) % gh
+  ctx.drawImage(hexCache.canvas, dx - 2 * gw, dy - gh, hexCache.canvas.width / spriteScale, hexCache.canvas.height / spriteScale)
 }
 
 function scanLine(ctx: CanvasRenderingContext2D, W: number, H: number, t: number) {
@@ -205,25 +214,36 @@ function mkParticles(W: number, H: number): Particle[] {
 function tickP(ps: Particle[], W: number, H: number) {
   for (const p of ps) { p.x += p.vx; p.y += p.vy; if (p.x < 0) p.x = W; if (p.x > W) p.x = 0; if (p.y < 0) p.y = H; if (p.y > H) p.y = 0 }
 }
-const paintParticle = (g: CanvasRenderingContext2D) => {
-  g.shadowBlur = blurUnit * 5; g.shadowColor = C.cyan; g.fillStyle = C.cyan
-  g.beginPath(); g.arc(0, 0, 1, 0, Math.PI * 2); g.fill()
-}
+// Three sizes of particle sprite, each painted at its own radius so small particles keep the same 5-unit glow.
 function drawP(ctx: CanvasRenderingContext2D, ps: Particle[]) {
   ctx.save()
-  for (const p of ps) { ctx.globalAlpha = p.a; stamp(ctx, 'particle', 20, paintParticle, p.x, p.y, 0, p.r) }
+  for (const p of ps) {
+    const half = Math.max(1, Math.round(p.r * 2))
+    ctx.globalAlpha = p.a
+    stamp(ctx, `particle-${half}`, spriteSize(half / 2, 5), (g) => {
+      g.shadowBlur = spriteScale * 5; g.shadowColor = C.cyan; g.fillStyle = C.cyan
+      g.beginPath(); g.arc(0, 0, half / 2, 0, Math.PI * 2); g.fill()
+    }, p.x, p.y)
+  }
   ctx.restore()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RADAR SWEEP — the dial is static (part of the static layer), the beam a rotating sprite
+// RADAR SWEEP: the dial is static (part of the static layer), the beam a rotating sprite
 // ─────────────────────────────────────────────────────────────────────────────
+// One beam sprite, repainted when the radius changes; a sprite per radius piled up while the window was resized.
+let beamRadius = 0
 function radarBeam(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, angle: number) {
+  const rounded = Math.round(r)
+  if (rounded !== beamRadius) {
+    sprites.delete('radar-beam')
+    beamRadius = rounded
+  }
   const size = spriteSize(r, 20)
-  stamp(ctx, `radar-beam-${Math.round(r)}`, size, (g) => {
-    g.globalAlpha = 0.07; g.fillStyle = C.cyan; g.shadowBlur = blurUnit * 20; g.shadowColor = C.cyan
+  stamp(ctx, 'radar-beam', size, (g) => {
+    g.globalAlpha = 0.07; g.fillStyle = C.cyan; g.shadowBlur = spriteScale * 20; g.shadowColor = C.cyan
     g.beginPath(); g.moveTo(0, 0); g.arc(0, 0, r, -0.5, 0); g.closePath(); g.fill()
-    g.globalAlpha = 0.55; g.shadowBlur = blurUnit * 14; g.strokeStyle = C.cyan; g.lineWidth = 1
+    g.globalAlpha = 0.55; g.shadowBlur = spriteScale * 14; g.strokeStyle = C.cyan; g.lineWidth = 1
     g.beginPath(); g.moveTo(0, 0); g.lineTo(r, 0); g.stroke()
   }, cx, cy, angle)
 }
@@ -259,7 +279,7 @@ function hudPanel(
   // Background fill
   ctx.globalAlpha = 0.05; ctx.fillStyle = col; ctx.fillRect(x, y, w, h)
   // Corner brackets
-  ctx.globalAlpha = a; ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.shadowBlur = blurUnit * (8); ctx.shadowColor = col
+  ctx.globalAlpha = a; ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.shadowBlur = spriteScale * 8; ctx.shadowColor = col
   const corners: [number, number, number, number][] = [
     [x, y, 1, 1], [x + w, y, -1, 1], [x, y + h, 1, -1], [x + w, y + h, -1, -1],
   ]
@@ -268,10 +288,10 @@ function hudPanel(
   }
   // Title bar
   ctx.globalAlpha = 0.25; ctx.fillStyle = col; ctx.fillRect(x, y, w, 16)
-  ctx.globalAlpha = a * 0.7; ctx.shadowBlur = blurUnit * (4); ctx.font = '700 8px monospace'; ctx.textAlign = 'left'
+  ctx.globalAlpha = a * 0.7; ctx.shadowBlur = spriteScale * 4; ctx.font = '700 8px monospace'; ctx.textAlign = 'left'
   ctx.fillStyle = col; ctx.fillText(title, x + 6, y + 11)
   // Divider
-  ctx.globalAlpha = 0.2; ctx.shadowBlur = blurUnit * (0); ctx.lineWidth = 0.5
+  ctx.globalAlpha = 0.2; ctx.shadowBlur = 0; ctx.lineWidth = 0.5
   ctx.beginPath(); ctx.moveTo(x + 4, y + 17); ctx.lineTo(x + w - 4, y + 17); ctx.stroke()
   // Rows
   rows.forEach(([k, v, vc], i) => {
@@ -292,7 +312,7 @@ function hudPanelV(
   ctx.save()
   ctx.globalAlpha = 0.05; ctx.fillStyle = col; ctx.fillRect(x, y, w, h)
   // Corner brackets
-  ctx.globalAlpha = a; ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.shadowBlur = blurUnit * (8); ctx.shadowColor = col
+  ctx.globalAlpha = a; ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.shadowBlur = spriteScale * 8; ctx.shadowColor = col
   const corners: [number, number, number, number][] = [
     [x, y, 1, 1], [x + w, y, -1, 1], [x, y + h, 1, -1], [x + w, y + h, -1, -1],
   ]
@@ -301,7 +321,7 @@ function hudPanelV(
   }
   // Title bar
   ctx.globalAlpha = 0.22; ctx.fillStyle = col; ctx.fillRect(x, y, w, 16)
-  ctx.globalAlpha = a * 0.7; ctx.shadowBlur = blurUnit * (4); ctx.font = '700 8px monospace'; ctx.textAlign = 'left'
+  ctx.globalAlpha = a * 0.7; ctx.shadowBlur = spriteScale * 4; ctx.font = '700 8px monospace'; ctx.textAlign = 'left'
   ctx.fillStyle = col; ctx.fillText(title, x + 6, y + 11)
   // Horizontal divider below title
   ctx.globalAlpha = 0.2; ctx.lineWidth = 0.5
@@ -318,10 +338,10 @@ function hudPanelV(
     }
     // Label
     ctx.globalAlpha = 0.38; ctx.fillStyle = C.muted; ctx.font = '7px monospace'; ctx.textAlign = 'left'
-    ctx.shadowBlur = blurUnit * (0); ctx.fillText(k, x + 8, ry + rowH * 0.35)
+    ctx.shadowBlur = 0; ctx.fillText(k, x + 8, ry + rowH * 0.35)
     // Value — larger, glowing
     ctx.globalAlpha = 0.92; ctx.fillStyle = vc || col; ctx.font = `700 10px monospace`
-    ctx.shadowBlur = blurUnit * (vc === C.cyan ? 8 : 0); ctx.shadowColor = vc
+    ctx.shadowBlur = spriteScale * (vc === C.cyan ? 8 : 0); ctx.shadowColor = vc
     ctx.textAlign = 'right'; ctx.fillText(v, x + w - 8, ry + rowH * 0.72)
   })
   ctx.restore()
@@ -336,9 +356,9 @@ function connection(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: n
   ctx.globalAlpha = 0.22; ctx.strokeStyle = C.cyan; ctx.lineWidth = 0.7; ctx.setLineDash([3, 12]); ctx.lineDashOffset = -dash * 0.4
   ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke()
   if (active) {
-    ctx.globalAlpha = 0.8; ctx.shadowBlur = blurUnit * (10); ctx.shadowColor = C.cyan; ctx.strokeStyle = C.cyan; ctx.lineWidth = 1; ctx.setLineDash([7, 5]); ctx.lineDashOffset = -dash
+    ctx.globalAlpha = 0.8; ctx.shadowBlur = spriteScale * 10; ctx.shadowColor = C.cyan; ctx.strokeStyle = C.cyan; ctx.lineWidth = 1; ctx.setLineDash([7, 5]); ctx.lineDashOffset = -dash
     ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke()
-    ctx.setLineDash([]); ctx.globalAlpha = 1; ctx.shadowBlur = blurUnit * (20); ctx.fillStyle = C.cyan
+    ctx.setLineDash([]); ctx.globalAlpha = 1; ctx.shadowBlur = spriteScale * 20; ctx.fillStyle = C.cyan
     const t = ((dash * 0.016) % 1 + 1) % 1
     ctx.beginPath(); ctx.arc(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t, 2.5, 0, Math.PI * 2); ctx.fill()
   }
@@ -358,7 +378,7 @@ function drawTicks(ctx: CanvasRenderingContext2D, r1: number, r2step: number, co
     const a = (i / count) * Math.PI * 2, long = i % Math.floor(count / 4) === 0
     ctx.save()
     ctx.globalAlpha = long ? activeA : idleA * 0.5
-    ctx.shadowBlur = blurUnit * (long ? 10 : 3); ctx.shadowColor = col; ctx.strokeStyle = col; ctx.lineWidth = long ? 1.4 : 0.7
+    ctx.shadowBlur = spriteScale * (long ? 10 : 3); ctx.shadowColor = col; ctx.strokeStyle = col; ctx.lineWidth = long ? 1.4 : 0.7
     ctx.beginPath()
     ctx.moveTo(Math.cos(a) * r1, Math.sin(a) * r1)
     ctx.lineTo(Math.cos(a) * (r1 + (long ? r2step * 1.5 : r2step)), Math.sin(a) * (r1 + (long ? r2step * 1.5 : r2step)))
@@ -386,10 +406,10 @@ function drawDave(ctx: CanvasRenderingContext2D, cx: number, cy: number, state: 
   stamp(ctx, `${k}-main`, spriteSize(55, mainBlur * 2.5), (g) => gRing(g, 0, 0, 55, col, mainBlur, a, active ? 1.5 : 1), cx, cy, 0, bs)
   // Inner dashed counter-rotating
   stamp(ctx, `${k}-inner`, spriteSize(42, 22), (g) => {
-    g.globalAlpha = active ? 0.75 : 0.42; g.shadowBlur = blurUnit * (active ? 18 : 8); g.shadowColor = col
+    g.globalAlpha = active ? 0.75 : 0.42; g.shadowBlur = spriteScale * (active ? 18 : 8); g.shadowColor = col
     g.strokeStyle = col; g.lineWidth = 1; g.setLineDash([5, 4])
     g.beginPath(); g.arc(0, 0, 38, 0, Math.PI * 2); g.stroke(); g.setLineDash([])
-    g.globalAlpha = active ? 1 : 0.5; g.shadowBlur = blurUnit * (active ? 22 : 10); g.fillStyle = col
+    g.globalAlpha = active ? 1 : 0.5; g.shadowBlur = spriteScale * (active ? 22 : 10); g.fillStyle = col
     g.beginPath(); g.arc(38, 0, active ? 3.5 : 2.2, 0, Math.PI * 2); g.fill()
   }, cx, cy, r2)
   // Fast arc segments
@@ -400,8 +420,9 @@ function drawDave(ctx: CanvasRenderingContext2D, cx: number, cy: number, state: 
   }, cx, cy, r3)
   // Core (painted at radius 10, scaled to its pulse)
   const coreBlur = active ? 32 : 14
-  stamp(ctx, `${k}-core`, spriteSize(22, coreBlur * 2.5), (g) => gDot(g, 0, 0, 10, col, coreBlur, a), cx, cy, 0,
-    ((active ? 11 + Math.sin(breathe * 2.2) * 2.8 : 9) * bs) / 10)
+  const coreBase = active ? 11 : 9
+  stamp(ctx, `${k}-core`, spriteSize(coreBase * 2.2, coreBlur * 2.5), (g) => gDot(g, 0, 0, coreBase, col, coreBlur, a), cx, cy, 0,
+    ((active ? 11 + Math.sin(breathe * 2.2) * 2.8 : 9) * bs) / coreBase)
   // Data readout
   ctx.save(); ctx.globalAlpha = active ? 0.7 : 0.35; ctx.fillStyle = col; ctx.font = '8px monospace'; ctx.textAlign = 'left'
   ;[`STATUS  ${state.status.toUpperCase()}`, `CTX     ${Math.round(state.contextPct ?? 0)}%`, `SES     ${state.sessionId ? '1' : '0'}`].forEach((l, i) => ctx.fillText(l, cx + 105, cy - 16 + i * 13))
@@ -421,7 +442,7 @@ function drawOrch(ctx: CanvasRenderingContext2D, cx: number, cy: number, state: 
   stamp(ctx, `${k}-arcs`, spriteSize(46, 20), (g) => {
     for (let i = 0; i < 3; i++) {
       const sa = (i / 3) * Math.PI * 2 + 0.35, ea = sa + Math.PI * 2 / 3 - 0.35
-      g.globalAlpha = active ? 0.9 : 0.58; g.shadowBlur = blurUnit * (active ? 20 : 11); g.shadowColor = col; g.strokeStyle = col; g.lineWidth = active ? 2 : 1.3
+      g.globalAlpha = active ? 0.9 : 0.58; g.shadowBlur = spriteScale * (active ? 20 : 11); g.shadowColor = col; g.strokeStyle = col; g.lineWidth = active ? 2 : 1.3
       g.beginPath(); g.arc(0, 0, 46, sa, ea); g.stroke()
     }
   }, cx, cy, rot, bs)
@@ -430,15 +451,16 @@ function drawOrch(ctx: CanvasRenderingContext2D, cx: number, cy: number, state: 
   stamp(ctx, `${k}-main`, spriteSize(42, mainBlur * 2.5), (g) => gRing(g, 0, 0, 42, col, mainBlur, a, active ? 1.5 : 1), cx, cy, 0, bs)
   // Inner dashed counter-rotating
   stamp(ctx, `${k}-inner`, spriteSize(32, 18), (g) => {
-    g.globalAlpha = active ? 0.68 : 0.45; g.shadowBlur = blurUnit * (active ? 14 : 8); g.shadowColor = col; g.strokeStyle = col; g.lineWidth = 0.9; g.setLineDash([4, 4])
+    g.globalAlpha = active ? 0.68 : 0.45; g.shadowBlur = spriteScale * (active ? 14 : 8); g.shadowColor = col; g.strokeStyle = col; g.lineWidth = 0.9; g.setLineDash([4, 4])
     g.beginPath(); g.arc(0, 0, 29, 0, Math.PI * 2); g.stroke(); g.setLineDash([])
-    g.globalAlpha = active ? 1 : 0.55; g.shadowBlur = blurUnit * (active ? 18 : 10); g.fillStyle = col
+    g.globalAlpha = active ? 1 : 0.55; g.shadowBlur = spriteScale * (active ? 18 : 10); g.fillStyle = col
     g.beginPath(); g.arc(29, 0, active ? 3 : 2, 0, Math.PI * 2); g.fill()
   }, cx, cy, -rot * 1.4)
   // Core
   const coreBlur = active ? 22 : 11
-  stamp(ctx, `${k}-core`, spriteSize(18, coreBlur * 2.5), (g) => gDot(g, 0, 0, 8, col, coreBlur, a), cx, cy, 0,
-    ((active ? 8 + Math.sin(breathe * 1.9) * 1.8 : 7) * bs) / 8)
+  const coreBase = active ? 8 : 7
+  stamp(ctx, `${k}-core`, spriteSize(coreBase * 2.2, coreBlur * 2.5), (g) => gDot(g, 0, 0, coreBase, col, coreBlur, a), cx, cy, 0,
+    ((active ? 8 + Math.sin(breathe * 1.9) * 1.8 : 7) * bs) / coreBase)
   txt(ctx, cx, cy + 66, 'ORCHESTRATOR', col, 8, 'center', active ? 8 : 4)
 }
 
@@ -452,7 +474,7 @@ function drawWorker(ctx: CanvasRenderingContext2D, cx: number, cy: number, state
   stamp(ctx, `${k}-ticks`, spriteSize(36, 10), (g) => drawTicks(g, 28, 5, 12, col, active ? 0.85 : 0.58, active ? 0.35 : 0.22), cx, cy, rot * 1.4 + idx * 0.8)
   // Rotating arc halves — ALWAYS
   stamp(ctx, `${k}-arcs`, spriteSize(28, 16), (g) => {
-    g.globalAlpha = active ? 0.88 : 0.55; g.shadowBlur = blurUnit * (active ? 16 : 9); g.shadowColor = col; g.strokeStyle = col; g.lineWidth = active ? 1.8 : 1.2
+    g.globalAlpha = active ? 0.88 : 0.55; g.shadowBlur = spriteScale * (active ? 16 : 9); g.shadowColor = col; g.strokeStyle = col; g.lineWidth = active ? 1.8 : 1.2
     g.beginPath(); g.arc(0, 0, 28, 0.3, Math.PI - 0.3); g.stroke()
     g.beginPath(); g.arc(0, 0, 28, Math.PI + 0.3, Math.PI * 2 - 0.3); g.stroke()
   }, cx, cy, rot * 2 + idx, bs)
@@ -461,12 +483,13 @@ function drawWorker(ctx: CanvasRenderingContext2D, cx: number, cy: number, state
   stamp(ctx, `${k}-main`, spriteSize(24, mainBlur * 2.5), (g) => gRing(g, 0, 0, 24, col, mainBlur, a, active ? 1.3 : 0.9), cx, cy, 0, bs)
   // Inner orbit dot
   stamp(ctx, `${k}-orbit`, spriteSize(18, 14), (g) => {
-    g.globalAlpha = active ? 1 : 0.52; g.shadowBlur = blurUnit * (active ? 14 : 7); g.shadowColor = col; g.fillStyle = col
+    g.globalAlpha = active ? 1 : 0.52; g.shadowBlur = spriteScale * (active ? 14 : 7); g.shadowColor = col; g.fillStyle = col
     g.beginPath(); g.arc(15, 0, active ? 2.5 : 1.8, 0, Math.PI * 2); g.fill()
   }, cx, cy, -rot * 2.5 + idx)
   const coreBlur = active ? 14 : 7
-  stamp(ctx, `${k}-core`, spriteSize(14, coreBlur * 2.5), (g) => gDot(g, 0, 0, 6, col, coreBlur, a), cx, cy, 0,
-    ((active ? 6 + Math.sin(breathe + idx) * 1.2 : 5) * bs) / 6)
+  const coreBase = active ? 6 : 5
+  stamp(ctx, `${k}-core`, spriteSize(coreBase * 2.2, coreBlur * 2.5), (g) => gDot(g, 0, 0, coreBase, col, coreBlur, a), cx, cy, 0,
+    ((active ? 6 + Math.sin(breathe + idx) * 1.2 : 5) * bs) / coreBase)
   txt(ctx, cx, cy + 46, `W${idx + 1}`, col, 8, 'center', active ? 6 : 3)
 }
 
@@ -510,9 +533,8 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
     let particles: Particle[] = []
     let raf: number
     let lastFrame = 0
-    // Frame rate comes from the Performance setting (lib/perf.ts): ~15/s while something runs,
-    // ~5/s when idle ('auto'); 30/s in 'full' (the old behaviour). Measured 2026-10-19: 30 fps = 42%
-    // of the iGPU, 15 fps = 17%. Motion is scaled by elapsed time below so it keeps its speed.
+    // Frame rate comes from the Performance setting (lib/perf.ts): ~24/s while something runs, ~15/s when idle
+    // ('auto'); 30/s in 'full'. Motion is scaled by elapsed time below so it keeps its speed.
     const BASE_FRAME_MS = 1000 / 30
 
     const resize = () => {
@@ -522,9 +544,19 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
       zoom = Math.min(Math.max(Math.min(cssW / DESIGN_W, cssH / DESIGN_H), 1), 2.2) * getHudScale()
       canvas.width = Math.round(cssW * dpr); canvas.height = Math.round(cssH * dpr)
       W = cssW / zoom; H = cssH / zoom
-      blurUnit = dpr * zoom
       setDrawingScale(dpr * zoom)
       particles = mkParticles(W, H)
+      lastFrame = 0   // setting the size cleared the canvas: draw on the next animation frame, whatever the frame rate
+    }
+
+    // Moving the window to a screen with different scaling changes devicePixelRatio but not the CSS size, so the
+    // ResizeObserver stays quiet. A resolution query fires on the change; it is re-armed for the new ratio each time.
+    let dprQuery: MediaQueryList | null = null
+    const onDprChange = () => { resize(); watchDpr() }
+    const watchDpr = () => {
+      dprQuery?.removeEventListener('change', onDprChange)
+      dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
+      dprQuery.addEventListener('change', onDprChange)
     }
 
     const draw = (now = 0) => {
@@ -544,8 +576,9 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
       anim.dash += 0.55 * dt; anim.breathe += 0.017 * dt; anim.hex += 0.1 * dt; anim.scan += 1 * dt; anim.sweep += 0.008 * dt
       for (let i = 0, n = Math.max(1, Math.round(dt)); i < n; i++) tickP(particles, W, H)
 
-      ctx.clearRect(0, 0, W, H)
-      ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H)
+      ctx.setTransform(1, 0, 0, 1, 0, 0)
+      ctx.fillStyle = C.bg; ctx.fillRect(0, 0, canvas.width, canvas.height)
+      ctx.setTransform(spriteScale, 0, 0, spriteScale, 0, 0)
 
       hexGrid(ctx, W, H, anim.hex)
       scanLine(ctx, W, H, anim.scan)
@@ -643,13 +676,13 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
 
       // Radar beam centred on Dave, under the static layer that holds its dial
       // No bigger than the space above Dave, so the sweep never runs off the top of the panel.
-      const radarR = Math.min(Math.min(W, H) * 0.44, davePos.y - 6)
-      radarBeam(ctx, davePos.x, davePos.y, radarR, anim.sweep)
+      const radarR = Math.max(0, Math.min(Math.min(W, H) * 0.44, davePos.y - 6))
+      if (radarR > 10) radarBeam(ctx, davePos.x, davePos.y, radarR, anim.sweep)
 
       // Radar dial, the dotted lines to the corner panels and the six panels: redrawn only when a value changes.
       const panelsKey = JSON.stringify([sessionRows, memoryRows, toolsRows, agentsRows, pipelineRows, systemRows])
-      drawStaticLayer(ctx, panelsKey, W, H, (g) => {
-        radarDial(g, davePos.x, davePos.y, radarR)
+      drawStaticLayer(ctx, panelsKey, canvas.width, canvas.height, (g) => {
+        if (radarR > 10) radarDial(g, davePos.x, davePos.y, radarR)
         panelLine(g, davePos.x - 58, davePos.y - 58, 20, 20)
         panelLine(g, davePos.x + 58, davePos.y - 58, W - 14, 20)
         panelLine(g, orchPos.x - 46, orchPos.y + 10, 20, H - 124)
@@ -682,11 +715,11 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
         { id: 'pipeline', x: 14,          y: H-124, title: 'PIPELINE', rows: pipelineRows },
         { id: 'system',   x: W-154,       y: H-124, title: 'SYSTEM',   rows: systemRows },
       ]
-      // Circle node specs — tooltip positioned using canvas px coords (= CSS px at 1x)
+      // Circle node specs. A tooltip is placed at a point in drawing units, plus an offset in CSS pixels for its own size.
       const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
       // The tooltip is plain HTML in CSS pixels; node positions are drawing units.
-      const tipAt = (x: number, y: number): React.CSSProperties => ({
-        left: `${clamp(x * zoom, 4, W * zoom - 218)}px`, top: `${clamp(y * zoom, 4, H * zoom - 200)}px`,
+      const tipAt = (x: number, y: number, dx = 0, dy = 0): React.CSSProperties => ({
+        left: `${clamp(x * zoom + dx, 4, W * zoom - 218)}px`, top: `${clamp(y * zoom + dy, 4, H * zoom - 200)}px`,
       })
       const daveCol = dave.status === 'error' ? C.error : dave.status === 'context_warning' ? C.amber : C.cyan
       const orchCol = orch.status === 'error' ? C.error : orch.status === 'context_warning' ? C.amber : C.muted
@@ -715,7 +748,7 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
           return {
             id: `node-worker-${i}`, cx: wPos[i].x, cy: wPos[i].y, r: 35,
             title: `WORKER ${i + 1}`,
-            posStyle: tipAt(wPos[i].x - 105, wPos[i].y - 138),
+            posStyle: tipAt(wPos[i].x, wPos[i].y - 36, -105, -102),
             rows: [
               ['STATUS', w.status.toUpperCase(), wc],
               ['ID',     w.agentId.slice(0, 16), C.muted],
@@ -750,13 +783,16 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
     const ro = new ResizeObserver(resize)
     ro.observe(canvas)
     const stopScaleWatch = onHudScaleChange(resize)
+    watchDpr()
     draw()
     return () => {
       cancelAnimationFrame(raf)
       ro.disconnect()
       stopScaleWatch()
+      dprQuery?.removeEventListener('change', onDprChange)
       canvas.removeEventListener('mousemove', onMouseMove)
       canvas.removeEventListener('mouseleave', onMouseLeave)
+      dropCaches()
     }
   }, [])
 
