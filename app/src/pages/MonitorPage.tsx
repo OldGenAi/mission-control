@@ -518,7 +518,7 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
 
     // Drawing units: the layout below is written for a panel of about DESIGN_W x DESIGN_H. A bigger panel scales the whole
     // picture up (it used to stay the same pixel size and look far away on a large screen), times the person's size choice.
-    const DESIGN_W = 1100, DESIGN_H = 660
+    const DESIGN_W = 1265, DESIGN_H = 760
     let zoom = 1, W = 0, H = 0
 
     const onMouseMove = (e: MouseEvent) => {
@@ -532,6 +532,7 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
     const anim = { r1: 0, r2: 0, r3: 0, dash: 0, breathe: 0, hex: 0, scan: 0, sweep: 0 }
     let particles: Particle[] = []
     let raf: number
+    let drawNow = false
     let lastFrame = 0
     // Frame rate comes from the Performance setting (lib/perf.ts): ~24/s while something runs, ~15/s when idle
     // ('auto'); 30/s in 'full'. Motion is scaled by elapsed time below so it keeps its speed.
@@ -546,7 +547,7 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
       W = cssW / zoom; H = cssH / zoom
       setDrawingScale(dpr * zoom)
       particles = mkParticles(W, H)
-      lastFrame = 0   // setting the size cleared the canvas: draw on the next animation frame, whatever the frame rate
+      drawNow = true   // setting the size cleared the canvas: draw on the next animation frame, whatever the frame rate
     }
 
     // Moving the window to a screen with different scaling changes devicePixelRatio but not the CSS size, so the
@@ -565,7 +566,8 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
       const somethingRunning = cur.agents.some(a => a.status !== 'idle')
         || (cur.tick?.pipelines ?? []).some(p => p.status === 'running' || p.status === 'paused')
       const frameMs = 1000 / hudFps(getPerfMode(), somethingRunning)
-      if (now - lastFrame < frameMs) return   // skip this frame, stay scheduled
+      if (!drawNow && now - lastFrame < frameMs) return   // skip this frame, stay scheduled
+      drawNow = false
       const dt = Math.min(6, (now - lastFrame) / BASE_FRAME_MS)   // 1 = one old 30fps frame
       lastFrame = now
 
@@ -727,7 +729,7 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
         {
           id: 'node-dave', cx: davePos.x, cy: davePos.y, r: 86,
           title: who.toUpperCase(),
-          posStyle: tipAt(davePos.x + 92, davePos.y - 70),
+          posStyle: tipAt(davePos.x + 86, davePos.y, 6, -70),
           rows: [
             ['STATUS',  dave.status.toUpperCase(),                 daveCol],
             ['SESSION', dave.sessionId ? dave.sessionId.slice(0,8) : '—', C.cyan],
@@ -737,7 +739,7 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
         {
           id: 'node-orch', cx: orchPos.x, cy: orchPos.y, r: 53,
           title: 'ORCHESTRATOR',
-          posStyle: tipAt(orchPos.x + 58, orchPos.y - 60),
+          posStyle: tipAt(orchPos.x + 53, orchPos.y, 5, -60),
           rows: [
             ['STATUS',  orch.status.toUpperCase(),                 orchCol],
             ['SESSION', orch.sessionId ? orch.sessionId.slice(0,8) : '—', C.muted],
