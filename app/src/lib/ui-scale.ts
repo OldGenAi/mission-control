@@ -49,20 +49,14 @@ export function setUiScale(scale: number): void {
   window.dispatchEvent(new Event(EVENT))
 }
 
-// The screen part is only worked out again when the window is on a different screen. Firefox reports the screen size
-// in CSS pixels, which shrink as you zoom in, so working it out on every resize would cancel browser zoom there. The
-// screen's size in device pixels stays the same under browser zoom in every browser, so it identifies the screen.
-// A few pixels of slack: Firefox rounds the zoomed screen size to whole CSS pixels.
-let fit = 1, fitDeviceW = 0, fitDeviceH = 0
+// Chrome, Edge and Safari report the screen size in pixels that browser zoom leaves alone. Firefox reports it in CSS
+// pixels, which shrink as you zoom in (its remembered per-site zoom is applied before this runs), so growing with the
+// screen there would cancel browser zoom. Firefox stays at the normal size; the Interface size choice still applies.
+const screenSizeIgnoresZoom = !CSS.supports('-moz-appearance', 'none')
 
 function screenFit(): number {
-  const dpr = window.devicePixelRatio || 1
-  const w = screen.width * dpr, h = screen.height * dpr
-  if (Math.abs(w - fitDeviceW) > 4 || Math.abs(h - fitDeviceH) > 4) {
-    fitDeviceW = w; fitDeviceH = h
-    fit = Math.min(Math.max(Math.min(screen.width / DESIGN_W, screen.height / DESIGN_H), 1), MAX_FIT)
-  }
-  return fit
+  if (!screenSizeIgnoresZoom) return 1
+  return Math.min(Math.max(Math.min(screen.width / DESIGN_W, screen.height / DESIGN_H), 1), MAX_FIT)
 }
 
 function apply(): void {
@@ -81,9 +75,17 @@ function standardZoom(): boolean {
   return ok
 }
 
+let active = false
+
+/** False in a browser where the page zoom is left off, so Settings can hide the Interface size choice. */
+export function uiScaleActive(): boolean {
+  return active
+}
+
 /** Sets the zoom now and keeps it right when the window, the screen or the setting changes. Call once, before rendering. */
 export function startUiScale(): void {
   if (!standardZoom()) return   // an older browser: leave the page at its normal size rather than misplace the mouse
+  active = true
   apply()
   window.addEventListener('resize', apply)
   window.addEventListener(EVENT, apply)
