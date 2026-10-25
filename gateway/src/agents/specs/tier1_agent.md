@@ -10,6 +10,7 @@ allowed-tools:
   - web_search
   - exec
   - artifact_write
+  - artifact_read
   - memory_write
   - memory_get
   - memory_search
