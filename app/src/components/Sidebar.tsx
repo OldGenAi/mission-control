@@ -47,6 +47,16 @@ const SECTIONS: NavSection[] = [
     items: [{ label: "Chat", href: "/chat", icon: "chat" }],
   },
   {
+    id: "video",
+    label: "Video",
+    items: [{ label: "Video", href: "/video", icon: "video" }],
+  },
+  {
+    id: "channels",
+    label: "Channels",
+    items: [{ label: "Channels", href: "/channels", icon: "channels" }],
+  },
+  {
     id: "pipelines",
     label: "Pipelines",
     items: [
@@ -54,11 +64,6 @@ const SECTIONS: NavSection[] = [
       { label: "Approvals", href: "/pipelines/approvals", icon: "approvals" },
       { label: "Artifacts", href: "/artifacts",           icon: "artifacts" },
     ],
-  },
-  {
-    id: "video",
-    label: "Video",
-    items: [{ label: "Video", href: "/video", icon: "video" }],
   },
   {
     id: "agents",
@@ -78,11 +83,6 @@ const SECTIONS: NavSection[] = [
       { label: "Errors",  href: "/monitor/errors",  icon: "errors"  },
       { label: "Health",  href: "/health",          icon: "health"  },
     ],
-  },
-  {
-    id: "channels",
-    label: "Channels",
-    items: [{ label: "Channels", href: "/channels", icon: "channels" }],
   },
   {
     id: "settings",
@@ -141,15 +141,16 @@ export function Sidebar() {
       <nav className="sidebar-nav">
         {SECTIONS.map(section => {
           // A section with one link needs no heading of its own ("CHAT" over "Chat"); leaving it out keeps the
-          // sidebar short enough for a 1080-line screen.
+          // sidebar short enough for a 1920 x 1080 screen. One that follows a group gets a divider (index.css).
           const single = section.items.length === 1
           const isCollapsed = !single && collapsed.has(section.id)
           return (
-            <div key={section.id} className="nav-section">
+            <div key={section.id} className={single ? "nav-section nav-section--single" : "nav-section"}>
               {!single && <button
                 className="nav-section__label"
                 onClick={() => toggle(section.id)}
                 type="button"
+                aria-expanded={!isCollapsed}
               >
                 <span>{section.label}</span>
                 <span className={`nav-section__chevron${isCollapsed ? " nav-section__chevron--collapsed" : ""}`}>
@@ -269,7 +270,7 @@ function InstancesPanel() {
   }
 
   return (
-    <div className="px-3 py-3 border-t border-white/5 mt-2">
+    <div className="px-3 py-3 border-t border-white/5">
       <p className="text-xs uppercase tracking-wider text-gray-600 px-2 mb-2">Instances</p>
       <div className="flex flex-col gap-1">
         {instances.map(inst => {

@@ -127,12 +127,18 @@ body::before {
 .sidebar-nav {
   /* Only as tall as its links, so Instances sits right under them; it scrolls if the window is too short. */
   flex: 0 1 auto;
-  min-height: 0;
   overflow-y: auto;
   padding: 4px 0;
 }
 
 .nav-section { margin-bottom: 2px; }
+
+/* A single link after a group (Settings after Monitor) would read as part of that group. */
+.nav-section:not(.nav-section--single) + .nav-section--single {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 4px;
+}
 
 .nav-section__label {
   display: flex;
