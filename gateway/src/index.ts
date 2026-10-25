@@ -74,7 +74,9 @@ installFtsTriggers(db)
 mkdirSync(workspacePath(), { recursive: true, mode: 0o700 })
 const wantedWorkspace = process.env['MC_WORKSPACE']
 if (wantedWorkspace && workspacePath() !== path.resolve(wantedWorkspace)) {
-  console.warn(`[gateway] MC_WORKSPACE "${wantedWorkspace}" refused (must be an absolute folder below your home, not your home itself or ~/.missioncontrol); using ${workspacePath()}`)
+  console.warn(`[gateway] MC_WORKSPACE "${wantedWorkspace}" refused (must be an absolute folder below your home, not your home itself, ~/.missioncontrol or Mission Control's own folder); using ${workspacePath()}`)
+} else if (!wantedWorkspace && workspacePath() !== path.join(homedir(), 'mission-control')) {
+  console.log(`[gateway] Mission Control itself is in ~/mission-control, so the assistant's files go in ${workspacePath()}`)
 }
 // A fresh install gets Dave's starter instructions; entries the person already has are untouched.
 const seeded = seedStarterEntries(db, 'tier1_agent')

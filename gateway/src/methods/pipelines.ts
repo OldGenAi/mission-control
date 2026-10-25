@@ -7,6 +7,7 @@
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { readdirSync } from 'node:fs'
+import { homedir } from 'node:os'
 import type Database from 'better-sqlite3'
 import type { MethodHandler } from '../types.js'
 import { registerMethod } from '../router.js'
@@ -266,7 +267,7 @@ export function registerPipelineMethods(db: Database.Database, deps: PipelineMet
   // pipelines.available — read pipeline YAMLs at call time so adding a file in
   // ~/mission-control/gateway/src/pipelines/ surfaces immediately without a code change.
   const PIPELINE_DIR_BUILTIN = path.join(__dirname, '..', 'pipelines')
-  const PIPELINE_DIR_USER    = path.join(process.env['HOME'] ?? '', '.missioncontrol', 'pipelines')
+  const PIPELINE_DIR_USER    = path.join(homedir(), '.missioncontrol', 'pipelines')
 
   const availablePipelines: MethodHandler = async () => {
     interface Entry { name: string; source: 'builtin' | 'user'; title?: string; description?: string }

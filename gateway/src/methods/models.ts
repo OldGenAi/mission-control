@@ -63,10 +63,10 @@ export async function listLocalModels(baseUrl: string, apiKey?: string, timeoutM
       return { models: [], probedUrl, error }
     }
     const data = await res.json() as { data?: Array<{ id: string }> }
-    // /v1/models carries no context size; the window the model was loaded with comes from the context refresh in pricing.ts.
-    // Without it the chat's context gauge fell back to a fixed 32k whatever the person loaded.
+    // /v1/models carries no context size; the loaded window comes from the context refresh in pricing.ts (for the server
+    // at the saved local URL). Without it the chat's context gauge fell back to a fixed 32k whatever the person loaded.
     return {
-      models: (data.data ?? []).map((m) => ({ id: m.id, label: m.id, contextLength: knownContextWindow(m.id) })),
+      models: (data.data ?? []).map((m) => ({ id: m.id, label: m.id, contextLength: knownContextWindow('local', m.id) })),
       probedUrl,
     }
   } catch (e) {

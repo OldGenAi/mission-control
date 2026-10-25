@@ -24,6 +24,8 @@ interface RedactionRule {
 }
 
 const HOME = os.homedir()
+// The folder Mission Control runs from: a source checkout, or the unpacked release. This file is gateway/{src,dist}/store/.
+const INSTALL_ROOT = path.resolve(__dirname, '..', '..', '..')
 
 const RULES: RedactionRule[] = [
   // Bearer tokens (Authorization headers)
@@ -126,17 +128,28 @@ export function redactStack(stack: string | undefined): string | undefined {
  * Used by file tools to verify workspace boundary — kept here so the
  * workspace path is defined in one place.
  *
+ * The file tools may write anywhere inside the workspace, so it must never overlap Mission Control's own install folder:
+ * the README's quick start clones the code to ~/mission-control, the default workspace, and a steered model could then
+ * write a pipeline into gateway/src/pipelines and run it, or change gateway code that runs on the next restart. When the
+ * default would overlap, ~/mission-control-workspace is used instead.
+ *
  * MC_WORKSPACE moves it. Like MC_ALLOW_UNSANDBOXED_SHELL it is read from the gateway's environment only, never from
- * settings the page or an agent can change. The file tools may write anywhere inside the workspace, so a value that is
- * relative, the home folder or above it, or inside ~/.missioncontrol is refused and the default used instead.
+ * settings the page or an agent can change. A value that is relative, the home folder or above it, inside ~/.missioncontrol,
+ * or overlapping the install folder is refused and the default used instead.
  */
-export function workspacePath(env: NodeJS.ProcessEnv = process.env): string {
-  const fallback = path.join(HOME, 'mission-control')
+export function workspacePath(env: NodeJS.ProcessEnv = process.env, installRoot: string = INSTALL_ROOT): string {
+  const overlapsInstall = (dir: string) => isInside(dir, installRoot) || isInside(installRoot, dir)
+  const standard = path.join(HOME, 'mission-control')
+  const fallback = overlapsInstall(standard) ? path.join(HOME, 'mission-control-workspace') : standard
   const wanted = env['MC_WORKSPACE']
   if (!wanted || !path.isAbsolute(wanted)) return fallback
   const resolved = path.resolve(wanted)
-  const dataDir = path.join(HOME, '.missioncontrol')
-  const coversHome = resolved === HOME || HOME.startsWith(resolved.endsWith(path.sep) ? resolved : resolved + path.sep)
-  const insideData = resolved === dataDir || resolved.startsWith(dataDir + path.sep)
-  return coversHome || insideData ? fallback : resolved
+  const coversHome = isInside(HOME, resolved)
+  const insideData = isInside(resolved, path.join(HOME, '.missioncontrol'))
+  return coversHome || insideData || overlapsInstall(resolved) ? fallback : resolved
+}
+
+/** True when `child` is `parent` or inside it. */
+function isInside(child: string, parent: string): boolean {
+  return child === parent || child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep)
 }

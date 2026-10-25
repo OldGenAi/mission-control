@@ -9,6 +9,7 @@ import { AgentLoop } from '../src/loop.js'
 import { AgentRegistry } from '../src/agents/registry.js'
 import { isPipelineName } from '../src/pipeline/loader.js'
 import { makeDoctorStatusTool } from '../src/tools/doctor.js'
+import { rememberContextWindow } from '../src/providers/pricing.js'
 import type { DoctorEngine } from '../src/doctor/engine.js'
 import type { ProviderAdapter, CompletionRequest, StreamChunk } from '../src/providers/types.js'
 import type { RegisteredTool, ToolResult } from '../src/tools/types.js'
@@ -19,10 +20,12 @@ interface Round {
   /** Tool to call this round; omitted = answer with `text`. */
   call?: { name: string; arguments: Record<string, unknown> }
   text?: string
+  /** The provider reports this upstream error for the round (a 429, an overflow). */
+  error?: string
 }
 
 /** A provider that plays back `rounds` in order and records every request it was sent. */
-function setup(rounds: Round[], toolOutput: (args: Record<string, unknown>) => Pick<ToolResult, 'status' | 'output' | 'error'>, maxIterations = 4) {
+function setup(rounds: Round[], toolOutput: (args: Record<string, unknown>) => Pick<ToolResult, 'status' | 'output' | 'error'>, maxIterations = 4, model = 'm') {
   const db = openDatabase(path.join(mkdtempSync(path.join(tmpdir(), 'mc-wrapup-')), 'db.sqlite'))
   db.prepare(`INSERT INTO sessions (id, agent_id, title, created_at, updated_at) VALUES ('s1', 'tier1_agent', 't', 1, 1)`).run()
   const requests: CompletionRequest[] = []
@@ -34,7 +37,7 @@ function setup(rounds: Round[], toolOutput: (args: Record<string, unknown>) => P
       const round = rounds[Math.min(next++, rounds.length - 1)]!
       if (round.call) yield { type: 'tool_call', toolCall: { id: `c${next}`, name: round.call.name, arguments: round.call.arguments } }
       if (round.text) yield { type: 'text_delta', delta: round.text }
-      yield { type: 'done', usage: { inputTokens: 1, outputTokens: 1 } }
+      yield { type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, ...(round.error ? { error: round.error } : {}) }
     },
   }
   let executions = 0
@@ -46,13 +49,17 @@ function setup(rounds: Round[], toolOutput: (args: Record<string, unknown>) => P
     },
   }
   const finals: Array<Record<string, unknown>> = []
+  const deltas: string[] = []
   const loop = new AgentLoop({
-    agentId: 'tier1_agent', provider, model: 'm', registry: AgentRegistry.loadFromDirectory(SPECS_DIR), db,
+    agentId: 'tier1_agent', provider, model, registry: AgentRegistry.loadFromDirectory(SPECS_DIR), db,
     monitorBuffer: { enqueue: () => {} } as never, tools: new Map([['memory_get', memoryGet]]), execEnabled: false, maxIterations,
-    broadcast: (_client, event, payload) => { if (event === 'chat.final') finals.push(payload) },
+    broadcast: (_client, event, payload) => {
+      if (event === 'chat.final') finals.push(payload)
+      if (event === 'chat.delta') deltas.push(String(payload['delta']))
+    },
   })
   const stored = () => db.prepare(`SELECT role, content FROM messages WHERE session_id = 's1' ORDER BY created_at, rowid`).all() as Array<{ role: string; content: string }>
-  return { db, loop, requests, finals, stored, executions: () => executions }
+  return { db, loop, requests, finals, deltas, stored, executions: () => executions }
 }
 
 const lastMessage = (request: CompletionRequest) => request.messages[request.messages.length - 1]!
@@ -66,7 +73,7 @@ test('the last allowed step is offered no tools and the model answers with what 
     assert.deepEqual(t.requests.map((r) => r.tools?.map((d) => d.name)), [['memory_get'], ['memory_get'], undefined])
     assert.match(String(lastMessage(t.requests[2]!).content), /used all your tool steps/)
     assert.equal(t.finals.length, 1)
-    assert.equal(t.finals[0]!['wrapUp'], 'steps')
+    assert.equal(t.finals[0]!['text'], 'Here is what I found.')
     assert.ok(!t.stored().some((m) => m.content.includes('Tools are off now')), 'the wrap-up note is never stored')
   } finally {
     t.db.close()
@@ -78,7 +85,9 @@ test('a wrap-up with no answer falls back to the old notice instead of a blank r
   try {
     await t.loop.run({ message: 'go', sessionId: 's1', clientId: '' })
     assert.equal(t.requests[0]!.tools, undefined)
+    assert.deepEqual(t.requests[0]!.messages.map((m) => m.role), ['system', 'user'], 'the note joins the person\'s message so roles alternate')
     assert.equal(t.finals[0]!['text'], '[Loop limit reached: the agent stopped after the maximum number of steps.]')
+    assert.ok(t.deltas.includes(t.finals[0]!['text'] as string), 'the fallback is streamed too, so voice says it')
     assert.equal(t.executions(), 0, 'a tool call made in the wrap-up round is dropped, not run')
   } finally {
     t.db.close()
@@ -95,7 +104,7 @@ test('a call repeated with the same result is answered with a short error instea
     await t.loop.run({ message: 'what did we do today', sessionId: 's1', clientId: '' })
     const toolReplies = t.stored().filter((m) => m.role === 'tool').map((m) => m.content)
     assert.equal(toolReplies[0], '{"entry":null}')
-    assert.match(toolReplies[1]!, /Same tool, same arguments and same result/)
+    assert.match(toolReplies[1]!, /exactly the same result as an identical earlier call/)
     assert.equal(t.finals[0]!['text'], 'Nothing saved for today.')
   } finally {
     t.db.close()
@@ -132,16 +141,43 @@ test('repeated tool failures wrap the turn up with an answer instead of a bare s
     const note = String(lastMessage(t.requests[3]!).content)
     assert.match(note, /kept failing/)
     assert.ok(!note.includes('store unavailable'), 'error text from a tool never goes into the note sent with the person\'s role')
-    assert.equal(t.finals[0]!['wrapUp'], 'failures')
     assert.equal(t.finals[0]!['text'], 'The memory store kept failing, so I could not check.')
   } finally {
     t.db.close()
   }
 })
 
-test('pipeline names that are paths are refused', () => {
-  for (const ok of ['research_task', 'code-review', 'My Pipeline v2']) assert.ok(isPipelineName(ok), ok)
-  for (const bad of ['', '..', '../../mission-control/evil', 'sub/name', 'sub\\name', '.hidden', 'a\0b', 'x'.repeat(101)]) {
+test('a provider error in the wrap-up round keeps the tool work already done', async () => {
+  let n = 0
+  const call = { call: { name: 'memory_get', arguments: {} } }
+  const t = setup([call, call, { error: '429 rate limited' }], () => ({ status: 'ok', output: `{"entry":${n++}}` }), 3)
+  try {
+    await t.loop.run({ message: 'look around', sessionId: 's1', clientId: '' })
+    assert.equal(t.finals[0]!['error'], 'provider_error')
+    assert.deepEqual(t.stored().map((m) => m.role), ['user', 'assistant', 'tool', 'assistant', 'tool'])
+  } finally {
+    t.db.close()
+  }
+})
+
+test('a turn that nearly fills a known context window is wrapped up before the next call overflows it', async () => {
+  rememberContextWindow('cloud', 'small-window-model', 1000)
+  const t = setup([{ call: { name: 'memory_get', arguments: {} } }, { text: 'Summary so far.' }], () => ({ status: 'ok', output: 'x'.repeat(4000) }), 10, 'small-window-model')
+  try {
+    await t.loop.run({ message: 'read the big thing', sessionId: 's1', clientId: '' })
+    assert.equal(t.requests.length, 2)
+    assert.equal(t.requests[1]!.tools, undefined)
+    assert.match(String(lastMessage(t.requests[1]!).content), /nearly out of room \(about \d+k of 1k tokens used\)/)
+    assert.equal(t.finals[0]!['text'], 'Summary so far.')
+  } finally {
+    t.db.close()
+  }
+})
+
+test('pipeline names that are paths or Windows device names are refused', () => {
+  for (const ok of ['research_task', 'code-review', 'My Pipeline v2', 'console']) assert.ok(isPipelineName(ok), ok)
+  for (const bad of ['', '..', '../../mission-control/evil', 'sub/name', 'sub\\name', '.hidden', 'a\0b', 'a\nb', 'x'.repeat(101),
+    'CON', 'nul', 'Com1', 'LPT9', 'C:evil', 'COM¹']) {
     assert.ok(!isPipelineName(bad), JSON.stringify(bad))
   }
 })
@@ -165,4 +201,15 @@ test('doctor_status reports issues and passed checks, read only', async () => {
     ignoredByPerson: [],
     passed: ['Database: Healthy'],
   })
+})
+
+test('doctor_status redacts keys in what the checks report', async () => {
+  const engine = {
+    status: () => ({
+      checkedAt: null, overall: 'fail', ignored: [], passed: [],
+      issues: [{ id: 'k', area: 'models', title: 'Key', status: 'fail', summary: 'rejected key sk-or-v1-abcdef0123456789abcdef', fixesLeft: 0 }],
+    }),
+  } as unknown as DoctorEngine
+  const output = (await makeDoctorStatusTool(engine).execute({}, { correlationId: 'c', agentId: 'tier1_agent' })).output
+  assert.ok(!output.includes('abcdef0123456789'), output)
 })
