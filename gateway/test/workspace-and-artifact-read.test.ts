@@ -1,36 +1,63 @@
 // Run with: npm test
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { openDatabase } from '../src/store/db.js'
 import { workspacePath } from '../src/store/redact.js'
 import { makeArtifactRead } from '../src/tools/artifact.js'
 
-const HOME = homedir()
-const DEFAULT = path.join(HOME, 'mission-control')
+/** A throwaway home folder with a Mission Control install somewhere inside it. */
+function fakeHome() {
+  const home = realpathSync(mkdtempSync(path.join(tmpdir(), 'mc-home-')))
+  const install = path.join(home, 'apps', 'mc')
+  mkdirSync(install, { recursive: true })
+  return { home, install, ws: (env: NodeJS.ProcessEnv, installRoot = install) => workspacePath(env, installRoot, home) }
+}
 
-test('MC_WORKSPACE moves the workspace to a folder below home', () => {
-  assert.equal(workspacePath({}), DEFAULT)
-  assert.equal(workspacePath({ MC_WORKSPACE: path.join(HOME, 'rodney-workspace') }), path.join(HOME, 'rodney-workspace'))
-  assert.equal(workspacePath({ MC_WORKSPACE: path.join(HOME, 'a', '..', 'b') }), path.join(HOME, 'b'))
+test('MC_WORKSPACE moves the workspace to a folder inside home', () => {
+  const { home, ws } = fakeHome()
+  assert.equal(ws({}), path.join(home, 'mission-control'))
+  assert.equal(ws({ MC_WORKSPACE: path.join(home, 'rodney-workspace') }), path.join(home, 'rodney-workspace'))
+  assert.equal(ws({ MC_WORKSPACE: path.join(home, 'a', '..', 'b') }), path.join(home, 'b'))
 })
 
 test('MC_WORKSPACE values that would widen the file tools are refused', () => {
-  for (const bad of ['relative/dir', HOME, `${HOME}${path.sep}`, path.dirname(HOME), path.parse(HOME).root,
-    path.join(HOME, '.missioncontrol'), path.join(HOME, '.missioncontrol', 'x'), path.join(HOME, 'x', '..', '..')]) {
-    assert.equal(workspacePath({ MC_WORKSPACE: bad }), DEFAULT, bad)
+  const { home, ws } = fakeHome()
+  const fallback = path.join(home, 'mission-control')
+  for (const bad of ['relative/dir', home, `${home}${path.sep}`, path.dirname(home), path.parse(home).root, '/etc',
+    path.join(home, '.missioncontrol'), path.join(home, '.ssh'), path.join(home, '.config', 'x'), path.join(home, 'x', '..', '..')]) {
+    assert.equal(ws({ MC_WORKSPACE: bad }), fallback, bad)
   }
 })
 
-test('the workspace never overlaps the folder Mission Control runs from', () => {
-  const quickStartInstall = path.join(HOME, 'mission-control')   // the README's clone location, also the default workspace
-  assert.equal(workspacePath({}, quickStartInstall), path.join(HOME, 'mission-control-workspace'))
-  assert.equal(workspacePath({ MC_WORKSPACE: path.join(quickStartInstall, 'gateway') }, quickStartInstall), path.join(HOME, 'mission-control-workspace'))
-  const install = path.resolve(__dirname, '..', '..')   // this checkout
-  assert.notEqual(workspacePath({ MC_WORKSPACE: install }), install)
-  assert.notEqual(workspacePath({ MC_WORKSPACE: path.join(install, 'gateway', 'src', 'pipelines') }), path.join(install, 'gateway', 'src', 'pipelines'))
+test('the workspace never overlaps Mission Control code, running or not', () => {
+  const { home, install, ws } = fakeHome()
+  const standard = path.join(home, 'mission-control')
+  const alt = path.join(home, 'mission-control-workspace')
+  // The README's quick start: the running install is ~/mission-control itself.
+  assert.equal(ws({}, standard), alt)
+  assert.equal(ws({ MC_WORKSPACE: install }), standard)
+  assert.equal(ws({ MC_WORKSPACE: path.join(install, 'gateway', 'src', 'pipelines') }), standard)
+  // A clone at ~/mission-control that isn't the one running.
+  mkdirSync(path.join(home, 'mission-control', 'gateway'), { recursive: true })
+  writeFileSync(path.join(home, 'mission-control', 'gateway', 'package.json'), '{}')
+  assert.equal(ws({}), alt)
+})
+
+test('links are followed before comparing', (t) => {
+  const { home, install, ws } = fakeHome()
+  try {
+    symlinkSync(install, path.join(home, 'link-to-install'), 'dir')
+    symlinkSync(install, path.join(home, 'mission-control'), 'dir')
+  } catch {
+    t.skip('this system does not allow creating symlinks')
+    return
+  }
+  const alt = path.join(home, 'mission-control-workspace')
+  assert.equal(ws({}), alt, 'a ~/mission-control that links to the install is not used')
+  assert.equal(ws({ MC_WORKSPACE: path.join(home, 'link-to-install') }), alt)
 })
 
 test('artifact_read returns a report with its note and refuses deleted or unknown ids', async () => {

@@ -11,6 +11,7 @@
  * module by writing to error_log directly.
  */
 
+import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -24,8 +25,15 @@ interface RedactionRule {
 }
 
 const HOME = os.homedir()
-// The folder Mission Control runs from: a source checkout, or the unpacked release. This file is gateway/{src,dist}/store/.
-const INSTALL_ROOT = path.resolve(__dirname, '..', '..', '..')
+// The folder Mission Control runs from. This file is <gateway>/{src,dist}/store/. The gateway folder's parent is part of
+// it when it holds the app too (a checkout or the unpacked release: the gateway serves app/dist, so writing there would put
+// script in the signed-in page). In the Docker image the gateway is /app on its own, and its parent is the filesystem root.
+const INSTALL_ROOT = (() => {
+  const gatewayDir = path.resolve(__dirname, '..', '..')
+  const parent = path.dirname(gatewayDir)
+  const parentHoldsApp = path.join(parent, 'app') !== gatewayDir && fs.existsSync(path.join(parent, 'app'))
+  return parentHoldsApp || fs.existsSync(path.join(parent, '.git')) ? parent : gatewayDir
+})()
 
 const RULES: RedactionRule[] = [
   // Bearer tokens (Authorization headers)
@@ -128,25 +136,56 @@ export function redactStack(stack: string | undefined): string | undefined {
  * Used by file tools to verify workspace boundary — kept here so the
  * workspace path is defined in one place.
  *
- * The file tools may write anywhere inside the workspace, so it must never overlap Mission Control's own install folder:
- * the README's quick start clones the code to ~/mission-control, the default workspace, and a steered model could then
- * write a pipeline into gateway/src/pipelines and run it, or change gateway code that runs on the next restart. When the
- * default would overlap, ~/mission-control-workspace is used instead.
+ * The file tools may write anywhere inside the workspace, so it must never overlap Mission Control's own code: the
+ * README's quick start clones it to ~/mission-control, the default workspace, and a steered model could then write a
+ * pipeline into gateway/src/pipelines and run it, change gateway code that runs on the next restart, or change files in a
+ * clone that a later commit or build picks up. When ~/mission-control is the running install or any Mission Control
+ * checkout, ~/mission-control-workspace is used instead.
  *
  * MC_WORKSPACE moves it. Like MC_ALLOW_UNSANDBOXED_SHELL it is read from the gateway's environment only, never from
- * settings the page or an agent can change. A value that is relative, the home folder or above it, inside ~/.missioncontrol,
- * or overlapping the install folder is refused and the default used instead.
+ * settings the page or an agent can change. It must be a folder strictly inside the home folder, with no hidden folder
+ * on the way (.ssh, .missioncontrol, .config...) and not overlapping the install; otherwise the default is used.
+ * Paths are compared after resolving links, ignoring case where the file system does.
  */
-export function workspacePath(env: NodeJS.ProcessEnv = process.env, installRoot: string = INSTALL_ROOT): string {
-  const overlapsInstall = (dir: string) => isInside(dir, installRoot) || isInside(installRoot, dir)
-  const standard = path.join(HOME, 'mission-control')
-  const fallback = overlapsInstall(standard) ? path.join(HOME, 'mission-control-workspace') : standard
+export function workspacePath(env: NodeJS.ProcessEnv = process.env, installRoot: string = INSTALL_ROOT, home: string = HOME): string {
+  const install = comparable(installRoot)
+  const overlapsInstall = (dir: string) => { const d = comparable(dir); return isInside(d, install) || isInside(install, d) }
+  const standard = path.join(home, 'mission-control')
+  const fallback = overlapsInstall(standard) || looksLikeCheckout(standard) ? path.join(home, 'mission-control-workspace') : standard
   const wanted = env['MC_WORKSPACE']
   if (!wanted || !path.isAbsolute(wanted)) return fallback
   const resolved = path.resolve(wanted)
-  const coversHome = isInside(HOME, resolved)
-  const insideData = isInside(resolved, path.join(HOME, '.missioncontrol'))
-  return coversHome || insideData || overlapsInstall(resolved) ? fallback : resolved
+  const parts = path.relative(comparable(home), comparable(resolved)).split(path.sep)
+  const insideHome = parts[0] !== '' && parts[0] !== '..' && !path.isAbsolute(parts.join(path.sep))
+  return insideHome && !parts.some((p) => p.startsWith('.')) && !overlapsInstall(resolved) ? resolved : fallback
+}
+
+const CASE_INSENSITIVE_FS = process.platform === 'win32' || process.platform === 'darwin'
+
+/** The real path (links resolved; for a path that doesn't exist yet, its nearest existing parent's), case-folded where the
+ *  file system ignores case. For comparisons only. */
+function comparable(p: string): string {
+  let head = path.resolve(p)
+  const rest: string[] = []
+  let real = head
+  for (;;) {
+    try {
+      real = path.join(fs.realpathSync.native(head), ...rest)
+      break
+    } catch {
+      const parent = path.dirname(head)
+      if (parent === head) break
+      rest.unshift(path.basename(head))
+      head = parent
+    }
+  }
+  return CASE_INSENSITIVE_FS ? real.toLowerCase() : real
+}
+
+/** A Mission Control source checkout (or a copy of the install), even when it isn't the one running. A plain .git is not
+ *  enough: a person's own project in the workspace may be a repository. */
+function looksLikeCheckout(dir: string): boolean {
+  return fs.existsSync(path.join(dir, 'gateway', 'package.json'))
 }
 
 /** True when `child` is `parent` or inside it. */

@@ -121,8 +121,10 @@ export function computeCost(model: string, inputTokens: number, outputTokens: nu
   return inputTokens * p.prompt + outputTokens * p.completion
 }
 
-/** Loaded context window (tokens) for a model, or a safe default. For the gauges, which don't know the provider. */
-export function contextWindow(model: string): number {
+/** Loaded context window (tokens) for a model, or a safe default. Without a source (a caller that doesn't know the
+ *  provider) the local entry wins. */
+export function contextWindow(model: string, source?: ContextSource): number {
+  if (source) return ctxMaps[source].get(model) ?? DEFAULT_CONTEXT
   return ctxMaps.local.get(model) ?? ctxMaps.cloud.get(model) ?? DEFAULT_CONTEXT
 }
 
@@ -132,8 +134,8 @@ export function knownContextWindow(source: ContextSource, model: string): number
 }
 
 /** Context fill as a 0–100 percentage, for the Monitor ring. */
-export function contextPercent(model: string, inputTokens: number): number {
-  const win = contextWindow(model)
+export function contextPercent(model: string, inputTokens: number, source?: ContextSource): number {
+  const win = contextWindow(model, source)
   if (win <= 0) return 0
   return Math.min(100, Math.round((inputTokens / win) * 100))
 }
