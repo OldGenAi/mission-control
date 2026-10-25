@@ -3,7 +3,7 @@ import { gateway, WS_URL } from "../lib/gateway-client"
 import { APP_VERSION } from "../lib/version"
 import { mcConfig } from "../lib/mc-config"
 import { useSettings, updateSettings, updateInstance, fetchShellAvailability, type ShellAvailability } from "../lib/settings"
-import { getPerfMode, setPerfMode, type PerfMode } from "../lib/perf"
+import { getHudScale, getPerfMode, setHudScale, setPerfMode, type PerfMode } from "../lib/perf"
 import { useAssistantName } from "../lib/assistant"
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
@@ -866,6 +866,7 @@ function AppearanceTab() {
   const [accent, setAccent] = useState(lsGet("accentColor", "#7B61FF"))
   const [saved, markSaved] = useSaved()
   const [perf, setPerf] = useState<PerfMode>(getPerfMode)
+  const [hudScale, setHudScaleState] = useState(getHudScale)
 
   const themes = [
     { id: "aurora", label: "Aurora", desc: "Deep space with cyan + violet glow (default)" },
@@ -931,6 +932,10 @@ function AppearanceTab() {
         <Field label="Monitor animations" note="The Monitor pages animate constantly, which uses the graphics chip. Auto keeps them light: about 15 updates a second while something is running, about 5 when idle. Full is the original smooth look and can use a lot of GPU on a computer without a separate graphics card.">
           <Select value={perf} onChange={(v: string) => { const m = (v === "full" || v === "low" ? v : "auto") as PerfMode; setPerf(m); setPerfMode(m) }}
             options={[{ value: "auto", label: "Auto (recommended)" }, { value: "low", label: "Low (lightest)" }, { value: "full", label: "Full (smoothest, heavy)" }]} />
+        </Field>
+        <Field label="Monitor size" note="The Live monitor grows to fill its space. Pick Larger if it still looks far away on a big screen, or Smaller on a small one.">
+          <Select value={String(hudScale)} onChange={(v: string) => { const s = Number(v); setHudScaleState(s); setHudScale(s) }}
+            options={[{ value: "0.85", label: "Smaller" }, { value: "1", label: "Normal" }, { value: "1.2", label: "Larger" }, { value: "1.4", label: "Largest" }]} />
         </Field>
       </Card>
 

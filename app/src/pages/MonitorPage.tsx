@@ -4,7 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { gateway } from '../lib/gateway-client'
 import { useAssistantName } from '../lib/assistant'
 import type { GatewayEvent } from '../lib/gateway-client'
-import { getPerfMode, hudFps } from '../lib/perf'
+import { getHudScale, getPerfMode, hudFps, onHudScaleChange } from '../lib/perf'
 
 const C = {
   bg: '#020408', surface: '#080D14',
@@ -59,11 +59,11 @@ let feedSeq = 0
 function gArc(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, sa: number, ea: number, col: string, blur: number, alpha: number, lw: number) {
   if (r <= 0 || alpha <= 0) return
   ctx.save()
-  ctx.globalAlpha = Math.min(1, alpha * 0.25); ctx.shadowBlur = blur * 2.5; ctx.shadowColor = col; ctx.strokeStyle = col; ctx.lineWidth = lw * 2.2
+  ctx.globalAlpha = Math.min(1, alpha * 0.25); ctx.shadowBlur = blurUnit * (blur * 2.5); ctx.shadowColor = col; ctx.strokeStyle = col; ctx.lineWidth = lw * 2.2
   ctx.beginPath(); ctx.arc(cx, cy, r, sa, ea); ctx.stroke()
-  ctx.globalAlpha = Math.min(1, alpha * 0.65); ctx.shadowBlur = blur; ctx.lineWidth = lw
+  ctx.globalAlpha = Math.min(1, alpha * 0.65); ctx.shadowBlur = blurUnit * (blur); ctx.lineWidth = lw
   ctx.beginPath(); ctx.arc(cx, cy, r, sa, ea); ctx.stroke()
-  ctx.globalAlpha = Math.min(1, alpha); ctx.shadowBlur = blur * 0.3; ctx.lineWidth = lw * 0.5
+  ctx.globalAlpha = Math.min(1, alpha); ctx.shadowBlur = blurUnit * (blur * 0.3); ctx.lineWidth = lw * 0.5
   ctx.beginPath(); ctx.arc(cx, cy, r, sa, ea); ctx.stroke()
   ctx.restore()
 }
@@ -72,17 +72,82 @@ function gRing(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number,
 }
 function gDot(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, col: string, blur: number, alpha: number) {
   ctx.save()
-  ctx.globalAlpha = alpha * 0.28; ctx.shadowBlur = blur * 2.5; ctx.shadowColor = col; ctx.fillStyle = col
+  ctx.globalAlpha = alpha * 0.28; ctx.shadowBlur = blurUnit * (blur * 2.5); ctx.shadowColor = col; ctx.fillStyle = col
   ctx.beginPath(); ctx.arc(cx, cy, r * 2.2, 0, Math.PI * 2); ctx.fill()
-  ctx.globalAlpha = alpha; ctx.shadowBlur = blur
+  ctx.globalAlpha = alpha; ctx.shadowBlur = blurUnit * (blur)
   ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill()
-  ctx.globalAlpha = alpha * 0.85; ctx.shadowBlur = blur * 0.3; ctx.fillStyle = '#ffffff'
+  ctx.globalAlpha = alpha * 0.85; ctx.shadowBlur = blurUnit * (blur * 0.3); ctx.fillStyle = '#ffffff'
   ctx.beginPath(); ctx.arc(cx, cy, r * 0.35, 0, Math.PI * 2); ctx.fill()
   ctx.restore()
 }
 function txt(ctx: CanvasRenderingContext2D, x: number, y: number, s: string, col: string, size: number, align: CanvasTextAlign = 'center', blur = 0) {
   ctx.save(); ctx.font = `600 ${size}px monospace`; ctx.textAlign = align
-  ctx.fillStyle = col; ctx.shadowBlur = blur; ctx.shadowColor = col; ctx.fillText(s, x, y); ctx.restore()
+  ctx.fillStyle = col; ctx.shadowBlur = blurUnit * (blur); ctx.shadowColor = col; ctx.fillText(s, x, y); ctx.restore()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCALE AND SPRITES
+// ─────────────────────────────────────────────────────────────────────────────
+
+// The monitor is drawn in its own units, scaled to fill the panel and to the screen's real pixels (so it stays sharp
+// at any browser zoom or Windows scaling). shadowBlur ignores the canvas transform, so every glow is multiplied by the
+// current device-pixels-per-unit, kept here.
+let blurUnit = 1
+
+// Glow (shadowBlur) is what costs the most per frame on an integrated GPU. Parts that only rotate, slide or breathe are
+// drawn once into an off-screen canvas at full resolution and copied each frame, which is a texture copy, not a blur.
+// That is what lets the rings and the radar move smoothly without the old GPU cost.
+const sprites = new Map<string, { canvas: HTMLCanvasElement; size: number }>()
+let spriteScale = 1
+
+function setDrawingScale(scale: number) {
+  if (scale === spriteScale) return
+  spriteScale = scale
+  sprites.clear()
+  hexCache = null
+}
+
+/** Copies the sprite `key` (painted once by `paint`, centred, `size` units square) to (cx, cy), rotated and scaled. */
+function stamp(ctx: CanvasRenderingContext2D, key: string, size: number, paint: (g: CanvasRenderingContext2D) => void, cx: number, cy: number, rot = 0, scale = 1) {
+  let s = sprites.get(key)
+  if (!s) {
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = Math.ceil(size * spriteScale)
+    const g = canvas.getContext('2d')
+    if (!g) return
+    g.scale(spriteScale, spriteScale)
+    g.translate(size / 2, size / 2)
+    const outer = blurUnit
+    blurUnit = spriteScale
+    paint(g)
+    blurUnit = outer
+    s = { canvas, size }
+    sprites.set(key, s)
+  }
+  ctx.save(); ctx.translate(cx, cy); if (rot) ctx.rotate(rot)
+  ctx.drawImage(s.canvas, -size * scale / 2, -size * scale / 2, size * scale, size * scale)
+  ctx.restore()
+}
+
+/** Sprite size that holds a ring of radius r with its glow. */
+const spriteSize = (r: number, blur: number) => 2 * Math.ceil(r + blur * 3 + 6)
+
+// The panels, the radar's dial and the lines between them only change when a number changes: drawn into one layer and
+// reused until its content key changes.
+let staticLayer: { key: string; canvas: HTMLCanvasElement } | null = null
+function drawStaticLayer(ctx: CanvasRenderingContext2D, key: string, W: number, H: number, paint: (g: CanvasRenderingContext2D) => void) {
+  const fullKey = `${key}|${W}x${H}@${spriteScale}`
+  if (!staticLayer || staticLayer.key !== fullKey) {
+    const canvas = staticLayer?.canvas ?? document.createElement('canvas')
+    canvas.width = Math.ceil(W * spriteScale); canvas.height = Math.ceil(H * spriteScale)
+    const g = canvas.getContext('2d')
+    if (!g) return
+    g.setTransform(spriteScale, 0, 0, spriteScale, 0, 0)
+    g.clearRect(0, 0, W, H)
+    paint(g)
+    staticLayer = { key: fullKey, canvas }
+  }
+  ctx.drawImage(staticLayer.canvas, 0, 0, W, H)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -97,10 +162,11 @@ function hexGrid(ctx: CanvasRenderingContext2D, W: number, H: number, t: number)
   const s = 30, gw = s * 1.5, gh = s * Math.sqrt(3)
   if (!hexCache || hexCache.w !== W || hexCache.h !== H) {
     const canvas = document.createElement('canvas')
-    canvas.width = Math.ceil(W + 3 * gw); canvas.height = Math.ceil(H + 3 * gh)
+    canvas.width = Math.ceil((W + 3 * gw) * spriteScale); canvas.height = Math.ceil((H + 3 * gh) * spriteScale)
     const g = canvas.getContext('2d')
     if (!g) return
-    g.translate(gw, gh)   // cache pixel = screen pixel + (gw, gh)
+    g.scale(spriteScale, spriteScale)
+    g.translate(gw, gh)   // cache point = screen point + (gw, gh)
     g.strokeStyle = 'rgba(0,200,255,0.05)'; g.lineWidth = 0.5
     for (let c = -1; c < W / gw + 2; c++) {
       for (let r = -1; r < H / gh + 2; r++) {
@@ -118,7 +184,7 @@ function hexGrid(ctx: CanvasRenderingContext2D, W: number, H: number, t: number)
     hexCache = { canvas, w: W, h: H }
   }
   const dx = t % gw, dy = (t * 0.22) % gh
-  ctx.drawImage(hexCache.canvas, dx - gw, dy - gh)
+  ctx.drawImage(hexCache.canvas, dx - gw, dy - gh, hexCache.canvas.width / spriteScale, hexCache.canvas.height / spriteScale)
 }
 
 function scanLine(ctx: CanvasRenderingContext2D, W: number, H: number, t: number) {
@@ -139,16 +205,30 @@ function mkParticles(W: number, H: number): Particle[] {
 function tickP(ps: Particle[], W: number, H: number) {
   for (const p of ps) { p.x += p.vx; p.y += p.vy; if (p.x < 0) p.x = W; if (p.x > W) p.x = 0; if (p.y < 0) p.y = H; if (p.y > H) p.y = 0 }
 }
+const paintParticle = (g: CanvasRenderingContext2D) => {
+  g.shadowBlur = blurUnit * 5; g.shadowColor = C.cyan; g.fillStyle = C.cyan
+  g.beginPath(); g.arc(0, 0, 1, 0, Math.PI * 2); g.fill()
+}
 function drawP(ctx: CanvasRenderingContext2D, ps: Particle[]) {
   ctx.save()
-  for (const p of ps) { ctx.globalAlpha = p.a; ctx.shadowBlur = 5; ctx.shadowColor = C.cyan; ctx.fillStyle = C.cyan; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill() }
+  for (const p of ps) { ctx.globalAlpha = p.a; stamp(ctx, 'particle', 20, paintParticle, p.x, p.y, 0, p.r) }
   ctx.restore()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RADAR SWEEP
+// RADAR SWEEP — the dial is static (part of the static layer), the beam a rotating sprite
 // ─────────────────────────────────────────────────────────────────────────────
-function radarSweep(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, angle: number) {
+function radarBeam(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, angle: number) {
+  const size = spriteSize(r, 20)
+  stamp(ctx, `radar-beam-${Math.round(r)}`, size, (g) => {
+    g.globalAlpha = 0.07; g.fillStyle = C.cyan; g.shadowBlur = blurUnit * 20; g.shadowColor = C.cyan
+    g.beginPath(); g.moveTo(0, 0); g.arc(0, 0, r, -0.5, 0); g.closePath(); g.fill()
+    g.globalAlpha = 0.55; g.shadowBlur = blurUnit * 14; g.strokeStyle = C.cyan; g.lineWidth = 1
+    g.beginPath(); g.moveTo(0, 0); g.lineTo(r, 0); g.stroke()
+  }, cx, cy, angle)
+}
+
+function radarDial(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number) {
   ctx.save()
   // Outer radar circle with tick marks
   ctx.strokeStyle = C.cyan; ctx.lineWidth = 0.5; ctx.globalAlpha = 0.12
@@ -164,12 +244,6 @@ function radarSweep(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: nu
   // Mid ring
   ctx.globalAlpha = 0.07; ctx.lineWidth = 0.5; ctx.setLineDash([1, 12])
   ctx.beginPath(); ctx.arc(cx, cy, r * 0.6, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([])
-  // Sweep wedge
-  ctx.globalAlpha = 0.07; ctx.fillStyle = C.cyan; ctx.shadowBlur = 20; ctx.shadowColor = C.cyan
-  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r, angle - 0.5, angle); ctx.closePath(); ctx.fill()
-  // Sweep line
-  ctx.globalAlpha = 0.55; ctx.shadowBlur = 14; ctx.strokeStyle = C.cyan; ctx.lineWidth = 1
-  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(angle) * r, cy + Math.sin(angle) * r); ctx.stroke()
   ctx.restore()
 }
 
@@ -185,7 +259,7 @@ function hudPanel(
   // Background fill
   ctx.globalAlpha = 0.05; ctx.fillStyle = col; ctx.fillRect(x, y, w, h)
   // Corner brackets
-  ctx.globalAlpha = a; ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.shadowBlur = 8; ctx.shadowColor = col
+  ctx.globalAlpha = a; ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.shadowBlur = blurUnit * (8); ctx.shadowColor = col
   const corners: [number, number, number, number][] = [
     [x, y, 1, 1], [x + w, y, -1, 1], [x, y + h, 1, -1], [x + w, y + h, -1, -1],
   ]
@@ -194,10 +268,10 @@ function hudPanel(
   }
   // Title bar
   ctx.globalAlpha = 0.25; ctx.fillStyle = col; ctx.fillRect(x, y, w, 16)
-  ctx.globalAlpha = a * 0.7; ctx.shadowBlur = 4; ctx.font = '700 8px monospace'; ctx.textAlign = 'left'
+  ctx.globalAlpha = a * 0.7; ctx.shadowBlur = blurUnit * (4); ctx.font = '700 8px monospace'; ctx.textAlign = 'left'
   ctx.fillStyle = col; ctx.fillText(title, x + 6, y + 11)
   // Divider
-  ctx.globalAlpha = 0.2; ctx.shadowBlur = 0; ctx.lineWidth = 0.5
+  ctx.globalAlpha = 0.2; ctx.shadowBlur = blurUnit * (0); ctx.lineWidth = 0.5
   ctx.beginPath(); ctx.moveTo(x + 4, y + 17); ctx.lineTo(x + w - 4, y + 17); ctx.stroke()
   // Rows
   rows.forEach(([k, v, vc], i) => {
@@ -218,7 +292,7 @@ function hudPanelV(
   ctx.save()
   ctx.globalAlpha = 0.05; ctx.fillStyle = col; ctx.fillRect(x, y, w, h)
   // Corner brackets
-  ctx.globalAlpha = a; ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.shadowBlur = 8; ctx.shadowColor = col
+  ctx.globalAlpha = a; ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.shadowBlur = blurUnit * (8); ctx.shadowColor = col
   const corners: [number, number, number, number][] = [
     [x, y, 1, 1], [x + w, y, -1, 1], [x, y + h, 1, -1], [x + w, y + h, -1, -1],
   ]
@@ -227,7 +301,7 @@ function hudPanelV(
   }
   // Title bar
   ctx.globalAlpha = 0.22; ctx.fillStyle = col; ctx.fillRect(x, y, w, 16)
-  ctx.globalAlpha = a * 0.7; ctx.shadowBlur = 4; ctx.font = '700 8px monospace'; ctx.textAlign = 'left'
+  ctx.globalAlpha = a * 0.7; ctx.shadowBlur = blurUnit * (4); ctx.font = '700 8px monospace'; ctx.textAlign = 'left'
   ctx.fillStyle = col; ctx.fillText(title, x + 6, y + 11)
   // Horizontal divider below title
   ctx.globalAlpha = 0.2; ctx.lineWidth = 0.5
@@ -244,10 +318,10 @@ function hudPanelV(
     }
     // Label
     ctx.globalAlpha = 0.38; ctx.fillStyle = C.muted; ctx.font = '7px monospace'; ctx.textAlign = 'left'
-    ctx.shadowBlur = 0; ctx.fillText(k, x + 8, ry + rowH * 0.35)
+    ctx.shadowBlur = blurUnit * (0); ctx.fillText(k, x + 8, ry + rowH * 0.35)
     // Value — larger, glowing
     ctx.globalAlpha = 0.92; ctx.fillStyle = vc || col; ctx.font = `700 10px monospace`
-    ctx.shadowBlur = vc === C.cyan ? 8 : 0; ctx.shadowColor = vc
+    ctx.shadowBlur = blurUnit * (vc === C.cyan ? 8 : 0); ctx.shadowColor = vc
     ctx.textAlign = 'right'; ctx.fillText(v, x + w - 8, ry + rowH * 0.72)
   })
   ctx.restore()
@@ -262,9 +336,9 @@ function connection(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: n
   ctx.globalAlpha = 0.22; ctx.strokeStyle = C.cyan; ctx.lineWidth = 0.7; ctx.setLineDash([3, 12]); ctx.lineDashOffset = -dash * 0.4
   ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke()
   if (active) {
-    ctx.globalAlpha = 0.8; ctx.shadowBlur = 10; ctx.shadowColor = C.cyan; ctx.strokeStyle = C.cyan; ctx.lineWidth = 1; ctx.setLineDash([7, 5]); ctx.lineDashOffset = -dash
+    ctx.globalAlpha = 0.8; ctx.shadowBlur = blurUnit * (10); ctx.shadowColor = C.cyan; ctx.strokeStyle = C.cyan; ctx.lineWidth = 1; ctx.setLineDash([7, 5]); ctx.lineDashOffset = -dash
     ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke()
-    ctx.setLineDash([]); ctx.globalAlpha = 1; ctx.shadowBlur = 20; ctx.fillStyle = C.cyan
+    ctx.setLineDash([]); ctx.globalAlpha = 1; ctx.shadowBlur = blurUnit * (20); ctx.fillStyle = C.cyan
     const t = ((dash * 0.016) % 1 + 1) % 1
     ctx.beginPath(); ctx.arc(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t, 2.5, 0, Math.PI * 2); ctx.fill()
   }
@@ -284,7 +358,7 @@ function drawTicks(ctx: CanvasRenderingContext2D, r1: number, r2step: number, co
     const a = (i / count) * Math.PI * 2, long = i % Math.floor(count / 4) === 0
     ctx.save()
     ctx.globalAlpha = long ? activeA : idleA * 0.5
-    ctx.shadowBlur = long ? 10 : 3; ctx.shadowColor = col; ctx.strokeStyle = col; ctx.lineWidth = long ? 1.4 : 0.7
+    ctx.shadowBlur = blurUnit * (long ? 10 : 3); ctx.shadowColor = col; ctx.strokeStyle = col; ctx.lineWidth = long ? 1.4 : 0.7
     ctx.beginPath()
     ctx.moveTo(Math.cos(a) * r1, Math.sin(a) * r1)
     ctx.lineTo(Math.cos(a) * (r1 + (long ? r2step * 1.5 : r2step)), Math.sin(a) * (r1 + (long ? r2step * 1.5 : r2step)))
@@ -292,72 +366,79 @@ function drawTicks(ctx: CanvasRenderingContext2D, r1: number, r2step: number, co
   }
 }
 
+// Each node is a stack of sprites: every ring is painted once per colour and state, then rotated and breathed by copying.
 function drawDave(ctx: CanvasRenderingContext2D, cx: number, cy: number, state: AgentState, r1: number, r2: number, r3: number, breathe: number, name: string) {
   const active = state.status !== 'idle'
   const col = state.status === 'error' ? C.error : state.status === 'context_warning' ? C.amber : C.cyan
   const a = active ? 1 : 0.5, bs = 1 + Math.sin(breathe) * 0.018
+  const k = `dave-${col}-${active}`
 
   // Outermost tick ring
-  ctx.save(); ctx.translate(cx, cy); ctx.rotate(r1 * 0.4)
-  drawTicks(ctx, 80, 6, 24, col, active ? 0.9 : 0.5, active ? 0.35 : 0.2)
-  ctx.restore()
+  stamp(ctx, `${k}-ticks`, spriteSize(89, 10), (g) => drawTicks(g, 80, 6, 24, col, active ? 0.9 : 0.5, active ? 0.35 : 0.2), cx, cy, r1 * 0.4)
   // Outer arc ring
-  ctx.save(); ctx.translate(cx, cy); ctx.rotate(r1)
-  gArc(ctx, 0, 0, 75 * bs, 0, Math.PI * 1.62, col, active ? 18 : 8, a * 0.55, 0.9)
-  gArc(ctx, 0, 0, 75 * bs, Math.PI * 1.72, Math.PI * 2, col, active ? 18 : 8, a * 0.55, 0.9)
-  ctx.restore()
+  const outerBlur = active ? 18 : 8
+  stamp(ctx, `${k}-outer`, spriteSize(75, outerBlur * 2.5), (g) => {
+    gArc(g, 0, 0, 75, 0, Math.PI * 1.62, col, outerBlur, a * 0.55, 0.9)
+    gArc(g, 0, 0, 75, Math.PI * 1.72, Math.PI * 2, col, outerBlur, a * 0.55, 0.9)
+  }, cx, cy, r1, bs)
   // Main ring
-  gRing(ctx, cx, cy, 55 * bs, col, active ? 28 : 12, a, active ? 1.5 : 1)
+  const mainBlur = active ? 28 : 12
+  stamp(ctx, `${k}-main`, spriteSize(55, mainBlur * 2.5), (g) => gRing(g, 0, 0, 55, col, mainBlur, a, active ? 1.5 : 1), cx, cy, 0, bs)
   // Inner dashed counter-rotating
-  ctx.save(); ctx.translate(cx, cy); ctx.rotate(r2)
-  ctx.globalAlpha = active ? 0.75 : 0.42; ctx.shadowBlur = active ? 18 : 8; ctx.shadowColor = col
-  ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.setLineDash([5, 4])
-  ctx.beginPath(); ctx.arc(0, 0, 38, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([])
-  ctx.globalAlpha = active ? 1 : 0.5; ctx.shadowBlur = active ? 22 : 10; ctx.fillStyle = col
-  ctx.beginPath(); ctx.arc(38, 0, active ? 3.5 : 2.2, 0, Math.PI * 2); ctx.fill()
-  ctx.restore()
+  stamp(ctx, `${k}-inner`, spriteSize(42, 22), (g) => {
+    g.globalAlpha = active ? 0.75 : 0.42; g.shadowBlur = blurUnit * (active ? 18 : 8); g.shadowColor = col
+    g.strokeStyle = col; g.lineWidth = 1; g.setLineDash([5, 4])
+    g.beginPath(); g.arc(0, 0, 38, 0, Math.PI * 2); g.stroke(); g.setLineDash([])
+    g.globalAlpha = active ? 1 : 0.5; g.shadowBlur = blurUnit * (active ? 22 : 10); g.fillStyle = col
+    g.beginPath(); g.arc(38, 0, active ? 3.5 : 2.2, 0, Math.PI * 2); g.fill()
+  }, cx, cy, r2)
   // Fast arc segments
-  ctx.save(); ctx.translate(cx, cy); ctx.rotate(r3)
-  gArc(ctx, 0, 0, 26, 0.2, Math.PI * 0.92, col, active ? 15 : 7, a * 0.75, 1)
-  gArc(ctx, 0, 0, 26, Math.PI + 0.2, Math.PI * 1.92, col, active ? 15 : 7, a * 0.75, 1)
-  ctx.restore()
-  // Core
-  gDot(ctx, cx, cy, (active ? 11 + Math.sin(breathe * 2.2) * 2.8 : 9) * bs, col, active ? 32 : 14, a)
+  const fastBlur = active ? 15 : 7
+  stamp(ctx, `${k}-fast`, spriteSize(26, fastBlur * 2.5), (g) => {
+    gArc(g, 0, 0, 26, 0.2, Math.PI * 0.92, col, fastBlur, a * 0.75, 1)
+    gArc(g, 0, 0, 26, Math.PI + 0.2, Math.PI * 1.92, col, fastBlur, a * 0.75, 1)
+  }, cx, cy, r3)
+  // Core (painted at radius 10, scaled to its pulse)
+  const coreBlur = active ? 32 : 14
+  stamp(ctx, `${k}-core`, spriteSize(22, coreBlur * 2.5), (g) => gDot(g, 0, 0, 10, col, coreBlur, a), cx, cy, 0,
+    ((active ? 11 + Math.sin(breathe * 2.2) * 2.8 : 9) * bs) / 10)
   // Data readout
   ctx.save(); ctx.globalAlpha = active ? 0.7 : 0.35; ctx.fillStyle = col; ctx.font = '8px monospace'; ctx.textAlign = 'left'
   ;[`STATUS  ${state.status.toUpperCase()}`, `CTX     ${Math.round(state.contextPct ?? 0)}%`, `SES     ${state.sessionId ? '1' : '0'}`].forEach((l, i) => ctx.fillText(l, cx + 105, cy - 16 + i * 13))
   ctx.restore()
-  txt(ctx, cx, cy + 108, name.toUpperCase(), active ? col : col, 9, 'center', active ? 10 : 4)
+  txt(ctx, cx, cy + 108, name.toUpperCase(), col, 9, 'center', active ? 10 : 4)
 }
 
 function drawOrch(ctx: CanvasRenderingContext2D, cx: number, cy: number, state: AgentState, rot: number, breathe: number) {
   const active = state.status !== 'idle'
   const col = state.status === 'error' ? C.error : state.status === 'context_warning' ? C.amber : C.cyan
   const a = active ? 1 : 0.65, bs = 1 + Math.sin(breathe * 0.9) * 0.016
+  const k = `orch-${col}-${active}`
 
   // Outer tick ring — ALWAYS visible
-  ctx.save(); ctx.translate(cx, cy); ctx.rotate(rot * 0.5)
-  drawTicks(ctx, 56, 7, 16, col, active ? 0.9 : 0.6, active ? 0.4 : 0.25)
-  ctx.restore()
+  stamp(ctx, `${k}-ticks`, spriteSize(67, 10), (g) => drawTicks(g, 56, 7, 16, col, active ? 0.9 : 0.6, active ? 0.4 : 0.25), cx, cy, rot * 0.5)
   // Rotating arc segments — ALWAYS visible
-  ctx.save(); ctx.translate(cx, cy); ctx.rotate(rot)
-  for (let i = 0; i < 3; i++) {
-    const sa = (i / 3) * Math.PI * 2 + 0.35, ea = sa + Math.PI * 2 / 3 - 0.35
-    ctx.globalAlpha = active ? 0.9 : 0.58; ctx.shadowBlur = active ? 20 : 11; ctx.shadowColor = col; ctx.strokeStyle = col; ctx.lineWidth = active ? 2 : 1.3
-    ctx.beginPath(); ctx.arc(0, 0, 46 * bs, sa, ea); ctx.stroke()
-  }
-  ctx.restore()
+  stamp(ctx, `${k}-arcs`, spriteSize(46, 20), (g) => {
+    for (let i = 0; i < 3; i++) {
+      const sa = (i / 3) * Math.PI * 2 + 0.35, ea = sa + Math.PI * 2 / 3 - 0.35
+      g.globalAlpha = active ? 0.9 : 0.58; g.shadowBlur = blurUnit * (active ? 20 : 11); g.shadowColor = col; g.strokeStyle = col; g.lineWidth = active ? 2 : 1.3
+      g.beginPath(); g.arc(0, 0, 46, sa, ea); g.stroke()
+    }
+  }, cx, cy, rot, bs)
   // Main ring
-  gRing(ctx, cx, cy, 42 * bs, col, active ? 24 : 13, a, active ? 1.5 : 1)
+  const mainBlur = active ? 24 : 13
+  stamp(ctx, `${k}-main`, spriteSize(42, mainBlur * 2.5), (g) => gRing(g, 0, 0, 42, col, mainBlur, a, active ? 1.5 : 1), cx, cy, 0, bs)
   // Inner dashed counter-rotating
-  ctx.save(); ctx.translate(cx, cy); ctx.rotate(-rot * 1.4)
-  ctx.globalAlpha = active ? 0.68 : 0.45; ctx.shadowBlur = active ? 14 : 8; ctx.shadowColor = col; ctx.strokeStyle = col; ctx.lineWidth = 0.9; ctx.setLineDash([4, 4])
-  ctx.beginPath(); ctx.arc(0, 0, 29, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([])
-  ctx.globalAlpha = active ? 1 : 0.55; ctx.shadowBlur = active ? 18 : 10; ctx.fillStyle = col
-  ctx.beginPath(); ctx.arc(29, 0, active ? 3 : 2, 0, Math.PI * 2); ctx.fill()
-  ctx.restore()
+  stamp(ctx, `${k}-inner`, spriteSize(32, 18), (g) => {
+    g.globalAlpha = active ? 0.68 : 0.45; g.shadowBlur = blurUnit * (active ? 14 : 8); g.shadowColor = col; g.strokeStyle = col; g.lineWidth = 0.9; g.setLineDash([4, 4])
+    g.beginPath(); g.arc(0, 0, 29, 0, Math.PI * 2); g.stroke(); g.setLineDash([])
+    g.globalAlpha = active ? 1 : 0.55; g.shadowBlur = blurUnit * (active ? 18 : 10); g.fillStyle = col
+    g.beginPath(); g.arc(29, 0, active ? 3 : 2, 0, Math.PI * 2); g.fill()
+  }, cx, cy, -rot * 1.4)
   // Core
-  gDot(ctx, cx, cy, (active ? 8 + Math.sin(breathe * 1.9) * 1.8 : 7) * bs, col, active ? 22 : 11, a)
+  const coreBlur = active ? 22 : 11
+  stamp(ctx, `${k}-core`, spriteSize(18, coreBlur * 2.5), (g) => gDot(g, 0, 0, 8, col, coreBlur, a), cx, cy, 0,
+    ((active ? 8 + Math.sin(breathe * 1.9) * 1.8 : 7) * bs) / 8)
   txt(ctx, cx, cy + 66, 'ORCHESTRATOR', col, 8, 'center', active ? 8 : 4)
 }
 
@@ -365,25 +446,27 @@ function drawWorker(ctx: CanvasRenderingContext2D, cx: number, cy: number, state
   const active = state.status !== 'idle'
   const col = state.status === 'error' ? C.error : state.status === 'context_warning' ? C.amber : C.cyan
   const a = active ? 1 : 0.62, bs = 1 + Math.sin(breathe + idx * 1.3) * 0.016
+  const k = `worker-${col}-${active}`
 
   // Tick ring — ALWAYS
-  ctx.save(); ctx.translate(cx, cy); ctx.rotate(rot * 1.4 + idx * 0.8)
-  drawTicks(ctx, 28, 5, 12, col, active ? 0.85 : 0.58, active ? 0.35 : 0.22)
-  ctx.restore()
+  stamp(ctx, `${k}-ticks`, spriteSize(36, 10), (g) => drawTicks(g, 28, 5, 12, col, active ? 0.85 : 0.58, active ? 0.35 : 0.22), cx, cy, rot * 1.4 + idx * 0.8)
   // Rotating arc halves — ALWAYS
-  ctx.save(); ctx.translate(cx, cy); ctx.rotate(rot * 2 + idx)
-  ctx.globalAlpha = active ? 0.88 : 0.55; ctx.shadowBlur = active ? 16 : 9; ctx.shadowColor = col; ctx.strokeStyle = col; ctx.lineWidth = active ? 1.8 : 1.2
-  ctx.beginPath(); ctx.arc(0, 0, 28 * bs, 0.3, Math.PI - 0.3); ctx.stroke()
-  ctx.beginPath(); ctx.arc(0, 0, 28 * bs, Math.PI + 0.3, Math.PI * 2 - 0.3); ctx.stroke()
-  ctx.restore()
+  stamp(ctx, `${k}-arcs`, spriteSize(28, 16), (g) => {
+    g.globalAlpha = active ? 0.88 : 0.55; g.shadowBlur = blurUnit * (active ? 16 : 9); g.shadowColor = col; g.strokeStyle = col; g.lineWidth = active ? 1.8 : 1.2
+    g.beginPath(); g.arc(0, 0, 28, 0.3, Math.PI - 0.3); g.stroke()
+    g.beginPath(); g.arc(0, 0, 28, Math.PI + 0.3, Math.PI * 2 - 0.3); g.stroke()
+  }, cx, cy, rot * 2 + idx, bs)
   // Main ring
-  gRing(ctx, cx, cy, 24 * bs, col, active ? 18 : 10, a, active ? 1.3 : 0.9)
+  const mainBlur = active ? 18 : 10
+  stamp(ctx, `${k}-main`, spriteSize(24, mainBlur * 2.5), (g) => gRing(g, 0, 0, 24, col, mainBlur, a, active ? 1.3 : 0.9), cx, cy, 0, bs)
   // Inner orbit dot
-  ctx.save(); ctx.translate(cx, cy); ctx.rotate(-rot * 2.5 + idx)
-  ctx.globalAlpha = active ? 1 : 0.52; ctx.shadowBlur = active ? 14 : 7; ctx.shadowColor = col; ctx.fillStyle = col
-  ctx.beginPath(); ctx.arc(15, 0, active ? 2.5 : 1.8, 0, Math.PI * 2); ctx.fill()
-  ctx.restore()
-  gDot(ctx, cx, cy, (active ? 6 + Math.sin(breathe + idx) * 1.2 : 5) * bs, col, active ? 14 : 7, a)
+  stamp(ctx, `${k}-orbit`, spriteSize(18, 14), (g) => {
+    g.globalAlpha = active ? 1 : 0.52; g.shadowBlur = blurUnit * (active ? 14 : 7); g.shadowColor = col; g.fillStyle = col
+    g.beginPath(); g.arc(15, 0, active ? 2.5 : 1.8, 0, Math.PI * 2); g.fill()
+  }, cx, cy, -rot * 2.5 + idx)
+  const coreBlur = active ? 14 : 7
+  stamp(ctx, `${k}-core`, spriteSize(14, coreBlur * 2.5), (g) => gDot(g, 0, 0, 6, col, coreBlur, a), cx, cy, 0,
+    ((active ? 6 + Math.sin(breathe + idx) * 1.2 : 5) * bs) / 6)
   txt(ctx, cx, cy + 46, `W${idx + 1}`, col, 8, 'center', active ? 6 : 3)
 }
 
@@ -410,11 +493,14 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
+    // Drawing units: the layout below is written for a panel of about DESIGN_W x DESIGN_H. A bigger panel scales the whole
+    // picture up (it used to stay the same pixel size and look far away on a large screen), times the person's size choice.
+    const DESIGN_W = 1100, DESIGN_H = 660
+    let zoom = 1, W = 0, H = 0
+
     const onMouseMove = (e: MouseEvent) => {
       const rect = canvas.getBoundingClientRect()
-      const sx = canvas.width / rect.width
-      const sy = canvas.height / rect.height
-      mouseRef.current = { x: (e.clientX - rect.left) * sx, y: (e.clientY - rect.top) * sy }
+      mouseRef.current = { x: (e.clientX - rect.left) / zoom, y: (e.clientY - rect.top) / zoom }
     }
     const onMouseLeave = () => { mouseRef.current = null }
     canvas.addEventListener('mousemove', onMouseMove)
@@ -430,8 +516,15 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
     const BASE_FRAME_MS = 1000 / 30
 
     const resize = () => {
-      canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight
-      particles = mkParticles(canvas.width, canvas.height)
+      const cssW = canvas.offsetWidth, cssH = canvas.offsetHeight
+      // Real screen pixels (browser zoom, Windows scaling), capped at 2: beyond that the cost grows faster than the gain.
+      const dpr = Math.min(window.devicePixelRatio || 1, 2)
+      zoom = Math.min(Math.max(Math.min(cssW / DESIGN_W, cssH / DESIGN_H), 1), 2.2) * getHudScale()
+      canvas.width = Math.round(cssW * dpr); canvas.height = Math.round(cssH * dpr)
+      W = cssW / zoom; H = cssH / zoom
+      blurUnit = dpr * zoom
+      setDrawingScale(dpr * zoom)
+      particles = mkParticles(W, H)
     }
 
     const draw = (now = 0) => {
@@ -444,8 +537,8 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
       const dt = Math.min(6, (now - lastFrame) / BASE_FRAME_MS)   // 1 = one old 30fps frame
       lastFrame = now
 
-      const W = canvas.width, H = canvas.height
       if (!W || !H) return
+      ctx.setTransform(spriteScale, 0, 0, spriteScale, 0, 0)
 
       anim.r1 += 0.0035 * dt; anim.r2 -= 0.008 * dt; anim.r3 += 0.016 * dt
       anim.dash += 0.55 * dt; anim.breathe += 0.017 * dt; anim.hex += 0.1 * dt; anim.scan += 1 * dt; anim.sweep += 0.008 * dt
@@ -487,22 +580,6 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
       const daveA = dave.status !== 'idle'
       const orchA = orch.status !== 'idle'
 
-      // Radar sweep centred on Dave
-      radarSweep(ctx, davePos.x, davePos.y, Math.min(W, H) * 0.44, anim.sweep)
-
-      // Panel lines from Dave to corner panels
-      panelLine(ctx, davePos.x - 58, davePos.y - 58, 20, 20)
-      panelLine(ctx, davePos.x + 58, davePos.y - 58, W - 14, 20)
-      panelLine(ctx, orchPos.x - 46, orchPos.y + 10, 20, H - 124)
-      panelLine(ctx, orchPos.x + 46, orchPos.y + 10, W - 20, H - 124)
-
-      // TOP corner panels
-      hudPanel(ctx, 14, 14, 140, 110, 'SESSION', [
-        ['AGENTS', String(ag.length || 1), C.cyan],
-        ['ACTIVE', String(ag.filter(a => a.status !== 'idle').length), C.cyan],
-        ['PIPELINES', String(activePipeCount), C.text],
-        ['STATUS', 'CONNECTED', C.success],
-      ])
       const fmtBytes = (n: number) => n === 0 ? '—' : n >= 1024 ? `${(n / 1024).toFixed(1)}k` : `${n}b`
       const fmtAgo = (ts: number | null) => {
         if (!ts) return '—'
@@ -512,15 +589,6 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
         if (s < 86400) return `${Math.floor(s / 3600)}h`
         return `${Math.floor(s / 86400)}d`
       }
-      // Top-right: live MEMORY stats (entries written via memory_write).
-      hudPanel(ctx, W - 154, 14, 140, 110, 'MEMORY', [
-        ['ENTRIES',   String(mst.currentEntries),                  mst.currentEntries > 0 ? C.cyan : C.muted],
-        ['SIZE',      fmtBytes(mst.totalBytes),                    mst.totalBytes > 0 ? C.text : C.muted],
-        ['LAST',      fmtAgo(mst.lastWriteAt),                     mst.lastWriteAt ? C.cyan : C.muted],
-        ['AGENTS',    String(mst.agentsWithMemory),                mst.agentsWithMemory > 0 ? C.cyan : C.muted],
-      ])
-
-      // MIDDLE — 2 pill panels, centred vertically in the gap between corner panels
       const vPanW = 140
       const vPanH = 110
       const vMidY = H / 2 - vPanH / 2
@@ -533,6 +601,19 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
       const busy = activeCount > 0 || !!activePipe
       const liveError = ag.some(a => a.status === 'error')
       const durColor = !busy ? C.muted : ltMs > 0 && ltMs < 2000 ? C.success : ltMs > 5000 ? C.error : C.amber
+      const sessionRows: [string, string, string][] = [
+        ['AGENTS', String(ag.length || 1), C.cyan],
+        ['ACTIVE', String(activeCount), C.cyan],
+        ['PIPELINES', String(activePipeCount), C.text],
+        ['STATUS', 'CONNECTED', C.success],
+      ]
+      // Top-right: live MEMORY stats (entries written via memory_write).
+      const memoryRows: [string, string, string][] = [
+        ['ENTRIES',   String(mst.currentEntries),                  mst.currentEntries > 0 ? C.cyan : C.muted],
+        ['SIZE',      fmtBytes(mst.totalBytes),                    mst.totalBytes > 0 ? C.text : C.muted],
+        ['LAST',      fmtAgo(mst.lastWriteAt),                     mst.lastWriteAt ? C.cyan : C.muted],
+        ['AGENTS',    String(mst.agentsWithMemory),                mst.agentsWithMemory > 0 ? C.cyan : C.muted],
+      ]
       const toolsRows: [string, string, string][] = [
         ['LAST CALL', busy && lt ? lt.slice(0, 12) : '—', C.cyan],
         ['DURATION', busy && ltMs > 0 ? `${ltMs}ms` : '—', durColor],
@@ -540,28 +621,46 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
         ['ERRORS', String(te), te > 0 ? C.amber : C.success],
         ['STATUS', liveError ? 'DEGRADED' : 'NOMINAL', liveError ? C.error : C.success],
       ]
-      hudPanelV(ctx, 14, vMidY, vPanW, vPanH, 'TOOLS', toolsRows)
-      hudPanelV(ctx, W - vPanW - 14, vMidY, vPanW, vPanH, 'AGENTS', [
+      const agentsRows: [string, string, string][] = [
         ['ACTIVE', String(activeCount), activeCount > 0 ? C.cyan : C.muted],
         ['IDLE', String(idleCount), C.muted],
         ['TOTAL', String(ag.length || 1), C.text],
         ['WORKERS', String(workerCount), C.cyan],
         ['PIPELINES', String(activePipeCount), activePipeCount > 0 ? C.amber : C.muted],
-      ])
-
-      // BOTTOM corner panels
-      hudPanel(ctx, 14, H - 124, 140, 110, 'PIPELINE', [
+      ]
+      const pipelineRows: [string, string, string][] = [
         ['STATUS', activePipe ? activePipe.status.toUpperCase() : 'IDLE', activePipe ? C.amber : C.muted],
         ['TOKENS', fmtTok(tTok), C.cyan],
         ['COST', `$${tCost.toFixed(4)}`, C.text],
         ['RUNS', String(activePipeCount), C.text],
-      ])
-      hudPanel(ctx, W - 154, H - 124, 140, 110, 'SYSTEM', [
+      ]
+      const systemRows: [string, string, string][] = [
         ['PROVIDER', providerLabel, C.cyan],
         ['WORKERS', String(workerCount), C.cyan],
         ['TOOL CALLS', String(tc), C.text],
         ['ERRORS', String(te), te > 0 ? C.error : C.success],
-      ])
+      ]
+
+      // Radar beam centred on Dave, under the static layer that holds its dial
+      // No bigger than the space above Dave, so the sweep never runs off the top of the panel.
+      const radarR = Math.min(Math.min(W, H) * 0.44, davePos.y - 6)
+      radarBeam(ctx, davePos.x, davePos.y, radarR, anim.sweep)
+
+      // Radar dial, the dotted lines to the corner panels and the six panels: redrawn only when a value changes.
+      const panelsKey = JSON.stringify([sessionRows, memoryRows, toolsRows, agentsRows, pipelineRows, systemRows])
+      drawStaticLayer(ctx, panelsKey, W, H, (g) => {
+        radarDial(g, davePos.x, davePos.y, radarR)
+        panelLine(g, davePos.x - 58, davePos.y - 58, 20, 20)
+        panelLine(g, davePos.x + 58, davePos.y - 58, W - 14, 20)
+        panelLine(g, orchPos.x - 46, orchPos.y + 10, 20, H - 124)
+        panelLine(g, orchPos.x + 46, orchPos.y + 10, W - 20, H - 124)
+        hudPanel(g, 14, 14, 140, 110, 'SESSION', sessionRows)
+        hudPanel(g, W - 154, 14, 140, 110, 'MEMORY', memoryRows)
+        hudPanelV(g, 14, vMidY, vPanW, vPanH, 'TOOLS', toolsRows)
+        hudPanelV(g, W - vPanW - 14, vMidY, vPanW, vPanH, 'AGENTS', agentsRows)
+        hudPanel(g, 14, H - 124, 140, 110, 'PIPELINE', pipelineRows)
+        hudPanel(g, W - 154, H - 124, 140, 110, 'SYSTEM', systemRows)
+      })
 
       // Connections
       connection(ctx, davePos.x, davePos.y + 58, orchPos.x, orchPos.y - 44, daveA || orchA, anim.dash)
@@ -576,22 +675,26 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
       const pw = 140, ph = 110
       // Rect panel specs — tooltip uses PANEL_POS_CSS via id (no posStyle needed)
       const panelSpecs = [
-        { id: 'session',  x: 14,          y: 14,    title: 'SESSION',  rows: [['AGENTS',String(ag.length||1),C.cyan],['ACTIVE',String(ag.filter(a=>a.status!=='idle').length),C.cyan],['PIPELINES',String(activePipeCount),C.text],['STATUS','CONNECTED',C.success]] as [string,string,string][] },
-        { id: 'memory',   x: W-154,       y: 14,    title: 'MEMORY',   rows: [['ENTRIES',String(mst.currentEntries),mst.currentEntries>0?C.cyan:C.muted],['SIZE',fmtBytes(mst.totalBytes),mst.totalBytes>0?C.text:C.muted],['LAST',fmtAgo(mst.lastWriteAt),mst.lastWriteAt?C.cyan:C.muted],['AGENTS',String(mst.agentsWithMemory),mst.agentsWithMemory>0?C.cyan:C.muted]] as [string,string,string][] },
+        { id: 'session',  x: 14,          y: 14,    title: 'SESSION',  rows: sessionRows },
+        { id: 'memory',   x: W-154,       y: 14,    title: 'MEMORY',   rows: memoryRows },
         { id: 'tools',    x: 14,          y: vMidY, title: 'TOOLS',    rows: toolsRows },
-        { id: 'agentsp',  x: W-vPanW-14, y: vMidY, title: 'AGENTS',   rows: [['ACTIVE',String(activeCount),activeCount>0?C.cyan:C.muted],['IDLE',String(idleCount),C.muted],['TOTAL',String(ag.length||1),C.text],['WORKERS',String(workerCount),C.cyan],['PIPELINES',String(activePipeCount),activePipeCount>0?C.amber:C.muted]] as [string,string,string][] },
-        { id: 'pipeline', x: 14,          y: H-124, title: 'PIPELINE', rows: [['STATUS',activePipe?activePipe.status.toUpperCase():'IDLE',activePipe?C.amber:C.muted],['TOKENS',fmtTok(tTok),C.cyan],['COST',`$${tCost.toFixed(4)}`,C.text],['RUNS',String(activePipeCount),C.text]] as [string,string,string][] },
-        { id: 'system',   x: W-154,       y: H-124, title: 'SYSTEM',   rows: [['PROVIDER',providerLabel,C.cyan],['WORKERS',String(workerCount),C.cyan],['TOOL CALLS',String(tc),C.text],['ERRORS',String(te),te>0?C.error:C.success]] as [string,string,string][] },
+        { id: 'agentsp',  x: W-vPanW-14, y: vMidY, title: 'AGENTS',   rows: agentsRows },
+        { id: 'pipeline', x: 14,          y: H-124, title: 'PIPELINE', rows: pipelineRows },
+        { id: 'system',   x: W-154,       y: H-124, title: 'SYSTEM',   rows: systemRows },
       ]
       // Circle node specs — tooltip positioned using canvas px coords (= CSS px at 1x)
       const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
+      // The tooltip is plain HTML in CSS pixels; node positions are drawing units.
+      const tipAt = (x: number, y: number): React.CSSProperties => ({
+        left: `${clamp(x * zoom, 4, W * zoom - 218)}px`, top: `${clamp(y * zoom, 4, H * zoom - 200)}px`,
+      })
       const daveCol = dave.status === 'error' ? C.error : dave.status === 'context_warning' ? C.amber : C.cyan
       const orchCol = orch.status === 'error' ? C.error : orch.status === 'context_warning' ? C.amber : C.muted
       const nodeSpecs = [
         {
           id: 'node-dave', cx: davePos.x, cy: davePos.y, r: 86,
           title: who.toUpperCase(),
-          posStyle: { left: `${clamp(davePos.x + 92, 4, W - 218)}px`, top: `${clamp(davePos.y - 70, 4, H - 200)}px` } as React.CSSProperties,
+          posStyle: tipAt(davePos.x + 92, davePos.y - 70),
           rows: [
             ['STATUS',  dave.status.toUpperCase(),                 daveCol],
             ['SESSION', dave.sessionId ? dave.sessionId.slice(0,8) : '—', C.cyan],
@@ -601,7 +704,7 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
         {
           id: 'node-orch', cx: orchPos.x, cy: orchPos.y, r: 53,
           title: 'ORCHESTRATOR',
-          posStyle: { left: `${clamp(orchPos.x + 58, 4, W - 218)}px`, top: `${clamp(orchPos.y - 60, 4, H - 200)}px` } as React.CSSProperties,
+          posStyle: tipAt(orchPos.x + 58, orchPos.y - 60),
           rows: [
             ['STATUS',  orch.status.toUpperCase(),                 orchCol],
             ['SESSION', orch.sessionId ? orch.sessionId.slice(0,8) : '—', C.muted],
@@ -612,7 +715,7 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
           return {
             id: `node-worker-${i}`, cx: wPos[i].x, cy: wPos[i].y, r: 35,
             title: `WORKER ${i + 1}`,
-            posStyle: { left: `${clamp(wPos[i].x - 105, 4, W - 218)}px`, top: `${clamp(wPos[i].y - 138, 4, H - 200)}px` } as React.CSSProperties,
+            posStyle: tipAt(wPos[i].x - 105, wPos[i].y - 138),
             rows: [
               ['STATUS', w.status.toUpperCase(), wc],
               ['ID',     w.agentId.slice(0, 16), C.muted],
@@ -646,10 +749,12 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
     resize()
     const ro = new ResizeObserver(resize)
     ro.observe(canvas)
+    const stopScaleWatch = onHudScaleChange(resize)
     draw()
     return () => {
       cancelAnimationFrame(raf)
       ro.disconnect()
+      stopScaleWatch()
       canvas.removeEventListener('mousemove', onMouseMove)
       canvas.removeEventListener('mouseleave', onMouseLeave)
     }
