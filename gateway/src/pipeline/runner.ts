@@ -285,7 +285,14 @@ export function makePipelineRunner(config: PipelineRunnerConfig) {
       run.costUsdUsed += output.costUsd;
 
       const budget = checkBudget(run, definition);
-      if (!budget.ok) {
+      // The budget is checked after a step, so on the last step the work is already done: stopping now would throw away a
+      // finished result (24 Oct: a fact check wrote its verdict at 77k of 50k tokens and was shown as "aborted"). It is
+      // kept, completed, with the overrun recorded in `error` so it still shows.
+      const finishedLastStep = i === definition.steps.length - 1 && step.type !== 'approval_gate' && step.type !== 'condition';
+      if (!budget.ok && finishedLastStep) {
+        run.error = `finished over budget: ${budget.message.replace(/^budget exceeded: /, '')}`;
+        console.warn(`[runner] run ${run.id} finished its last step over budget: ${budget.message}`);
+      } else if (!budget.ok) {
         if (budget.policy === 'abort' || budget.policy === 'escalate') {
           run.status = 'aborted';
           run.error  = budget.message;

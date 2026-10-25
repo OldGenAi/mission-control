@@ -125,7 +125,18 @@ export function redactStack(stack: string | undefined): string | undefined {
  * Returns the absolute path of the project workspace root.
  * Used by file tools to verify workspace boundary — kept here so the
  * workspace path is defined in one place.
+ *
+ * MC_WORKSPACE moves it. Like MC_ALLOW_UNSANDBOXED_SHELL it is read from the gateway's environment only, never from
+ * settings the page or an agent can change. The file tools may write anywhere inside the workspace, so a value that is
+ * relative, the home folder or above it, or inside ~/.missioncontrol is refused and the default used instead.
  */
-export function workspacePath(): string {
-  return path.join(HOME, 'mission-control')
+export function workspacePath(env: NodeJS.ProcessEnv = process.env): string {
+  const fallback = path.join(HOME, 'mission-control')
+  const wanted = env['MC_WORKSPACE']
+  if (!wanted || !path.isAbsolute(wanted)) return fallback
+  const resolved = path.resolve(wanted)
+  const dataDir = path.join(HOME, '.missioncontrol')
+  const coversHome = resolved === HOME || HOME.startsWith(resolved.endsWith(path.sep) ? resolved : resolved + path.sep)
+  const insideData = resolved === dataDir || resolved.startsWith(dataDir + path.sep)
+  return coversHome || insideData ? fallback : resolved
 }

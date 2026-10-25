@@ -63,7 +63,7 @@ export function makePipelineStatusTool(config: { db: Database.Database }): Regis
     schema: {
       name: 'pipeline_status',
       description:
-        'Check the current status of a previously launched pipeline run. Use this when the user asks whether a pipeline you started has finished, succeeded, or failed. Returns status, step, tokens used, and any artifacts produced. Do NOT call repeatedly to poll — only when the user asks.',
+        'Check the current status of a previously launched pipeline run. Use this when the user asks whether a pipeline you started has finished, succeeded, or failed. Returns status, step, tokens used, and any artifacts produced (read one with artifact_read). Do NOT call repeatedly to poll — only when the user asks.',
       parameters: {
         type: 'object',
         required: ['runId'],

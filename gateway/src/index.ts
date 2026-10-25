@@ -41,7 +41,7 @@ import { setVideoFileResolver } from './http-app.js'
 import { fileRead, fileWrite, fileEdit, fileList } from './tools/file.js'
 import { webFetch, webSearch, setSearchApiKeySource } from './tools/web.js'
 import { execTool } from './tools/exec.js'
-import { makeArtifactWrite } from './tools/artifact.js'
+import { makeArtifactRead, makeArtifactWrite } from './tools/artifact.js'
 import { makeMemoryTools } from './tools/memory.js'
 import { makeSpawnTool } from './tools/spawn.js'
 import { makePipelineRunTool, makePipelineStatusTool } from './tools/pipeline.js'
@@ -72,6 +72,10 @@ installFtsTriggers(db)
 // The assistant's file tools work inside this folder only. Nothing else creates it, and on a fresh install every file
 // call failed with "no such file or directory" until someone made it by hand.
 mkdirSync(workspacePath(), { recursive: true, mode: 0o700 })
+const wantedWorkspace = process.env['MC_WORKSPACE']
+if (wantedWorkspace && workspacePath() !== path.resolve(wantedWorkspace)) {
+  console.warn(`[gateway] MC_WORKSPACE "${wantedWorkspace}" refused (must be an absolute folder below your home, not your home itself or ~/.missioncontrol); using ${workspacePath()}`)
+}
 // A fresh install gets Dave's starter instructions; entries the person already has are untouched.
 const seeded = seedStarterEntries(db, 'tier1_agent')
 if (seeded.length > 0) console.log(`[gateway] wrote starter instructions for Dave: ${seeded.join(', ')}`)
@@ -142,6 +146,7 @@ const tools = new Map<string, RegisteredTool>([
   ['web_search',      webSearch],
   ['exec',            execTool],
   ['artifact_write',  makeArtifactWrite(db)],
+  ['artifact_read',   makeArtifactRead(db)],
   ...makeMemoryTools(db).map(t => [t.schema.name, t] as [string, RegisteredTool]),
 ])
 
