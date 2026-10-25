@@ -141,13 +141,35 @@ export function contextPercent(model: string, inputTokens: number, source?: Cont
 }
 
 /**
- * Refresh on startup, then keep both fresh: pricing hourly (rarely changes),
- * local context every 90s (changes when the user loads a different model).
+ * Whether the OpenRouter price list is fetched: only when OpenRouter is set up (a key is saved). Those users need it
+ * (it gives each call its cost, which pipeline budgets stop on, and each cloud model its context size) and already talk
+ * to openrouter.ai. Everyone else's Mission Control asks openrouter.ai for nothing.
  */
-export function startPricingRefresh(getLocalBaseUrl: () => string | undefined, getLocalApiKey: () => string | undefined = () => undefined): void {
-  void refreshPricing()
+export function pricesWanted(settings: { providerKeys: { openrouter: string } }): boolean {
+  return settings.providerKeys.openrouter !== ''
+}
+
+const PRICE_REFRESH_MS = 60 * 60 * 1000
+
+/**
+ * Refresh on startup, then keep both fresh: pricing hourly while wanted (rarely changes), local context every 90s
+ * (changes when the user loads a different model).
+ */
+export function startPricingRefresh(
+  getLocalBaseUrl: () => string | undefined,
+  getLocalApiKey: () => string | undefined = () => undefined,
+  wantPrices: () => boolean = () => false,
+): void {
+  // Checked every minute, so a key saved later takes effect within a minute; fetched at most hourly.
+  let pricesAt: number | null = null   // last fetch; null until the first
+  const maybeRefreshPricing = (): void => {
+    if (!wantPrices() || (pricesAt !== null && Date.now() - pricesAt < PRICE_REFRESH_MS)) return
+    pricesAt = Date.now()
+    void refreshPricing()
+  }
+  maybeRefreshPricing()
   void refreshLocalContext(getLocalBaseUrl(), getLocalApiKey())
-  const priceTimer = setInterval(() => void refreshPricing(), 60 * 60 * 1000)
+  const priceTimer = setInterval(maybeRefreshPricing, 60 * 1000)
   const ctxTimer = setInterval(() => void refreshLocalContext(getLocalBaseUrl(), getLocalApiKey()), 90 * 1000)
   if (priceTimer.unref) priceTimer.unref()
   if (ctxTimer.unref) ctxTimer.unref()

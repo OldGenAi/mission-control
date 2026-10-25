@@ -257,7 +257,7 @@ Mission Control is built to be safe to run on your own machine:
 - Dave's instructions (his soul, how he works, who he is, and who you are) can only be changed by you, on the Agents page. Dave's own tools can't rewrite them, so a web page he reads can't talk him into changing his rules.
 - Hardened throughout: parameterised database queries; web fetch refuses private and internal addresses (also after DNS lookup and on redirects); file tools can't leave the workspace or read credential files like `.env`; and every change is automatically checked for known vulnerable dependencies.
 
-Use a local model and leave the web tools alone, and nothing leaves your machine. (Web search sends your queries to Brave, and web fetch contacts the sites you ask for.)
+Use a local model and leave the web tools alone, and nothing leaves your machine. (Web search sends your queries to Brave, and web fetch contacts the sites you ask for. With an OpenRouter key saved, Mission Control also fetches OpenRouter's public price list once an hour, so it can show what each call costs and stop a pipeline at its budget.)
 
 ## Troubleshooting
 
