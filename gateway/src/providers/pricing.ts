@@ -19,9 +19,18 @@ interface TokenPrice {
   completion: number  // USD per output token
 }
 
+export type ContextSource = 'local' | 'cloud'
+
 const priceMap = new Map<string, TokenPrice>()
-const ctxMap = new Map<string, number>()   // model id → loaded context window (tokens)
+// Kept apart because LM Studio ids often equal OpenRouter ids (openai/gpt-oss-20b): one shared map let a local 8k load
+// cut OpenRouter turns short at 6k.
+const ctxMaps: Record<ContextSource, Map<string, number>> = { local: new Map(), cloud: new Map() }
 const DEFAULT_CONTEXT = 8192
+
+/** Records a model's context window as reported by its source. */
+export function rememberContextWindow(source: ContextSource, model: string, tokens: number): void {
+  if (Number.isFinite(tokens) && tokens > 0) ctxMaps[source].set(model, tokens)
+}
 
 const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models'
 
@@ -45,9 +54,7 @@ export async function refreshPricing(): Promise<void> {
         priceMap.set(m.id, { prompt, completion })
         n++
       }
-      if (typeof m.context_length === 'number' && m.context_length > 0) {
-        ctxMap.set(m.id, m.context_length)
-      }
+      if (typeof m.context_length === 'number') rememberContextWindow('cloud', m.id, m.context_length)
     }
     console.log(`[pricing] loaded ${n} model prices from OpenRouter`)
   } catch (e) {
@@ -76,8 +83,12 @@ export async function refreshLocalContext(localBaseUrl: string | undefined, apiK
       }
       let n = 0
       for (const m of data.data ?? []) {
-        const win = m.loaded_context_length ?? m.max_context_length
-        if (typeof win === 'number' && win > 0) { ctxMap.set(m.id, win); n++ }
+        // Only the loaded size: a model that isn't loaded gets the window its saved load settings give it when it is, and
+        // its maximum (often 262k) would let a turn run far past what it will really have.
+        if (typeof m.loaded_context_length === 'number' && m.loaded_context_length > 0) {
+          rememberContextWindow('local', m.id, m.loaded_context_length)
+          n++
+        }
       }
       if (n > 0) { console.log(`[pricing] loaded ${n} LM Studio context window(s)`); return }
     }
@@ -94,7 +105,8 @@ export async function refreshLocalContext(localBaseUrl: string | undefined, apiK
       for (const m of data.models ?? []) {
         const id = m.model ?? m.name
         if (id && typeof m.context_length === 'number' && m.context_length > 0) {
-          ctxMap.set(id, m.context_length); n++
+          rememberContextWindow('local', id, m.context_length)
+          n++
         }
       }
       if (n > 0) console.log(`[pricing] loaded ${n} Ollama context window(s)`)
@@ -109,14 +121,14 @@ export function computeCost(model: string, inputTokens: number, outputTokens: nu
   return inputTokens * p.prompt + outputTokens * p.completion
 }
 
-/** Loaded context window (tokens) for a model, or a safe default. */
+/** Loaded context window (tokens) for a model, or a safe default. For the gauges, which don't know the provider. */
 export function contextWindow(model: string): number {
-  return ctxMap.get(model) ?? DEFAULT_CONTEXT
+  return ctxMaps.local.get(model) ?? ctxMaps.cloud.get(model) ?? DEFAULT_CONTEXT
 }
 
-/** The window only when a source actually reported it: decisions that cut a turn short must not act on the default. */
-export function knownContextWindow(model: string): number | undefined {
-  return ctxMap.get(model)
+/** The window only when this source actually reported it: decisions that cut a turn short must not act on the default. */
+export function knownContextWindow(source: ContextSource, model: string): number | undefined {
+  return ctxMaps[source].get(model)
 }
 
 /** Context fill as a 0–100 percentage, for the Monitor ring. */

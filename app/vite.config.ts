@@ -25,11 +25,12 @@ export default defineConfig(({ command, mode }) => {
     plugins: [react(), tailwindcss()],
     define: { 'import.meta.env.VITE_MC_APP_VERSION': JSON.stringify(appVersion) },
   }
-  // Dev server only, and only when the user hasn't set one explicitly. A build must never
-  // contain the token: the built UI is served by the gateway and signs in with a session.
   // The dev page runs on Vite's port while video links are relative (/media/video/...), so pass them on to the gateway
   // (the same 127.0.0.1:4747 that gateway-client.ts connects to). The built UI is served by the gateway itself.
-  config.server = { proxy: { '/media': 'http://127.0.0.1:4747' } }
+  // No changeOrigin: the gateway's Host check (its DNS-rebinding guard) must still see the original Host.
+  config.server = { proxy: { '/media/': 'http://127.0.0.1:4747' } }
+  // Dev server only, and only when the user hasn't set one explicitly. A build must never
+  // contain the token: the built UI is served by the gateway and signs in with a session.
   if (command === 'serve' && !envToken) {
     const token = gatewayTokenFromConfig()
     if (token) {

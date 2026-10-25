@@ -16,21 +16,23 @@ export function makeDoctorStatusTool(engine: DoctorEngine): RegisteredTool {
     async execute(_args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
       const start = Date.now()
       const status = engine.status()
+      // Each string is redacted before it is put in JSON: once stringified, Windows paths have doubled backslashes that the
+      // home-folder rule no longer matches.
       const report = {
         overall: status.overall,
         checkedAt: status.checkedAt ? new Date(status.checkedAt).toISOString() : null,
         issues: status.issues.map((issue) => ({
           title: issue.title,
           status: issue.status,
-          summary: issue.summary,
-          ...(issue.why ? { why: issue.why } : {}),
-          ...(issue.steps ? { steps: issue.steps } : {}),
+          summary: redact(issue.summary),
+          ...(issue.why ? { why: redact(issue.why) } : {}),
+          ...(issue.steps ? { steps: issue.steps.map(redact) } : {}),
           ...(issue.fix ? { fixOnHealthPage: issue.fix.label } : {}),
         })),
         ignoredByPerson: status.ignored.map((issue) => issue.title),
-        passed: status.passed.map((check) => `${check.title}: ${check.summary}`),
+        passed: status.passed.map((check) => redact(`${check.title}: ${check.summary}`)),
       }
-      return { correlationId: ctx.correlationId, toolName: 'doctor_status', status: 'ok', output: redact(JSON.stringify(report)), durationMs: Date.now() - start }
+      return { correlationId: ctx.correlationId, toolName: 'doctor_status', status: 'ok', output: JSON.stringify(report), durationMs: Date.now() - start }
     },
   }
 }

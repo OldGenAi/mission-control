@@ -2,10 +2,12 @@ import { readFileSync } from 'node:fs'
 import { load as loadYaml } from 'js-yaml'
 import type { PipelineDefinition, StepType } from './types.js'
 
-/** A pipeline is named by its file name. Callers join the name into a path, so it must stay a single file name: with "../" a
- *  name could load a YAML file from anywhere, including one an agent wrote with its file tools. */
+/** A pipeline is named by its file name. Callers join the name into a path, so only plain names are accepted: with "../" a
+ *  name could load any YAML file the gateway can read, and on Windows a device name such as CON or COM1 opens a device and
+ *  blocks the gateway. (That an agent can't write into a pipelines folder at all comes from the workspace never overlapping
+ *  the install folder: see workspacePath in store/redact.ts.) */
 export function isPipelineName(name: string): boolean {
-  return name.length > 0 && name.length <= 100 && !/[/\\\0]/.test(name) && !name.startsWith('.')
+  return /^[A-Za-z0-9][A-Za-z0-9 _-]{0,99}$/.test(name) && !/^(con|prn|aux|nul|com\d|lpt\d)$/i.test(name.trim())
 }
 
 export function loadPipeline(filePath: string): PipelineDefinition {

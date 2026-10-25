@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { homedir } from 'node:os'
 import path from 'node:path'
 import type Database from 'better-sqlite3'
 import type { AgentRegistry } from '../agents/registry.js'
@@ -130,7 +131,7 @@ export function makePipelineRunTool(config: PipelineRunToolConfig): RegisteredTo
 
       // Try builtin then user pipelines dir — first hit wins.
       let definition
-      for (const dir of PIPELINE_DIRS(process.env['HOME'] ?? '')) {
+      for (const dir of PIPELINE_DIRS(homedir())) {
         const filePath = path.join(dir, `${name}.yaml`)
         try {
           definition = loadPipeline(filePath)

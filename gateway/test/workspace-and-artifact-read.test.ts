@@ -24,6 +24,15 @@ test('MC_WORKSPACE values that would widen the file tools are refused', () => {
   }
 })
 
+test('the workspace never overlaps the folder Mission Control runs from', () => {
+  const quickStartInstall = path.join(HOME, 'mission-control')   // the README's clone location, also the default workspace
+  assert.equal(workspacePath({}, quickStartInstall), path.join(HOME, 'mission-control-workspace'))
+  assert.equal(workspacePath({ MC_WORKSPACE: path.join(quickStartInstall, 'gateway') }, quickStartInstall), path.join(HOME, 'mission-control-workspace'))
+  const install = path.resolve(__dirname, '..', '..')   // this checkout
+  assert.notEqual(workspacePath({ MC_WORKSPACE: install }), install)
+  assert.notEqual(workspacePath({ MC_WORKSPACE: path.join(install, 'gateway', 'src', 'pipelines') }), path.join(install, 'gateway', 'src', 'pipelines'))
+})
+
 test('artifact_read returns a report with its note and refuses deleted or unknown ids', async () => {
   const db = openDatabase(path.join(mkdtempSync(path.join(tmpdir(), 'mc-artread-')), 'db.sqlite'))
   try {

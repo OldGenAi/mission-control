@@ -24,7 +24,19 @@ const CONTEXT_WRAP_UP_SHARE = 0.75
 // With no known window (unlisted model, local server not reporting), the old fixed warning level applies and nothing is cut short.
 const FALLBACK_CONTEXT_WARNING_TOKENS = 100_000
 
-const REPEATED_CALL_ERROR = 'Same tool, same arguments and same result as an earlier call this turn (its result is above). Repeating it will not change anything: use that result, try something different, or answer.'
+const REPEATED_CALL_ERROR = 'This call returned exactly the same result as an identical earlier call this turn; that result is above. Use it, try something different, or answer.'
+
+// With no tools offered, a local model that still wants one writes the call out as text; it is not an answer.
+const TOOL_CALL_MARKUP = /<tool_call>[\s\S]*?(<\/tool_call>|$)/g
+
+/** The wrap-up note rides on the last message when that is the person's, so roles still alternate (some local chat
+ *  templates refuse two user messages in a row). */
+function withWrapUpNote(messages: Message[], note: string): Message[] {
+  const last = messages[messages.length - 1]
+  return last?.role === 'user'
+    ? [...messages.slice(0, -1), { ...last, content: `${last.content}\n\n${note}` }]
+    : [...messages, { role: 'user', content: note }]
+}
 
 // The note goes out with the person's role, so it only ever carries the loop's own words and numbers. Error text can come from
 // a web page or a file, and stays in the tool results where the model already treats it as data.
@@ -150,7 +162,7 @@ export class AgentLoop {
       ]
 
       let iterations = 0
-      const maxIterations = this.config.maxIterations ?? 10
+      const maxIterations = Math.max(1, this.config.maxIterations ?? 10)
       // Containment guards (chat loop) — bound a runaway regardless of model
       // behaviour: a per-turn wall-clock deadline, a hard stop after N consecutive
       // tool failures (the failing-loop case, e.g. blind file_read guessing), and
@@ -165,6 +177,20 @@ export class AgentLoop {
       // Per-assistant-message stats, keyed by index in `messages`. Persisted with the row.
       const assistantStats = new Map<number, MessageStats>()
       let thoughtInTurn = false
+
+      // Persist the assistant reply + any tool_calls/tool-result rows for this turn.
+      // The first "new" message is the user/synthetic prompt and is NOT persisted
+      // here: for a normal run it was already saved up-front (vanish-on-error guard
+      // above); for an autoNotify run it's the dropped [SYSTEM EVENT]. So we always
+      // skip it and persist only what follows. autoNotify rows stay flagged.
+      // Also called before a provider-error return, so the tool work done so far is kept.
+      const persistTurn = (): void => {
+        const historyOffset = 1 + history.length  // skip system + prior history
+        const newMessages = messages.slice(historyOffset).slice(1)
+        if (newMessages.length === 0) return
+        const newStats = newMessages.map((_, i) => assistantStats.get(historyOffset + i + 1) ?? null)
+        this.persistMessages(sessionId, newMessages, newStats, params.autoNotify === true)
+      }
 
       while (iterations < maxIterations) {
         // User pressed Stop between iterations — bail before another model round.
@@ -188,7 +214,7 @@ export class AgentLoop {
         let modelDurationMs = 0
         const stream = this.config.provider.complete({
           model: activeModel,
-          messages: wrapUp ? [...messages, { role: 'user', content: wrapUpNote(wrapUp) }] : messages,
+          messages: wrapUp ? withWrapUpNote(messages, wrapUpNote(wrapUp)) : messages,
           tools: wrapUp ? undefined : tools,
           correlationId,
           ...(params.reasoning ? { reasoning: params.reasoning } : {}),
@@ -276,14 +302,20 @@ export class AgentLoop {
             error: 'provider_error',
             ...(params.autoNotify ? { autoNotify: true } : {}),
           })
+          persistTurn()
           return
         }
 
         // No tool calls – finish. A wrap-up round always finishes: any tool call a model makes there anyway is dropped.
         if (pendingToolCalls.length === 0 || wrapUp) {
           // Thinking is never saved, so a model that used up its room mid-thought would otherwise leave a blank reply.
+          if (wrapUp) responseText = responseText.replace(TOOL_CALL_MARKUP, '').trim()
           if (thoughtThisRound && !responseText.trim()) responseText = THINKING_UNFINISHED_REPLY
-          else if (wrapUp && !responseText.trim()) responseText = wrapUpFallback(wrapUp)
+          else if (wrapUp && !responseText) {
+            responseText = wrapUpFallback(wrapUp)
+            // Sent as a delta too: the voice bridge speaks what streams, and a final with no error and nothing streamed is silent.
+            this.broadcast(clientId, 'chat.delta', { delta: responseText, correlationId, sessionId })
+          }
           messages.push({ role: 'assistant', content: responseText })
           assistantStats.set(messages.length - 1, { inputTokens, outputTokens, durationMs: modelDurationMs })
           const tokensPerSecond = modelDurationMs > 0 ? Math.round(outputTokens / (modelDurationMs / 1000)) : 0
@@ -294,7 +326,6 @@ export class AgentLoop {
             inputTokens,
             outputTokens,
             tokensPerSecond,
-            ...(wrapUp ? { wrapUp: wrapUp.reason } : {}),
             ...(params.autoNotify ? { autoNotify: true } : {}),
           })
           break
@@ -431,7 +462,7 @@ export class AgentLoop {
 
         // Context budget: warn, and wrap the turn up before the next model call would overflow the window.
         const estimatedTokens = estimateTokens(messages)
-        const contextLimit = knownContextWindow(activeModel)
+        const contextLimit = knownContextWindow(this.config.provider.name === 'local' ? 'local' : 'cloud', activeModel)
         if (estimatedTokens > (contextLimit ? contextLimit * CONTEXT_WRAP_UP_SHARE : FALLBACK_CONTEXT_WARNING_TOKENS)) {
           this.broadcast(clientId, 'agent.status', {
             agentId: this.config.agentId,
@@ -446,21 +477,7 @@ export class AgentLoop {
         }
       }
 
-      // Persist the assistant reply + any tool_calls/tool-result rows for this turn.
-      // The first "new" message is the user/synthetic prompt and is NOT persisted
-      // here: for a normal run it was already saved up-front (vanish-on-error guard
-      // above); for an autoNotify run it's the dropped [SYSTEM EVENT]. So we always
-      // skip it and persist only what follows. autoNotify rows stay flagged.
-      const historyOffset = 1 + history.length  // skip system + prior history
-      const allNewMessages = messages.slice(historyOffset)
-      const newMessages = allNewMessages.slice(1)
-      if (newMessages.length > 0) {
-        const newStats = newMessages.map((_, i) => {
-          const sourceIdx = historyOffset + i + 1
-          return assistantStats.get(sourceIdx) ?? null
-        })
-        this.persistMessages(sessionId, newMessages, newStats, params.autoNotify === true)
-      }
+      persistTurn()
 
       if (stopReason === 'aborted') {
         // Intentional user stop — clean end, no error_log row. The partial reply
@@ -536,7 +553,7 @@ export class AgentLoop {
     const rows = this.config.db
       .prepare<[string], Row>(
         `SELECT role, content, tool_calls, tool_call_id
-         FROM messages WHERE session_id = ? ORDER BY created_at ASC`
+         FROM messages WHERE session_id = ? ORDER BY created_at ASC, rowid ASC`
       )
       .all(sessionId)
 
