@@ -227,7 +227,7 @@ function ExecConfirmModal({ onConfirm, onCancel }: { onConfirm: () => void; onCa
       <div
         onClick={e => e.stopPropagation()}
         style={{
-          width: "100%", maxWidth: 460, background: T.surface,
+          width: "100%", maxWidth: 460, maxHeight: "100%", overflowY: "auto", background: T.surface,
           border: `1px solid ${T.amber}55`, borderTop: `2px solid ${T.amber}`,
           borderRadius: 12, padding: "24px 26px", boxShadow: "0 20px 60px rgba(0,0,0,0.6)",
         }}
@@ -943,7 +943,7 @@ function AppearanceTab() {
 
       <Card>
         <SectionTitle>Display</SectionTitle>
-        <Field label="Interface size" note="Mission Control grows to suit a big screen by itself. Pick Larger or Smaller to taste. Browser zoom (Ctrl + and Ctrl -) still works on top.">
+        <Field label="Interface size" note="Mission Control grows to suit a big screen by itself. Pick a size to taste. Browser zoom (Ctrl + and Ctrl -) still changes the size too.">
           <Select value={String(uiScale)} onChange={(v: string) => { const s = Number(v); setUiScaleState(s); setUiScale(s) }}
             options={UI_SCALE_OPTIONS.map((o) => ({ value: String(o.value), label: o.label }))} />
         </Field>

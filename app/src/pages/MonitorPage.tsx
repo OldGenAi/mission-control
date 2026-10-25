@@ -522,7 +522,7 @@ const MonitorCanvas: FC<CanvasProps> = ({ agents, tick, totalTokens, totalCost, 
     let zoom = 1, W = 0, H = 0
 
     const onMouseMove = (e: MouseEvent) => {
-      // The mouse and the rect are in screen-side pixels, which differ from CSS pixels under the page zoom (lib/ui-scale.ts).
+      // The mouse and the rect are in viewport pixels, which differ from CSS pixels under the page zoom (lib/ui-scale.ts).
       const rect = canvas.getBoundingClientRect()
       const toCss = canvas.offsetWidth / rect.width || 1
       mouseRef.current = { x: (e.clientX - rect.left) * toCss / zoom, y: (e.clientY - rect.top) * toCss / zoom }
