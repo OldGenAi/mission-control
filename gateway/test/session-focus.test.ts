@@ -49,3 +49,18 @@ test('sessions.focus / sessions.focused follow the chat the page shows, and igno
     clearFocusedSession()
   }
 })
+
+test('sessions.create tidies the title the same way rename does: trimmed and at most 200 characters', async () => {
+  const db = openDatabase(path.join(mkdtempSync(path.join(tmpdir(), 'mc-title-')), 'db.sqlite'))
+  registerSessionMethods(db)
+  try {
+    const padded = (await dispatch('sessions.create', { agentId: 'agent-dave', title: '  My plan  ' }, client))['session'] as { title: string }
+    assert.equal(padded.title, 'My plan')
+    const long = (await dispatch('sessions.create', { agentId: 'agent-dave', title: 'x'.repeat(500) }, client))['session'] as { title: string }
+    assert.equal(long.title.length, 200)
+    const none = (await dispatch('sessions.create', { agentId: 'agent-dave' }, client))['session'] as { title: string }
+    assert.equal(none.title, '')
+  } finally {
+    db.close()
+  }
+})

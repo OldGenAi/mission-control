@@ -126,7 +126,7 @@ export function registerSessionMethods(db: Database.Database): void {
     if (typeof agentId !== 'string' || !agentId.trim()) return { error: 'agentId is required' }
     const id = randomUUID()
     const now = Date.now()
-    stmtInsert.run(id, agentId, typeof title === 'string' ? title : '', now, now)
+    stmtInsert.run(id, agentId, typeof title === 'string' ? title.trim().slice(0, 200) : '', now, now)   // same rule as rename
     const session = stmtGetById.get(id)
     return { session }
   }
