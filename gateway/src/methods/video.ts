@@ -90,12 +90,28 @@ export function registerVideoMethods(jobs: VideoJobs, comfyUrl: () => string): v
 
   registerMethod('video.delete', async (params) => ({ deleted: jobs.delete(videoId(params['id'])) }))
 
+  // A starred video survives video.clearUnkept.
+  registerMethod('video.keep', async (params) => {
+    if (typeof params['kept'] !== 'boolean') invalid('kept must be true or false')
+    return { kept: jobs.keep(videoId(params['id']), params['kept']) }
+  })
+
+  // Clears only the videos the page names (the ones it is showing), so nothing unseen goes.
+  registerMethod('video.clearUnkept', async (params) => {
+    const ids = params['ids']
+    if (!Array.isArray(ids) || ids.length > 200) invalid('ids must be a list of at most 200 video ids')
+    return { deleted: jobs.clearUnkept(ids.map(videoId)) }
+  })
+
   // Finished videos come with a signed link (an hour) the page can put in a <video> element.
+  // The disk numbers feed the page's storage bar, which shows even while ComfyUI is off.
   registerMethod('video.list', async (params) => {
     const limit = Number.isInteger(params['limit']) ? (params['limit'] as number) : 50
     const secret = getConfig().sessionSecret
     return {
       videos: jobs.list(limit).map((v) => ({ ...v, link: v.status === 'done' ? issueMediaLink(secret, v.id) : null })),
+      diskBytes: jobs.diskUsage(),
+      diskLimitBytes: jobs.diskLimit,
     }
   })
 

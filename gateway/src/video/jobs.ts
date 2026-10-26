@@ -44,6 +44,7 @@ export interface VideoRow {
   createdAt: number
   startedAt: number | null
   finishedAt: number | null
+  kept: boolean
 }
 
 export interface VideoSettings { comfyUrl: string; freeAfterJob: boolean }
@@ -109,9 +110,29 @@ export class VideoJobs {
 
   list(limit = 50): VideoRow[] {
     const rows = this.db.prepare(`SELECT id, recipe_id AS recipeId, params, status, error, file_bytes AS fileBytes,
-      created_at AS createdAt, started_at AS startedAt, finished_at AS finishedAt
-      FROM videos WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?`).all(Math.min(Math.max(limit, 1), 200)) as Array<Omit<VideoRow, 'params'> & { params: string }>
-    return rows.map((r) => ({ ...r, params: JSON.parse(r.params) as Record<string, unknown> }))
+      created_at AS createdAt, started_at AS startedAt, finished_at AS finishedAt, kept
+      FROM videos WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?`).all(Math.min(Math.max(limit, 1), 200)) as Array<Omit<VideoRow, 'params' | 'kept'> & { params: string; kept: number }>
+    return rows.map((r) => ({ ...r, params: JSON.parse(r.params) as Record<string, unknown>, kept: r.kept !== 0 }))
+  }
+
+  /** Stars a video so clearUnkept leaves it alone, or takes the star off. */
+  keep(id: string, kept: boolean): boolean {
+    if (!/^[0-9a-f]{32}$/.test(id)) return false
+    return this.db.prepare(`UPDATE videos SET kept = ? WHERE id = ? AND deleted_at IS NULL`).run(kept ? 1 : 0, id).changes > 0
+  }
+
+  /**
+   * Deletes the named videos that aren't starred (never one still queued or running). Only the
+   * ones the page showed are named, so a video the person never saw is never cleared. Returns how many went.
+   */
+  clearUnkept(ids: string[]): number {
+    const row = this.db.prepare(`SELECT kept FROM videos WHERE id = ? AND deleted_at IS NULL`)
+    return ids.filter((id) => /^[0-9a-f]{32}$/.test(id) && (row.get(id) as { kept: number } | undefined)?.kept === 0 && this.delete(id)).length
+  }
+
+  /** The most the media folder may hold, for the page's storage bar. */
+  get diskLimit(): number {
+    return MAX_MEDIA_BYTES
   }
 
   /** Bytes used by finished videos and uploaded pictures in the media folder. */

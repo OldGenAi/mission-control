@@ -3,7 +3,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
@@ -224,6 +224,7 @@ test('a running job can be stopped', async () => {
     assert.equal(jobs.cancel(id), true)
     assert.equal((await finished(id)).status, 'cancelled')
     assert.ok(comfy.cancelled() > 0, 'ComfyUI was told to stop')
+    for (let i = 0; i < 50 && comfy.freed() === 0; i++) await new Promise((r) => setTimeout(r, 10))   // let the job hand memory back before the fake closes
   } finally { await comfy.close() }
 })
 
@@ -262,6 +263,58 @@ test('deleting a video removes its file and its link stops working', async () =>
     assert.equal(jobs.filePath(id), null)
     assert.equal(jobs.list().length, 0)
     assert.equal(jobs.delete('../../etc'), false)
+  } finally { await comfy.close() }
+})
+
+test('clearing removes every video that is not starred, and leaves the starred ones', async () => {
+  const comfy = await fakeComfy()
+  const { jobs, finished, dir } = setup(comfy.url)
+  try {
+    const starred = jobs.submit('ltx25-t2v', { prompt: 'keep me' })
+    assert.equal((await finished(starred)).status, 'done')
+    const other = jobs.submit('ltx25-t2v', { prompt: 'clear me' })
+    assert.equal((await finished(other)).status, 'done')
+    assert.equal(jobs.keep(starred, true), true)
+    assert.deepEqual(jobs.list().map((v) => [v.id, v.kept]), [[other, false], [starred, true]])
+
+    assert.equal(jobs.clearUnkept([starred, other, '../../etc']), 1)
+    assert.deepEqual(jobs.list().map((v) => v.id), [starred])
+    assert.equal(existsSync(join(dir, 'media', `${starred}.mp4`)), true)
+    assert.equal(existsSync(join(dir, 'media', `${other}.mp4`)), false)
+
+    // Taking the star off lets the next clear remove it; a deleted or made-up id can't be starred.
+    assert.equal(jobs.keep(starred, false), true)
+    assert.equal(jobs.clearUnkept([starred]), 1)
+    assert.equal(jobs.list().length, 0)
+    assert.equal(jobs.keep(other, true), false)
+    assert.equal(jobs.keep('../../etc', true), false)
+  } finally { await comfy.close() }
+})
+
+test('clearing touches only the videos the page named, and never one still queued or running', async () => {
+  const comfy = await fakeComfy({ hang: true })
+  const { jobs, finished, db, dir } = setup(comfy.url)
+  try {
+    // Two finished videos the page has and hasn't seen, made straight in the table (the fake ComfyUI hangs every job here).
+    const seen = 'a'.repeat(32)
+    const unseen = 'b'.repeat(32)
+    for (const id of [seen, unseen]) {
+      db.prepare(`INSERT INTO videos (id, recipe_id, params, status, created_at) VALUES (?, 'ltx25-t2v', '{}', 'done', ?)`).run(id, Date.now())
+      writeFileSync(join(dir, 'media', `${id}.mp4`), MP4)
+    }
+    const running = jobs.submit('ltx25-t2v', { prompt: 'running' })
+    while (comfy.prompts.length === 0) await new Promise((r) => setTimeout(r, 10))
+    const queued = jobs.submit('ltx25-t2v', { prompt: 'queued' })
+
+    assert.equal(jobs.clearUnkept([seen, running, queued]), 1)
+    assert.deepEqual(jobs.list().map((v) => v.id).sort(), [unseen, running, queued].sort())
+    assert.equal(existsSync(join(dir, 'media', `${seen}.mp4`)), false)
+    assert.equal(existsSync(join(dir, 'media', `${unseen}.mp4`)), true)
+
+    jobs.cancel(queued)
+    assert.equal(jobs.cancel(running), true)
+    assert.equal((await finished(running)).status, 'cancelled')
+    for (let i = 0; i < 50 && comfy.freed() === 0; i++) await new Promise((r) => setTimeout(r, 10))
   } finally { await comfy.close() }
 })
 

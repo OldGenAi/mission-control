@@ -193,9 +193,10 @@ The Video page makes short clips with [ComfyUI](https://github.com/comfyanonymou
 
 What it does:
 - Text to video: describe a scene and get a clip, with sound when the model makes it.
-- Picture to video: choose a photo and it becomes the first frame of the clip.
+- Picture to video: choose a photo and it becomes the first frame of the clip. The page remembers the picture, even after a restart, until you press Remove. A small copy of it is kept in your browser for that.
 - While it works you see the stage it's at, the step count and a rough preview.
-- Finished clips play in the page. "Use again" fills the form with the same settings, so you can make the same clip again or change one thing.
+- Finished clips play in the page, newest first, six at a time. "Use again" fills the form with the same settings, so you can make the same clip again or change one thing.
+- Star the clips you want to keep. "Clear unstarred" deletes the others on the list after asking, and a bar shows how much of the 50 GB your videos and pictures use.
 
 The recipes, timed on a mini PC with an NVIDIA RTX 5070 Ti (16 GB) in an external dock:
 
