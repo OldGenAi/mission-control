@@ -4,6 +4,7 @@ import { gateway } from "../lib/gateway-client"
 import { mcConfig } from "../lib/mc-config"
 import { initials, useAssistantName, usePersonName } from "../lib/assistant"
 import { useSettings, updateSettings, updateInstance } from "../lib/settings"
+import { parseInput, suggestCommands, commandStub, helpText, type ChatCommand } from "../lib/chat-commands"
 
 // ---------- types --------------------------------------------------
 
@@ -72,6 +73,12 @@ interface PipelineApproval {
 }
 
 // ---------- helpers -----------------------------------------------
+
+// The person's message, shown at once while the gateway saves the real one. Kept outside the
+// component: the React compiler's purity lint can't always tell that send() only runs in events.
+function optimisticMessage(text: string): ChatMessage {
+  return { id: crypto.randomUUID(), role: "user", content: text, createdAt: Date.now() }
+}
 
 function formatTime(ts: number): string {
   const d = new Date(ts)
@@ -518,6 +525,12 @@ export function ChatPage() {
   const [historyLoading, setHistoryLoading] = useState(Boolean(selectedId))
   const [historyError, setHistoryError] = useState<string | null>(null)
   const [draft, setDraft] = useState("")
+  // The command box, while a command name is being typed. Esc hides it until the text changes;
+  // the arrow keys move the highlight, Enter or a click runs the highlighted command, Tab fills it in.
+  const [popupHidden, setPopupHidden] = useState(false)
+  const [picked, setPicked] = useState(0)
+  const suggestions = popupHidden ? [] : suggestCommands(draft)
+  const highlighted = suggestions[Math.min(picked, suggestions.length - 1)]
   const [sending, setSending] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [streamingText, setStreamingText] = useState<string | null>(null)
@@ -526,6 +539,8 @@ export function ChatPage() {
   const [streamStats, setStreamStats] = useState<StreamStats | null>(null)
   const [isRecording, setIsRecording] = useState(false)
   const [pendingApprovals, setPendingApprovals] = useState<PipelineApproval[]>([])
+  // The answer to a chat command, shown as a grey note under the thread. Never saved or sent to the model.
+  const [notice, setNotice] = useState<string | null>(null)
 
   const threadRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -545,6 +560,7 @@ export function ChatPage() {
     setStreamingText(null)
     setStreamingThinking(null)
     setStreamStats(null)
+    setNotice(null)
     setHistory(null)
     setHistoryError(null)
     setHistoryLoading(Boolean(selectedId))
@@ -788,11 +804,11 @@ export function ChatPage() {
   }, [history, streamingText, pendingApprovals])
 
   // New chat
-  const newChat = async () => {
+  const newChat = async (title = "New chat") => {
     try {
       const res = await gateway.request<{ session: Session }>("sessions.create", {
         agentId: "agent-dave",
-        title: "New chat",
+        title,
       })
       const s = res.session
       setSessions(prev => [s, ...prev])
@@ -803,16 +819,87 @@ export function ChatPage() {
     }
   }
 
+  // Stop the in-flight turn — cancels Dave's current model call mid-stream.
+  const stop = async () => {
+    const cid = activeCorrelationRef.current
+    if (!cid) return
+    try {
+      await gateway.request("chat.abort", { correlationId: cid })
+    } catch (err) {
+      console.error("[ChatPage] stop error:", err)
+    }
+  }
+
+  // A chat command runs here, never in the model. Only page-only commands exist (see chat-commands.ts).
+  const runCommand = (command: ChatCommand, arg: string) => {
+    switch (command.name) {
+      case "help":
+        setNotice(helpText())
+        break
+      case "new":
+        setNotice(null)
+        void newChat(Array.from(arg).slice(0, 120).join("") || undefined)
+        break
+      case "stop":
+        if (isGenerating) void stop()
+        setNotice(isGenerating ? "Stopping the reply." : "Nothing is being written right now.")
+        break
+      case "context":
+        setNotice([
+          // The bar falls back to a 32k guess when the model server doesn't say; here the guess is named as one.
+          !windowKnown
+            ? "The model's window isn't known right now: its server isn't answering (is LM Studio or your model server running?)."
+            : ctxTokens === null
+              ? `How full the chat is shows after the next reply. The model's window is ${contextWindow.toLocaleString()} tokens.`
+              : `The chat fills ${ctxTokens.toLocaleString()} of ${contextWindow.toLocaleString()} tokens (${ctxPct}%), as of the last reply.`,
+          `Model: ${selectedModel || "the assistant's default"}`,
+          `Assistant: ${agentName}${activeInstance?.provider ? ` on ${activeInstance.provider}` : ""}`,
+          `Chat: ${selectedId}`,
+        ].join("\n"))
+        break
+    }
+  }
+
+  // Runs a command picked from the box, with no text after it (so /new starts an untitled chat).
+  const runPicked = (command: ChatCommand) => {
+    setDraft("")
+    if (textareaRef.current) textareaRef.current.style.height = "auto"
+    runCommand(command, "")
+    textareaRef.current?.focus()
+  }
+
+  // Enter or the Send button: a chat command runs here, anything else goes to the model.
+  const submit = () => {
+    const typed = draft.trim()
+    if (!typed || !selectedId || sending) return
+    if (highlighted) {
+      runPicked(highlighted)   // a command name is being typed: run the one highlighted in the box
+      return
+    }
+    const input = parseInput(typed)
+    if (input.kind === "message") {
+      void send(input.text)
+      return
+    }
+    if (input.kind === "unknown") {
+      // Kept in the box, so one more slash at the front sends it as it is.
+      setNotice(`There's no /${input.name} command. Type /help for the list, or start the message with // to send it as it is.`)
+      return
+    }
+    setDraft("")
+    if (textareaRef.current) textareaRef.current.style.height = "auto"
+    runCommand(input.command, input.arg)
+  }
+
   // Send message
-  const send = async () => {
-    const text = draft.trim()
-    if (!text || !selectedId || sending) return
+  const send = async (text: string) => {
+    setNotice(null)
     setSending(true)
     setIsGenerating(true)
     stickToBottomRef.current = true   // sending a message always brings the thread to its end
     setDraft("")
     if (textareaRef.current) textareaRef.current.style.height = "auto"
-    const optimistic: ChatMessage = { id: crypto.randomUUID(), role: "user", content: text, createdAt: Date.now() }
+    const optimistic = optimisticMessage(text)
     setHistory(prev => prev ? { ...prev, messages: [...(prev.messages ?? []), optimistic] } : prev)
     try {
       const res = await gateway.request<{ sessionTitle?: string; correlationId?: string }>("chat.send", { sessionId: selectedId, message: text, ...(selectedModel ? { model: selectedModel } : {}), thinking })
@@ -829,26 +916,34 @@ export function ChatPage() {
     }
   }
 
-  // Stop the in-flight turn — cancels Dave's current model call mid-stream.
-  const stop = async () => {
-    const cid = activeCorrelationRef.current
-    if (!cid) return
-    try {
-      await gateway.request("chat.abort", { correlationId: cid })
-    } catch (err) {
-      console.error("[ChatPage] stop error:", err)
-    }
-  }
-
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (highlighted) {
+      if (e.key === "Escape") {
+        setPopupHidden(true)
+        return
+      }
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault()
+        const at = suggestions.indexOf(highlighted)
+        setPicked((at + (e.key === "ArrowDown" ? 1 : suggestions.length - 1)) % suggestions.length)
+        return
+      }
+      if (e.key === "Tab" && !e.shiftKey && draft !== commandStub(highlighted)) {
+        e.preventDefault()
+        setDraft(commandStub(highlighted))
+        return
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
-      send()
+      submit()
     }
   }
 
   const onInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setDraft(e.target.value)
+    setPopupHidden(false)
+    setPicked(0)
     e.target.style.height = "auto"
     e.target.style.height = Math.min(e.target.scrollHeight, 160) + "px"
   }
@@ -922,6 +1017,7 @@ export function ChatPage() {
   // session title — a session named "no, all good" would otherwise yield
   // "Message no, all good (Enter to send)" which reads as nonsense.
   const agentName = activeInstance?.name || assistant
+  const windowKnown = models.find(m => m.id === selectedModel)?.contextLength !== undefined
   const contextWindow = models.find(m => m.id === selectedModel)?.contextLength ?? 32768
 
   // Real inputTokens from the model response — the only accurate source.
@@ -953,7 +1049,7 @@ export function ChatPage() {
             </option>
           ))}
         </select>
-        <button className="chat-new-btn" onClick={newChat} title="New chat">＋</button>
+        <button className="chat-new-btn" onClick={() => void newChat()} title="New chat">＋</button>
 
         <div className="chat-controls__sep" />
 
@@ -1087,6 +1183,12 @@ export function ChatPage() {
             ))}
           </div>
         )}
+        {notice && (
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 8, margin: "6px 24px 6px 68px", padding: "8px 12px", borderRadius: 8, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", color: "var(--muted)", fontSize: 12, whiteSpace: "pre-wrap" }}>
+            <span style={{ flex: 1 }}>{notice}</span>
+            <button type="button" onClick={() => setNotice(null)} title="Close" aria-label="Close" style={{ background: "none", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: 12 }}>✕</button>
+          </div>
+        )}
       </div>
 
       {/* Context bar */}
@@ -1101,6 +1203,25 @@ export function ChatPage() {
 
       {/* Composer */}
       <div className="chat-composer">
+        {/* Command box: floats above the input while a command name is being typed, so nothing on the page moves */}
+        {highlighted && (
+          <div className="chat-command-box" role="listbox" aria-label="Chat commands">
+            {suggestions.map(c => (
+              <button
+                key={c.name}
+                type="button"
+                role="option"
+                aria-selected={c === highlighted}
+                className={c === highlighted ? "is-picked" : undefined}
+                onMouseEnter={() => setPicked(suggestions.indexOf(c))}
+                onClick={() => runPicked(c)}
+              >
+                <span className="chat-command-box__name">/{c.name}{c.args ? ` ${c.args}` : ""}</span>
+                <span className="chat-command-box__desc">{c.description}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <div className="chat-composer-inner">
           {/* Hidden file input */}
           <input
@@ -1131,7 +1252,7 @@ export function ChatPage() {
           ) : (
             <button
               className="chat-composer-send"
-              onClick={send}
+              onClick={submit}
               disabled={!draft.trim() || !selectedId || sending}
               title="Send"
             >

@@ -56,6 +56,7 @@ You don't have to choose between them. Dave can launch pipelines for you.
 
 The agent and the team
 - Dave, your tier-1 personal agent: chat, 17 built-in tools and persistent memory.
+- Chat commands: type `/help`, `/new [title]`, `/stop` or `/context` in the chat box. They run in the page and are never sent to the model. Commands that change settings come later, behind the same safety checks as everything else.
 - An orchestrator and specialist workers (researcher, coder) that pipelines use to split a job up and run the parts in parallel.
 
 Pipelines

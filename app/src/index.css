@@ -712,9 +712,52 @@ body::before {
 
 /* Composer */
 .chat-composer {
+  position: relative;
   border-top: none;
   padding: 4px 16px 12px;
   flex-shrink: 0;
+}
+
+/* The chat command list: floats over the thread, above the input, like a menu. */
+.chat-command-box {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: calc(100% + 2px);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  background: rgba(12, 14, 36, 0.97);
+  border: 1px solid rgba(129, 140, 248, 0.3);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+
+.chat-command-box button {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12.5px;
+}
+
+.chat-command-box button.is-picked {
+  background: rgba(129, 140, 248, 0.16);
+}
+
+.chat-command-box__name {
+  color: var(--accent);
+  min-width: 120px;
+}
+
+.chat-command-box__desc {
+  color: var(--muted);
 }
 
 .chat-composer-inner {
