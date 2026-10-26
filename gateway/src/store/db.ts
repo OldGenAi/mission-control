@@ -304,6 +304,13 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_doctor_log_at ON doctor_log(at);
     `,
   },
+  {
+    version: 16,
+    sql: `
+      -- A starred video is left alone when the Video page clears the rest.
+      ALTER TABLE videos ADD COLUMN kept INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ]
 
 function runMigrations(db: Database.Database): void {

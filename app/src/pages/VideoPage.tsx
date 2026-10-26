@@ -32,6 +32,7 @@ interface Video {
   createdAt: number
   startedAt: number | null
   finishedAt: number | null
+  kept: boolean
   link: string | null
 }
 
@@ -44,6 +45,9 @@ const button = (primary = false): React.CSSProperties => ({
   border: `1px solid ${primary ? 'rgba(0,200,255,0.35)' : 'rgba(255,255,255,0.1)'}`,
   color: primary ? '#67e8f9' : '#9CA3AF',
 })
+
+// Finished videos are shown a few at a time, so a busy day doesn't bury the form.
+const VIDEOS_PER_PAGE = 6
 
 const LABELS: Record<string, string> = { image: 'Picture (it becomes the first frame)', prompt: 'Describe the video', negative: 'Avoid', seconds: 'Length (seconds)', aspect: 'Shape', seed: 'Variation number (0 = a new one each time)' }
 
@@ -65,14 +69,59 @@ function readAsDataUrl(file: File): Promise<string> {
   })
 }
 
+/** A small JPEG copy of the picture, so the remembered choice fits in the browser's storage. */
+function thumbnail(dataUrl: string): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => {
+      const scale = Math.min(1, 256 / Math.max(img.width, img.height))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(img.width * scale))
+      canvas.height = Math.max(1, Math.round(img.height * scale))
+      canvas.getContext('2d')?.drawImage(img, 0, 0, canvas.width, canvas.height)
+      resolve(canvas.toDataURL('image/jpeg', 0.8))
+    }
+    img.onerror = () => resolve('')
+    img.src = dataUrl
+  })
+}
+
+// The chosen picture is remembered until Remove is pressed, so a restart or crash doesn't lose it.
+// The gateway keeps the picture itself; the browser keeps only its id and a thumbnail. The thumbnail
+// is '' when there isn't one (it couldn't be made, or the picture came from Use again), and the size
+// is 0 when unknown, which leaves the shape alone.
+interface SavedPicture { id: string; thumb: string; width: number; height: number }
+const SAVED_PICTURE_KEY = 'mc:video-picture'
+
+function loadSavedPicture(): SavedPicture | null {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SAVED_PICTURE_KEY) ?? 'null') as SavedPicture | null
+    if (!saved || !/^[0-9a-f]{32}$/.test(saved.id)) return null
+    if (saved.thumb !== '' && !saved.thumb.startsWith('data:image/jpeg;base64,')) return null
+    return saved
+  } catch {
+    return null
+  }
+}
+function savePicture(picture: SavedPicture | null) {
+  try {
+    if (picture) localStorage.setItem(SAVED_PICTURE_KEY, JSON.stringify(picture))
+    else localStorage.removeItem(SAVED_PICTURE_KEY)
+  } catch { /* storage off: the picture is kept for this visit only */ }
+}
+
 const fmtDate = (ts: number) => new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 const fmtSecs = (ms: number) => `${Math.round(ms / 1000)} s`
 
-function startValues(recipe: Recipe): Record<string, string | number> {
+function startValues(recipe: Recipe, picture: SavedPicture | null): Record<string, string | number> {
   const values: Record<string, string | number> = {}
   for (const [name, spec] of Object.entries(recipe.params)) {
     if ('default' in spec && spec.default !== undefined) values[name] = spec.default
     else if (spec.kind !== 'image') values[name] = spec.kind === 'int' ? spec.min : ''
+    if (spec.kind === 'image' && picture) values[name] = picture.id
+  }
+  if (picture && picture.width > 0 && picture.height > 0 && 'aspect' in recipe.params && Object.values(recipe.params).some((s) => s.kind === 'image')) {
+    values['aspect'] = shapeFor(picture.width, picture.height)
   }
   return values
 }
@@ -87,10 +136,15 @@ export const VideoPage: React.FC = () => {
   const [error, setError] = useState('')
   const [comfyUrl, setComfyUrl] = useState('')
   const [now, setNow] = useState(() => Date.now())
-  const [pictures, setPictures] = useState<Record<string, string>>({}) // uploaded picture id -> data: URL shown as a thumbnail
+  const [pictures, setPictures] = useState<Record<string, string>>(() => {   // uploaded picture id -> data: URL shown as a thumbnail
+    const saved = loadSavedPicture()
+    return saved?.thumb ? { [saved.id]: saved.thumb } : {}
+  })
   const [uploading, setUploading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)   // the Refresh button is working
   const [checkedAt, setCheckedAt] = useState<number | null>(null)   // when ComfyUI was last asked
+  const [disk, setDisk] = useState<{ used: number; limit: number } | null>(null)   // the media folder, for the storage bar
+  const [shown, setShown] = useState(VIDEOS_PER_PAGE)   // how many finished videos are on the page
   const refreshTimer = useRef<number | null>(null)
   // Signed links change on every list call; keeping the one a player already has stops the
   // browser reloading every finished video each time the list refreshes. Links last an hour.
@@ -101,14 +155,15 @@ export const VideoPage: React.FC = () => {
 
   const loadVideos = async () => {
     try {
-      const { videos: listed } = await gateway.request<{ videos: Video[] }>('video.list', { limit: 50 })
+      const { videos: listed, diskBytes, diskLimitBytes } = await gateway.request<{ videos: Video[]; diskBytes: number; diskLimitBytes: number }>('video.list', { limit: 200 })
       const at = Date.now()
       setVideos(listed.map((v) => {
-        const kept = links.current.get(v.id)
-        if (kept && at - kept.at < 50 * 60 * 1000) return { ...v, link: kept.link }
+        const known = links.current.get(v.id)
+        if (known && at - known.at < 50 * 60 * 1000) return { ...v, link: known.link }
         if (v.link) links.current.set(v.id, { link: v.link, at })
         return v
       }))
+      setDisk({ used: diskBytes, limit: diskLimitBytes })
     } catch (err) {
       setError(`Could not load your videos: ${err instanceof Error ? err.message : 'no answer from Mission Control'}`)
     }
@@ -138,7 +193,7 @@ export const VideoPage: React.FC = () => {
         ])
         setRecipes(available)
         setComfyUrl(settings.comfyUrl)
-        if (available[0]) { setRecipeId(available[0].id); setValues(startValues(available[0])) }
+        if (available[0]) { setRecipeId(available[0].id); setValues(startValues(available[0], loadSavedPicture())) }
       } catch (err) {
         setError(`Could not load the video recipes: ${err instanceof Error ? err.message : 'no answer from Mission Control'}`)
       }
@@ -181,7 +236,7 @@ export const VideoPage: React.FC = () => {
   const pickRecipe = (id: string) => {
     const next = recipes.find((r) => r.id === id)
     setRecipeId(id)
-    if (next) setValues(startValues(next))
+    if (next) setValues(startValues(next, loadSavedPicture()))
   }
 
   const choosePicture = async (name: string, file: File | undefined) => {
@@ -197,6 +252,7 @@ export const VideoPage: React.FC = () => {
       const data = dataUrl.slice(dataUrl.indexOf(',') + 1)
       const uploaded = await gateway.request<{ id: string; width: number; height: number }>('video.uploadImage', { data })
       setPictures((prev) => ({ ...prev, [uploaded.id]: dataUrl }))
+      savePicture({ id: uploaded.id, thumb: await thumbnail(dataUrl), width: uploaded.width, height: uploaded.height })
       setValues((prev) => {
         const next: Record<string, string | number> = { ...prev, [name]: uploaded.id }
         if ('aspect' in recipe.params) next['aspect'] = shapeFor(uploaded.width, uploaded.height)
@@ -207,6 +263,12 @@ export const VideoPage: React.FC = () => {
     } finally {
       setUploading(false)
     }
+  }
+
+  // Takes the picture off the form. The stored copy stays with the gateway, as before.
+  const removePicture = (name: string) => {
+    savePicture(null)
+    setValues((prev) => { const next = { ...prev }; delete next[name]; return next })
   }
 
   const submit = async () => {
@@ -237,6 +299,37 @@ export const VideoPage: React.FC = () => {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not delete the video.')
     }
+  }
+
+  const starVideo = async (id: string, kept: boolean) => {
+    try {
+      await gateway.request('video.keep', { id, kept })
+      await loadVideos()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not star the video.')
+    }
+  }
+
+  // Names the videos on the list, so one that finishes while the box is open is never cleared unseen.
+  const clearUnstarred = async () => {
+    const ids = finished.filter((v) => !v.kept).map((v) => v.id)
+    if (ids.length === 0) return
+    if (!window.confirm(`Delete ${ids.length} ${ids.length === 1 ? 'video that isn\'t' : 'videos that aren\'t'} starred? Starred videos stay. The files are removed for good.`)) return
+    try {
+      await gateway.request('video.clearUnkept', { ids })
+      await loadVideos()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not clear the videos.')
+    }
+  }
+
+  // Use again fills the form from an earlier video; its picture becomes the remembered one, as if chosen.
+  const makeAgain = (v: Video) => {
+    const next = recipes.find((r) => r.id === v.recipeId)
+    const image = next && Object.entries(next.params).find(([name, spec]) => spec.kind === 'image' && typeof v.params[name] === 'string')
+    if (image) savePicture({ id: v.params[image[0]] as string, thumb: '', width: 0, height: 0 })
+    pickRecipe(v.recipeId)
+    setValues(v.params as Record<string, string | number>)
   }
 
   const saveComfyUrl = async () => {
@@ -307,11 +400,20 @@ export const VideoPage: React.FC = () => {
               {spec.kind === 'image' && (
                 <div className="flex items-center gap-3">
                   <input id={`p-${name}`} type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading}
-                    onChange={(e) => { void choosePicture(name, e.target.files?.[0]); e.target.value = '' }} className="text-xs text-gray-400" />
+                    onChange={(e) => { void choosePicture(name, e.target.files?.[0]); e.target.value = '' }} className="sr-only" tabIndex={-1} />
+                  <button onClick={() => document.getElementById(`p-${name}`)?.click()} disabled={uploading}
+                    className="px-3 py-1 rounded text-xs" style={{ ...button(), opacity: uploading ? 0.6 : 1 }}>
+                    {typeof values[name] === 'string' ? 'Change picture' : 'Choose picture'}
+                  </button>
                   {uploading && <span className="text-xs text-gray-500">Checking the picture...</span>}
-                  {typeof values[name] === 'string' && (pictures[values[name] as string]
-                    ? <img src={pictures[values[name] as string]} alt="The chosen picture" style={{ maxHeight: 72, maxWidth: 128, borderRadius: 6 }} />
-                    : <span className="text-xs text-gray-500">Using the picture from before.</span>)}
+                  {typeof values[name] === 'string'
+                    ? <>
+                        {pictures[values[name] as string]
+                          ? <img src={pictures[values[name] as string]} alt="The chosen picture" style={{ maxHeight: 72, maxWidth: 128, borderRadius: 6 }} />
+                          : <span className="text-xs text-gray-500">Using the picture from before.</span>}
+                        <button onClick={() => removePicture(name)} className="px-3 py-1 rounded text-xs" style={button()}>Remove</button>
+                      </>
+                    : !uploading && <span className="text-xs text-gray-500">No picture chosen</span>}
                 </div>
               )}
               {spec.kind === 'choice' && (
@@ -359,9 +461,24 @@ export const VideoPage: React.FC = () => {
         )
       })}
 
+      {/* Storage, and clearing out what isn't starred */}
+      {disk && disk.limit > 0 && (disk.used > 0 || finished.length > 0) && (
+        <div className="flex items-center gap-3">
+          <div style={{ width: 160, height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 2 }}>
+            <div style={{ width: `${Math.min(100, (disk.used / disk.limit) * 100)}%`, height: 4, borderRadius: 2, background: disk.used / disk.limit > 0.8 ? '#fbbf24' : '#22d3ee' }} />
+          </div>
+          <span className="text-xs text-gray-500">
+            Videos and pictures use {(disk.used / 1024 ** 3).toFixed(1)} GB of {Math.round(disk.limit / 1024 ** 3)} GB
+          </span>
+          {finished.some((v) => !v.kept) && (
+            <button onClick={() => void clearUnstarred()} className="px-3 py-1 rounded text-xs ml-auto" style={button()}>Clear unstarred</button>
+          )}
+        </div>
+      )}
+
       {/* Finished */}
       <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
-        {finished.map((v) => (
+        {finished.slice(0, shown).map((v) => (
           <div key={v.id} className="rounded-xl p-3 flex flex-col gap-2" style={card}>
             {v.status === 'done' && v.link
               ? <video src={v.link} controls preload="metadata" style={{ width: '100%', borderRadius: 8, background: '#000' }} />
@@ -378,13 +495,22 @@ export const VideoPage: React.FC = () => {
                 {v.params['seed'] !== undefined ? ` · variation ${String(v.params['seed'])}` : ''}
               </span>
               <span className="flex gap-3">
-                <button onClick={() => { pickRecipe(v.recipeId); setValues(v.params as Record<string, string | number>) }} style={{ background: 'none', border: 'none', color: '#67e8f9', cursor: 'pointer' }}>Use again</button>
+                <button onClick={() => void starVideo(v.id, !v.kept)} title={v.kept ? 'Starred: Clear unstarred leaves it alone' : 'Star it to keep it when you clear the rest'}
+                  style={{ background: 'none', border: 'none', color: v.kept ? '#fbbf24' : '#6B7280', cursor: 'pointer' }}>{v.kept ? '★ Starred' : '☆ Star'}</button>
+                <button onClick={() => makeAgain(v)} style={{ background: 'none', border: 'none', color: '#67e8f9', cursor: 'pointer' }}>Use again</button>
                 <button onClick={() => void deleteVideo(v.id)} style={{ background: 'none', border: 'none', color: '#6B7280', cursor: 'pointer' }}>Delete</button>
               </span>
             </div>
           </div>
         ))}
       </div>
+      {finished.length > shown && (
+        <div>
+          <button onClick={() => setShown(shown + VIDEOS_PER_PAGE)} className="px-3 py-1 rounded text-xs" style={button()}>
+            Show more ({finished.length - shown} older)
+          </button>
+        </div>
+      )}
       {videos.length === 0 && <p className="text-xs text-gray-600">No videos yet.</p>}
     </div>
   )
