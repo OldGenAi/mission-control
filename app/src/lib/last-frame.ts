@@ -27,9 +27,12 @@ export function lastFrame(src: string): Promise<string> {
       canvas.width = video.videoWidth
       canvas.height = video.videoHeight
       const context = canvas.getContext('2d')
-      if (!context || canvas.width === 0) return finish(new Error('Could not read the last frame.'))
-      context.drawImage(video, 0, 0)
-      finish(canvas.toDataURL('image/png'))
+      if (context && canvas.width > 0) {
+        context.drawImage(video, 0, 0)
+        finish(canvas.toDataURL('image/png'))
+      } else {
+        finish(new Error('Could not read the last frame.'))
+      }
     }
     video.src = src
   })

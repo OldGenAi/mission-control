@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { gateway } from '../lib/gateway-client'
 import { button, card, input, linkButton, uploadPictureFile } from './video-ui'
 
@@ -21,6 +21,7 @@ export const VideoCast: React.FC<{
   const [draft, setDraft] = useState<Draft | null>(null)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
+  const pictureInput = useRef<HTMLInputElement>(null)
 
   const load = async (): Promise<CastMember[]> => {
     try {
@@ -44,7 +45,8 @@ export const VideoCast: React.FC<{
     setUploading(true)
     try {
       const picture = await uploadPictureFile(file)
-      setDraft({ ...draft, imageId: picture.id, thumb: picture.thumb || null })
+      // Onto the draft as it is now: typing during the upload stays, and a Cancel meanwhile stays cancelled.
+      setDraft((current) => current && { ...current, imageId: picture.id, thumb: picture.thumb || null })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not upload that picture.')
     } finally {
@@ -114,9 +116,9 @@ export const VideoCast: React.FC<{
           <textarea id="cast-wording" rows={2} maxLength={500} value={draft.wording} onChange={(e) => setDraft({ ...draft, wording: e.target.value })}
             placeholder="black and white border collie, white blaze down the face, black left ear, white chest" className="px-2 py-1 rounded text-xs" style={input} />
           <div className="flex items-center gap-3">
-            <input id="cast-picture" type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading}
+            <input ref={pictureInput} type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading}
               onChange={(e) => { void choosePicture(e.target.files?.[0]); e.target.value = '' }} className="sr-only" tabIndex={-1} />
-            <button onClick={() => document.getElementById('cast-picture')?.click()} disabled={uploading} className="px-3 py-1 rounded text-xs" style={{ ...button(), opacity: uploading ? 0.6 : 1 }}>
+            <button onClick={() => pictureInput.current?.click()} disabled={uploading} className="px-3 py-1 rounded text-xs" style={{ ...button(), opacity: uploading ? 0.6 : 1 }}>
               {draft.imageId ? 'Change picture' : 'Choose picture'}
             </button>
             {uploading && <span className="text-xs text-gray-500">Checking the picture...</span>}

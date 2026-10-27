@@ -6,13 +6,17 @@
 
 import { randomBytes } from 'node:crypto'
 import type Database from 'better-sqlite3'
-import { inspectImage } from './image-input.js'
+import { readImageInfo } from './image-input.js'
 import { VideoRequestError } from './jobs.js'
 import { hasControlCharacter } from './params.js'
 
 export const MAX_CAST = 50
 export const MAX_THUMB_BYTES = 64 * 1024
+const MAX_THUMB_SIDE = 512   // the page makes them 256 pixels on the longer side
 const MAX_NAME = 60
+// Line breaks, tabs and invisible format characters (zero-width spaces, direction marks) in a name would break the
+// "Name: wording." line in a prompt, or let "Rex" and an invisibly different "Rex" both exist.
+const NOT_ONE_PLAIN_LINE = /[\n\t]|\p{Cf}/u
 const MAX_WORDING = 500
 const ID = /^[0-9a-f]{32}$/
 const THUMB_PREFIX = 'data:image/jpeg;base64,'
@@ -38,19 +42,22 @@ function checkedText(value: unknown, field: string, max: number): string {
   return value
 }
 
-// Only a real JPEG goes in, so the page can put it straight into an <img> as a data: URL.
+// Only a real JPEG goes in, so the page can put it straight into an <img> as a data: URL. A thumbnail of a
+// wide picture can be only a few pixels tall, so the video pictures' minimum size doesn't apply.
 function checkedThumb(value: unknown): string | null {
   if (value === undefined || value === null) return null
-  const base64 = typeof value === 'string' && value.startsWith(THUMB_PREFIX) ? value.slice(THUMB_PREFIX.length) : ''
+  if (typeof value !== 'string' || !value.startsWith(THUMB_PREFIX)) throw new VideoRequestError('The thumbnail must be a JPEG picture.')
+  const base64 = value.slice(THUMB_PREFIX.length)
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) throw new VideoRequestError('The thumbnail must be a JPEG picture.')
   // The length check bounds memory before decoding; the exact size is checked after.
   const tooLarge = new VideoRequestError('The thumbnail is too large.')
   if (base64.length > Math.ceil(MAX_THUMB_BYTES / 3) * 4) throw tooLarge
   const bytes = Buffer.from(base64, 'base64')
   if (bytes.length > MAX_THUMB_BYTES) throw tooLarge
-  const info = inspectImage(bytes)
+  const info = readImageInfo(bytes)
   if (typeof info === 'string' || info.type !== 'jpeg') throw new VideoRequestError('The thumbnail must be a JPEG picture.')
-  return value as string
+  if (info.width > MAX_THUMB_SIDE || info.height > MAX_THUMB_SIDE) throw tooLarge
+  return value
 }
 
 export class VideoCast {
@@ -67,11 +74,12 @@ export class VideoCast {
   save(input: unknown): CastMember {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) throw new VideoRequestError('The character must be an object.')
     const fields = input as Record<string, unknown>
-    const unknown = Object.keys(fields).find((key) => !FIELDS.has(key))
-    if (unknown) throw new VideoRequestError(`unknown field: ${unknown}`)
+    const stray = Object.keys(fields).find((key) => !FIELDS.has(key))
+    if (stray) throw new VideoRequestError(`unknown field: ${stray}`)
 
     const name = checkedText(fields['name'], 'name', MAX_NAME).trim()
     if (name === '') throw new VideoRequestError('The character needs a name.')
+    if (NOT_ONE_PLAIN_LINE.test(name)) throw new VideoRequestError('The name must be one line of plain text.')
     const wording = checkedText(fields['wording'], 'wording', MAX_WORDING).trim()
     const imageId = fields['imageId'] ?? null
     if (imageId !== null && (typeof imageId !== 'string' || !ID.test(imageId) || !this.hasImage(imageId))) {
@@ -99,9 +107,11 @@ export class VideoCast {
   }
 
   // Soft delete, like videos: the row stays, but the character is gone from the cast and its name is free again.
+  // The thumbnail goes, so saving and deleting over and over doesn't grow the database.
   delete(id: unknown): boolean {
-    if (!this.find(id)) return false
-    return this.db.prepare(`UPDATE video_cast SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL`).run(Date.now(), id).changes > 0
+    const member = this.find(id)
+    if (!member) return false
+    return this.db.prepare(`UPDATE video_cast SET deleted_at = ?, thumb = NULL WHERE id = ? AND deleted_at IS NULL`).run(Date.now(), member.id).changes > 0
   }
 
   private find(id: unknown): CastMember | null {
