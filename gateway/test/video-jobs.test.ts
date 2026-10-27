@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import { WebSocketServer, type WebSocket } from 'ws'
 import { openDatabase } from '../src/store/db.js'
-import { VideoJobs, VideoRequestError, listensBeyondThisComputer, type VideoEvent } from '../src/video/jobs.js'
+import { VideoJobs, VideoRequestError, listensBeyondThisComputer, type VideoEvent, type VideoCardShare } from '../src/video/jobs.js'
 import { RECIPES } from '../src/video/recipes.js'
 
 function box(type: string, ...children: Buffer[]): Buffer {
@@ -23,7 +23,7 @@ const SECRET_PROMPT = Buffer.from('"prompt": "my private prompt"')
 const MP4 = Buffer.concat([box('ftyp', Buffer.from('isom')), box('moov', box('udta', SECRET_PROMPT)), box('mdat', Buffer.from('frames'))])
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3])
 
-interface FakeOptions { argv?: string[]; vramFreeGb?: number; missingNode?: string; fail?: boolean; videoBody?: Buffer; hang?: boolean; statsDelayMs?: number; vramFreeSequence?: number[] }
+interface FakeOptions { argv?: string[]; vramFreeGb?: number | (() => number); missingNode?: string; fail?: boolean; videoBody?: Buffer; hang?: boolean; statsDelayMs?: number; vramFreeSequence?: number[] }
 
 async function fakeComfy(opts: FakeOptions = {}) {
   const sockets = new Map<string, WebSocket>()
@@ -39,7 +39,7 @@ async function fakeComfy(opts: FakeOptions = {}) {
       statsCalls++
       // vramFreeSequence: free memory as ComfyUI reports it on each ask (the last value repeats), like memory coming back after a job.
       const seq = opts.vramFreeSequence
-      const freeGb = seq ? seq[Math.min(statsCalls - 1, seq.length - 1)]! : (opts.vramFreeGb ?? 15)
+      const freeGb = seq ? seq[Math.min(statsCalls - 1, seq.length - 1)]! : typeof opts.vramFreeGb === 'function' ? opts.vramFreeGb() : (opts.vramFreeGb ?? 15)
       const stats = { system: { comfyui_version: '0.9.9', argv: opts.argv ?? ['main.py'] }, devices: [{ name: 'Fake GPU', vram_total: 16 * 1024 ** 3, vram_free: freeGb * 1024 ** 3 }] }
       // A slow answer holds a job in its checks before anything reaches ComfyUI (the window two quick presses fell into).
       if (opts.statsDelayMs) return void setTimeout(() => json(stats), opts.statsDelayMs)
@@ -107,11 +107,11 @@ async function fakeComfy(opts: FakeOptions = {}) {
 }
 
 // Memory is waited for briefly here; the real wait is longer (see MEMORY_WAIT_MS in jobs.ts).
-function setup(comfyUrl: string, timing = { memoryWaitMs: 1000, memoryPollMs: 20, recentFreeMs: 30_000 }) {
+function setup(comfyUrl: string, timing = { memoryWaitMs: 1000, memoryPollMs: 20, recentFreeMs: 30_000 }, cardShare?: VideoCardShare) {
   const dir = mkdtempSync(join(tmpdir(), 'mc-video-'))
   const db = openDatabase(join(dir, 'test.sqlite'))
   const events: VideoEvent[] = []
-  const jobs = new VideoJobs(db, join(dir, 'media'), () => ({ comfyUrl, freeAfterJob: true }), (e) => events.push(e), timing)
+  const jobs = new VideoJobs(db, join(dir, 'media'), () => ({ comfyUrl, freeAfterJob: true }), (e) => events.push(e), timing, cardShare)
   const finished = (id: string) => new Promise<VideoEvent>((resolve) => {
     const timer = setInterval(() => {
       const end = events.find((e) => e.id === id && ['done', 'failed', 'cancelled'].includes(e.status))
@@ -445,5 +445,84 @@ test('picture to video: the picture is checked, copied into ComfyUI under our na
     assert.equal(nodes.find((n) => n.class_type === 'LoadImage')?.inputs['image'], `mission-control/${uploaded.id}.png`)
     const firstFrames = nodes.filter((n) => n.class_type === 'LTXVImgToVideoInplace').map((n) => n.inputs['strength'])
     assert.deepEqual(firstFrames, [0.7, 1.0], 'the picture guides both passes, as in the ComfyUI blueprint')
+  } finally { await comfy.close() }
+})
+
+// A stand-in for the card sharing (src/providers/card-share.ts): records what the queue tells it, and answers makeRoom as told.
+function fakeCardShare(answer: 'unloaded' | 'nothing' | { error: string }, onRoom?: () => void) {
+  const busy: boolean[] = []
+  let rooms = 0
+  const share: VideoCardShare = {
+    setVideoBusy: (b) => { busy.push(b) },
+    makeRoom: async (_stopped, onStage) => { rooms++; onStage('Waiting for a chat to finish'); onRoom?.(); return answer },
+  }
+  return { share, busy, rooms: () => rooms }
+}
+
+test('a card too full because LM Studio holds a model: the model is unloaded and the video runs', async () => {
+  // Full until the model is unloaded, then free.
+  let unloaded = false
+  const comfy = await fakeComfy({ vramFreeGb: () => unloaded ? 15 : 3 })
+  const card = fakeCardShare('unloaded', () => { unloaded = true })
+  const { jobs, events, finished } = setup(comfy.url, undefined, card.share)
+  try {
+    const id = jobs.submit('ltx25-t2v', { prompt: 'x' })
+    const end = await finished(id)
+    assert.equal(end.status, 'done', end.error)
+    assert.equal(card.rooms(), 1)
+    assert.ok(events.some((e) => e.id === id && e.stage === 'Making room on the graphics card'))
+    assert.ok(events.some((e) => e.id === id && e.stage === 'Waiting for a chat to finish'), 'the stages the card sharing reports reach the page')
+    assert.ok(await waitFor(() => card.busy.at(-1) === false), 'the queue says when it is empty again')
+    assert.equal(card.busy[0], true)
+  } finally { await comfy.close() }
+})
+
+test('a card with room for both: the local model is left alone', async () => {
+  const comfy = await fakeComfy({ vramFreeGb: 15 })
+  const card = fakeCardShare('unloaded')
+  const { jobs, finished } = setup(comfy.url, undefined, card.share)
+  try {
+    assert.equal((await finished(jobs.submit('ltx25-t2v', { prompt: 'x' }))).status, 'done')
+    assert.equal(card.rooms(), 0, 'nothing is unloaded when the card can hold both')
+  } finally { await comfy.close() }
+})
+
+test('a full card with nothing to unload is refused as before', async () => {
+  const comfy = await fakeComfy({ vramFreeGb: 3 })
+  const card = fakeCardShare('nothing')
+  const { jobs, finished } = setup(comfy.url, undefined, card.share)
+  try {
+    const end = await finished(jobs.submit('ltx25-t2v', { prompt: 'x' }))
+    assert.equal(end.status, 'failed')
+    assert.match(end.error!, /Not enough free graphics memory: 3\.0 GB free/)
+    assert.equal(card.rooms(), 1)
+    assert.equal(comfy.prompts.length, 0)
+  } finally { await comfy.close() }
+})
+
+test('when the card sharing cannot make room, its reason is given', async () => {
+  const comfy = await fakeComfy({ vramFreeGb: 3 })
+  const card = fakeCardShare({ error: 'A chat is still running after 10 minutes.' })
+  const { jobs, finished } = setup(comfy.url, undefined, card.share)
+  try {
+    const end = await finished(jobs.submit('ltx25-t2v', { prompt: 'x' }))
+    assert.equal(end.status, 'failed')
+    assert.equal(end.error, 'A chat is still running after 10 minutes.')
+  } finally { await comfy.close() }
+})
+
+test('stopping the last queued video tells the card sharing the queue is empty', async () => {
+  const comfy = await fakeComfy({ hang: true })
+  const card = fakeCardShare('nothing')
+  const { jobs, events } = setup(comfy.url, undefined, card.share)
+  try {
+    const first = jobs.submit('ltx25-t2v', { prompt: 'first' })
+    const second = jobs.submit('ltx25-t2v', { prompt: 'second' })
+    assert.ok(await waitFor(() => comfy.prompts.length === 1))
+    jobs.cancel(second)
+    assert.notEqual(card.busy.at(-1), false, 'still busy while the first runs')
+    jobs.cancel(first)
+    assert.ok(await waitFor(() => events.some((e) => e.id === first && e.status === 'cancelled')))
+    assert.ok(await waitFor(() => card.busy.at(-1) === false))
   } finally { await comfy.close() }
 })
