@@ -224,7 +224,7 @@ function cardMessage(card: CardState): string | null {
   const isAre = card.models.length === 1 ? "is" : "are"
   if (card.state === "held") return `The graphics card is making videos, so ${names} ${isAre} unloaded for now. Messages wait until the videos are done, then ${card.models.length === 1 ? "it loads" : "they load"} again.`
   if (card.state === "restoring") return `Loading ${names} again after the videos…`
-  return `${names} could not be loaded again after the videos. Load it in LM Studio, then try again.`
+  return `${names} could not be loaded again after the videos. Load ${card.models.length === 1 ? "it" : "them"} in LM Studio, then try again.`
 }
 
 function Part({ part, showTools, showThinking }: { part: MessagePart; showTools: boolean; showThinking: boolean }) {

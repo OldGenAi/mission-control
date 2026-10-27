@@ -62,9 +62,6 @@ export interface VideoCardShare {
   makeRoom(stopped: () => boolean, onStage: (stage: string) => void): Promise<'unloaded' | 'nothing' | { error: string }>
 }
 
-// A loaded local model takes more than its file (the context cache, the runtime): this much is allowed on top.
-const LOCAL_OVERHEAD_GB = 1.5
-
 export { listensBeyondThisComputer }
 
 /** A user-facing refusal (bad parameters, queue full); anything else is a bug. */
@@ -373,25 +370,26 @@ export class VideoJobs {
         return 'ComfyUI is open to your network (it was started with --listen). Restart it without --listen so only this computer can use it.'
       }
       const comfyFreeGb = stats.device ? stats.device.vramFree / 1024 ** 3 : Infinity
-      const besideLocalGb = stats.device && localGb > 0 ? stats.device.vramTotal / 1024 ** 3 - localGb - LOCAL_OVERHEAD_GB : Infinity
+      const totalGb = stats.device ? stats.device.vramTotal / 1024 ** 3 : Infinity
+      const besideLocalGb = localGb > 0 ? totalGb - localGb : Infinity
       const freeGb = Math.min(comfyFreeGb, besideLocalGb)
       if (freeGb >= recipe.minFreeVramGb) {
         if (announced || triedRoom) this.emit({ id, status: 'running', stage: 'Getting the video ready' })
         return null
       }
-      // Only the local model's share decides this: memory ComfyUI is still handing back after a job is waited for instead.
-      if (this.cardShare && !triedRoom && besideLocalGb < recipe.minFreeVramGb) {
+      // Only the local model's share decides this (memory ComfyUI is still handing back after a job is waited for
+      // instead), and only when the card could hold the video at all.
+      if (this.cardShare && !triedRoom && besideLocalGb < recipe.minFreeVramGb && totalGb >= recipe.minFreeVramGb) {
         triedRoom = true
         this.emit({ id, status: 'running', stage: 'Making room on the graphics card' })
         const room = await this.cardShare.makeRoom(() => start.cancelled, (stage) => this.emit({ id, status: 'running', stage }))
         if (start.cancelled) return null
         if (typeof room === 'object') return room.error
-        if (room === 'unloaded') {
-          // The model server hands its memory back over a moment: wait for it like after a job.
-          localGb = (await this.cardShare.loadedBytes()) / 1024 ** 3
-          giveUpAt = performance.now() + this.timing.memoryWaitMs
-          continue
-        }
+        // Asked again either way: the model may also have gone by itself (ejected, or LM Studio's idle timer).
+        localGb = (await this.cardShare.loadedBytes()) / 1024 ** 3
+        // The model server hands its memory back over a moment: wait for it like after a job.
+        giveUpAt = performance.now() + this.timing.memoryWaitMs
+        continue
       }
       if (performance.now() >= giveUpAt) {
         const advice = triedRoom ? 'Something else is using the graphics card. Close it and try again.' : 'Unload other models (for example in LM Studio) and try again.'
