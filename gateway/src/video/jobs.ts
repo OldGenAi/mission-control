@@ -54,6 +54,12 @@ export interface VideoRow {
 
 export interface VideoSettings { comfyUrl: string; freeAfterJob: boolean }
 
+/** The card sharing (providers/card-share.ts), as the queue sees it: told when videos are waiting, asked to make room. */
+export interface VideoCardShare {
+  setVideoBusy(busy: boolean): void
+  makeRoom(stopped: () => boolean, onStage: (stage: string) => void): Promise<'unloaded' | 'nothing' | { error: string }>
+}
+
 export { listensBeyondThisComputer }
 
 /** A user-facing refusal (bad parameters, queue full); anything else is a bug. */
@@ -102,6 +108,7 @@ export class VideoJobs {
     private readonly settings: () => VideoSettings,
     private readonly emit: (event: VideoEvent) => void,
     private readonly timing = { memoryWaitMs: MEMORY_WAIT_MS, memoryPollMs: MEMORY_POLL_MS, recentFreeMs: RECENT_FREE_MS },
+    private readonly cardShare?: VideoCardShare,
   ) {
     mkdirSync(mediaDir, { recursive: true, mode: 0o700 })
     this.images = new ImageInputs(join(mediaDir, 'inputs'))
@@ -203,9 +210,18 @@ export class VideoJobs {
     this.db.prepare(`INSERT INTO videos (id, recipe_id, params, status, created_at) VALUES (?, ?, ?, 'queued', ?)`)
       .run(id, recipe.id, JSON.stringify(checked.values), Date.now())
     this.queue.push(id)
+    this.cardShare?.setVideoBusy(true)
     this.emit({ id, status: 'queued' })
     void this.pump()
     return id
+  }
+
+  /** Asks ComfyUI for its graphics memory back, before the local model server loads a model again. */
+  async freeMemory(): Promise<void> {
+    const checked = checkComfyUrl(this.settings().comfyUrl)
+    if ('error' in checked) return
+    await new ComfyClient(checked.url).free()
+    this.freedAt = performance.now()
   }
 
   cancel(id: string): boolean {
@@ -213,6 +229,7 @@ export class VideoJobs {
     if (queuedAt >= 0) {
       this.queue.splice(queuedAt, 1)
       this.finish(id, 'cancelled', null)
+      if (this.queue.length === 0 && !this.running && !this.starting) this.cardShare?.setVideoBusy(false)
       return true
     }
     if (this.starting?.id === id) {
@@ -250,7 +267,7 @@ export class VideoJobs {
   private async pump(): Promise<void> {
     if (this.running || this.starting) return
     const id = this.queue.shift()
-    if (!id) return
+    if (!id) return this.cardShare?.setVideoBusy(false)
     const start = { id, cancelled: false }
     this.starting = start
     try {
@@ -333,9 +350,11 @@ export class VideoJobs {
 
   // Refuses to run when ComfyUI is not there, is open to the network, or the card is too full. Straight after another
   // job, a card that is too full is asked again for a short while first, as that job's memory may still be on its way back.
+  // A card too full because the local model server holds a model is freed once by the card sharing, then waited for.
   private async preflight(id: string, start: { cancelled: boolean }, client: ComfyClient, recipe: { minFreeVramGb: number }, comfyUrl: string): Promise<string | null> {
     const justFreed = performance.now() - this.freedAt < this.timing.recentFreeMs
-    const giveUpAt = justFreed ? performance.now() + this.timing.memoryWaitMs : 0
+    let giveUpAt = justFreed ? performance.now() + this.timing.memoryWaitMs : 0
+    let triedRoom = false
     let announced = false
     while (true) {
       let stats
@@ -346,8 +365,20 @@ export class VideoJobs {
       }
       const freeGb = stats.device ? stats.device.vramFree / 1024 ** 3 : Infinity
       if (freeGb >= recipe.minFreeVramGb) {
-        if (announced) this.emit({ id, status: 'running', stage: 'Getting the video ready' })
+        if (announced || triedRoom) this.emit({ id, status: 'running', stage: 'Getting the video ready' })
         return null
+      }
+      if (this.cardShare && !triedRoom) {
+        triedRoom = true
+        this.emit({ id, status: 'running', stage: 'Making room on the graphics card' })
+        const room = await this.cardShare.makeRoom(() => start.cancelled, (stage) => this.emit({ id, status: 'running', stage }))
+        if (start.cancelled) return null
+        if (typeof room === 'object') return room.error
+        if (room === 'unloaded') {
+          // The model server hands its memory back over a moment: wait for it like after a job.
+          giveUpAt = performance.now() + this.timing.memoryWaitMs
+          continue
+        }
       }
       if (performance.now() >= giveUpAt) {
         return `Not enough free graphics memory: ${freeGb.toFixed(1)} GB free, this recipe needs about ${recipe.minFreeVramGb} GB. Unload other models (for example in LM Studio) and try again.`

@@ -1,5 +1,5 @@
 import type { ProviderAdapter } from './types.js'
-import { LocalProvider } from './local.js'
+import { LocalProvider, type LocalGate } from './local.js'
 import { OpenRouterProvider } from './openrouter.js'
 import type { ProviderName, SettingsSnapshot } from '../store/settings.js'
 
@@ -14,7 +14,7 @@ import type { ProviderName, SettingsSnapshot } from '../store/settings.js'
 export class ProviderRegistry {
   private readonly providers = new Map<ProviderName, ProviderAdapter>()
 
-  constructor(settings: SettingsSnapshot) {
+  constructor(settings: SettingsSnapshot, private readonly localGate?: LocalGate) {
     this.rebuild(settings)
   }
 
@@ -26,7 +26,7 @@ export class ProviderRegistry {
   rebuild(settings: SettingsSnapshot): void {
     this.providers.clear()
     // Local provider always available. The key is optional: only a server that requires one (LM Studio's "Require Authentication") needs it.
-    this.providers.set('local', new LocalProvider({ baseUrl: settings.localProviderUrl, apiKey: settings.providerKeys.local || undefined }))
+    this.providers.set('local', new LocalProvider({ baseUrl: settings.localProviderUrl, apiKey: settings.providerKeys.local || undefined, gate: this.localGate }))
 
     if (settings.providerKeys.openrouter) {
       this.providers.set('openrouter', new OpenRouterProvider({ apiKey: settings.providerKeys.openrouter }))

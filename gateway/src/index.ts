@@ -37,6 +37,9 @@ import { pricesWanted, startPricingRefresh } from './providers/pricing.js'
 import { registerInstancesMethods } from './methods/instances.js'
 import { registerVideoMethods } from './methods/video.js'
 import { VideoJobs } from './video/jobs.js'
+import { CardShare } from './providers/card-share.js'
+import { lmStudioServer } from './providers/lmstudio-control.js'
+import { registerCardShareMethods } from './methods/card-share.js'
 import { setVideoFileResolver } from './http-app.js'
 import { fileRead, fileWrite, fileEdit, fileList } from './tools/file.js'
 import { webFetch, webSearch, setSearchApiKeySource } from './tools/web.js'
@@ -110,7 +113,14 @@ function broadcast(clientId: string, event: string, payload: Record<string, unkn
 
 const settingsStore   = new SettingsStore(SETTINGS_PATH, envOverrides())
 const settings        = settingsStore.get()
-const providerRegistry = new ProviderRegistry(settings)
+// Shares the graphics card with videos: unloads the local model when a video needs the room, loads it back after.
+const cardShare: CardShare = new CardShare({
+  server: () => { const s = settingsStore.get(); return lmStudioServer(s.localProviderUrl, s.providerKeys.local || undefined) },
+  freeVideoMemory: (): Promise<void> => videoJobs.freeMemory(),
+  notePath: path.join(DATA_DIR, 'card-share.json'),
+  emit: (event) => broadcastEvent('card.event', { ...event }),
+})
+const providerRegistry = new ProviderRegistry(settings, cardShare)
 
 // Hot-reload: rebuild provider adapters whenever settings change, so UI edits to API
 // keys / local URL take effect on the next request with no gateway restart. web_search
@@ -221,7 +231,10 @@ const videoJobs = new VideoJobs(
   path.join(DATA_DIR, 'media', 'video'),
   () => { const s = settingsStore.get(); return { comfyUrl: s.comfyUrl, freeAfterJob: s.videoFreeAfterJob } },
   (event) => broadcastEvent('video.event', { ...event }),
+  undefined,
+  cardShare,
 )
+registerCardShareMethods(cardShare)
 registerVideoMethods(videoJobs, () => settingsStore.get().comfyUrl)
 setVideoFileResolver((id) => videoJobs.filePath(id))
 

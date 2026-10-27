@@ -98,12 +98,19 @@ export interface LocalProviderConfig {
   baseUrl: string  // e.g. 'http://127.0.0.1:1234/v1' — must be loopback
   apiKey?: string  // only needed when the server requires one; otherwise a placeholder is sent and ignored
   stallMs?: number // how long a silent stream is tolerated (tests use a short one); defaults to STALL_MS
+  gate?: LocalGate // the card sharing: holds calls while videos have the graphics card (card-share.ts)
+}
+
+/** Lets a call through when the model server may be used; the returned function is run when the call ends. */
+export interface LocalGate {
+  enter(signal?: AbortSignal): Promise<() => void>
 }
 
 export class LocalProvider implements ProviderAdapter {
   readonly name: string
   private readonly client: OpenAI
   private readonly stallMs: number
+  private readonly gate: LocalGate | undefined
 
   constructor(config: LocalProviderConfig) {
     // SSRF check — hard error at construction, before any request is made
@@ -111,6 +118,7 @@ export class LocalProvider implements ProviderAdapter {
 
     this.name = config.name ?? 'local'
     this.stallMs = config.stallMs ?? STALL_MS
+    this.gate = config.gate
     this.client = new OpenAI({
       baseURL: config.baseUrl,
       apiKey: config.apiKey ?? 'local-no-key',
@@ -122,6 +130,23 @@ export class LocalProvider implements ProviderAdapter {
   }
 
   async *complete(request: CompletionRequest): AsyncGenerator<StreamChunk> {
+    if (!this.gate) return yield* this.stream(request)
+    let release: () => void
+    try {
+      release = await this.gate.enter(request.signal)
+    } catch {
+      // Stopped while waiting for the graphics card: a clean stop, and nothing reached the server.
+      yield { type: 'done', usage: { inputTokens: 0, outputTokens: 0 } }
+      return
+    }
+    try {
+      yield* this.stream(request)
+    } finally {
+      release()
+    }
+  }
+
+  private async *stream(request: CompletionRequest): AsyncGenerator<StreamChunk> {
     const messages = toOpenAIMessages(request.messages)
 
     const tools = request.tools?.map((t) => ({
