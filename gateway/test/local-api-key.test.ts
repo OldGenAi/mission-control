@@ -130,7 +130,17 @@ test('isLocalServerUrl accepts what the local provider accepts and nothing else'
 
 test('a web name that starts like a home-network address is not local', () => {
   // These are internet names, not addresses: only a real IPv4 address counts as the home network.
-  for (const bad of ['http://10.evil.example.com/v1', 'http://192.168.example.net/v1', 'http://172.16.attacker.io/v1', 'http://10.0.0.5.example.com/v1']) {
+  for (const bad of ['http://10.evil.example.com/v1', 'http://192.168.example.net/v1', 'http://172.16.attacker.io/v1', 'http://10.0.0.5.example.com/v1', 'http://[::ffff:10.0.0.1]/v1']) {
+    assert.equal(isLocalServerUrl(bad), false, bad)
+  }
+  // Other ways of writing a home-network address are turned into the plain form by the URL parser, and still count.
+  for (const ok of ['http://0x0a.0.0.1/v1', 'http://167772161/v1', 'http://127.1:1234/v1']) {
+    assert.equal(isLocalServerUrl(ok), true, ok)
+  }
+})
+
+test('only web addresses count as a local model server', () => {
+  for (const bad of ['ftp://127.0.0.1/v1', 'ws://10.0.0.1/v1', 'file:///etc/passwd']) {
     assert.equal(isLocalServerUrl(bad), false, bad)
   }
 })
