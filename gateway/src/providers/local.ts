@@ -40,13 +40,15 @@ function assertLoopbackUrl(baseUrl: string): void {
   } catch {
     throw new Error(`[local] Invalid baseUrl — could not parse as URL: "${baseUrl}"`)
   }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`[local] baseUrl must be an http or https address. Got: "${url.protocol}"`)
+  }
 
-  const hostname = url.hostname
+  const hostname = url.hostname   // the URL parser keeps IPv6 brackets and writes every IPv4 form as plain dotted numbers
   const isLoopback =
     hostname === '127.0.0.1' ||
     hostname === 'localhost' ||
-    hostname === '[::1]' ||
-    hostname === '::1'
+    hostname === '[::1]'
 
   // host.docker.internal is the well-known Docker hostname for reaching the
   // host machine from inside a container.
