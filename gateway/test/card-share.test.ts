@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CardShare, type CardShareEvent, type LoadedModel, type ModelServer } from '../src/providers/card-share.js'
+import { CardShare, estimatedBytes, type CardShareEvent, type LoadedModel, type ModelServer } from '../src/providers/card-share.js'
 
 const QWEN: LoadedModel = { model: 'qwen/qwen3.5-9b', instanceId: 'qwen/qwen3.5-9b', config: { context_length: 32768, flash_attention: true } }
 
@@ -249,10 +249,26 @@ test('a model loaded again by hand between videos is unloaded for the next one a
   assert.equal(state.loads.length, 1)
 })
 
-test('how much the local models take is reported from their sizes', async () => {
-  const { server } = fakeServer([{ ...QWEN, sizeBytes: 11e9 }])
-  assert.equal(await setup(server).share.loadedBytes(), 11e9)
+test('how much the local models take: their files, plus room for the runtime and a cache that grows with the context', async () => {
+  const GIB = 1024 ** 3
+  // JB's model: an 11 GB file at a 64k context comes to about 14 GB, as measured on his card.
+  const jbs = { ...QWEN, sizeBytes: 11e9, config: { context_length: 65_536 } }
+  assert.equal(estimatedBytes(jbs), 11e9 + 3 * GIB)
+  assert.equal(estimatedBytes({ ...jbs, config: { context_length: 65_536, offload_kv_cache_to_gpu: false } }), 11e9 + GIB, 'a cache kept in system memory is not counted')
+  const { server } = fakeServer([jbs, { ...QWEN, instanceId: 'second', sizeBytes: 2e9 }])
+  assert.equal(await setup(server).share.loadedBytes(), 11e9 + 3 * GIB + 2e9 + 2 * GIB, 'each loaded model counts')
   assert.equal(await setup(null).share.loadedBytes(), 0)
+})
+
+test('an unload that timed out but happened anyway is still noted, so the model comes back', async () => {
+  const { server, state } = fakeServer([QWEN])
+  server.unload = async (instanceId) => { state.loaded = state.loaded.filter((m) => m.instanceId !== instanceId); return false }
+  const { share } = setup(server)
+  share.setVideoBusy(true)
+  assert.equal(await share.makeRoom(never, noStage), 'unloaded')
+  share.setVideoBusy(false)
+  share.restoreNow()
+  assert.ok(await waitFor(() => state.loads.length === 1))
 })
 
 test('a chat stopped while the model is being loaded back stops at once', async () => {

@@ -450,7 +450,7 @@ test('picture to video: the picture is checked, copied into ComfyUI under our na
 
 // A stand-in for the card sharing (src/providers/card-share.ts): records what the queue tells it, and answers makeRoom as told.
 // localGb: what LM Studio's loaded models take, until makeRoom unloads them.
-function fakeCardShare(answer: 'unloaded' | 'nothing' | { error: string }, onRoom?: () => void, localGb = 0) {
+function fakeCardShare(answer: 'unloaded' | 'nothing' | { error: string }, onRoom?: () => void, localGb = 0, opts: { vanish?: boolean } = {}) {
   const busy: boolean[] = []
   let rooms = 0
   let local = localGb
@@ -462,7 +462,7 @@ function fakeCardShare(answer: 'unloaded' | 'nothing' | { error: string }, onRoo
       rooms++
       onStage('Waiting for a chat to finish')
       onRoom?.()
-      if (answer === 'unloaded') local = 0
+      if (answer === 'unloaded' || opts.vanish) local = 0
       return answer
     },
   }
@@ -522,7 +522,7 @@ test('a card too full because LM Studio holds a model: the model is unloaded and
   } finally { await comfy.close() }
 })
 
-test('a card with room for both: the local model is left alone', async () => {
+test('no local model loaded and a free card: nothing is unloaded', async () => {
   const comfy = await fakeComfy({ vramFreeGb: 15 })
   const card = fakeCardShare('unloaded')
   const { jobs, finished } = setup(comfy.url, undefined, card.share)
@@ -552,8 +552,29 @@ test('a local model that could not be unloaded: refused, with a plain reason', a
   try {
     const end = await finished(jobs.submit('ltx25-t2v', { prompt: 'x' }))
     assert.equal(end.status, 'failed')
-    assert.match(end.error!, /Not enough free graphics memory: 3\.5 GB free.*Something else is using the graphics card/)
+    assert.match(end.error!, /Not enough free graphics memory: 5\.0 GB free.*Something else is using the graphics card/)
     assert.equal(card.rooms(), 1)
+  } finally { await comfy.close() }
+})
+
+test('the local model went by itself just before the video (ejected, or LM Studio\'s idle timer): the video runs', async () => {
+  const comfy = await fakeComfy({ vramFreeGb: 14.4 })
+  const card = fakeCardShare('nothing', undefined, 11, { vanish: true })
+  const { jobs, finished } = setup(comfy.url, undefined, card.share)
+  try {
+    const end = await finished(jobs.submit('ltx25-t2v', { prompt: 'x' }))
+    assert.equal(end.status, 'done', end.error)
+    assert.equal(card.rooms(), 1)
+  } finally { await comfy.close() }
+})
+
+test('a card too small for the recipe anyway: the local model is not unloaded for nothing', async () => {
+  const comfy = await fakeComfy({ vramFreeGb: 3, vramTotalGb: 12 })
+  const card = fakeCardShare('unloaded', undefined, 8)
+  const { jobs, finished } = setup(comfy.url, undefined, card.share)
+  try {
+    assert.equal((await finished(jobs.submit('ltx25-t2v', { prompt: 'x' }))).status, 'failed')
+    assert.equal(card.rooms(), 0)
   } finally { await comfy.close() }
 })
 

@@ -80,6 +80,15 @@ export function toLoadedModel(value: unknown): LoadedModel | null {
   return { model: value['model'], instanceId: value['instanceId'], config: pickLoadConfig(value['config']) }
 }
 
+// A loaded model takes its file plus the runtime and its context cache, which grows with the context length:
+// 1 GiB, plus 1 GiB per 32k tokens of context when the cache is on the card. Generous on purpose.
+const GIB = 1024 ** 3
+export function estimatedBytes(m: LoadedModel): number {
+  const cacheOnCard = m.config.offload_kv_cache_to_gpu !== false
+  const contextGib = cacheOnCard ? (m.config.context_length ?? 32_768) / 32_768 : 0
+  return (m.sizeBytes ?? 0) + GIB + contextGib * GIB
+}
+
 // Waits for a promise, or rejects as soon as the call is stopped.
 function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return promise
@@ -155,12 +164,12 @@ export class CardShare {
   }
 
   /**
-   * How much graphics memory the local server's loaded models take, at least (their files' size; 0 when it
-   * can't say). ComfyUI counts only its own memory, so this is how a video learns the card is shared.
+   * About how much graphics memory the local server's loaded models take (0 when it can't say). ComfyUI counts
+   * only its own memory, so this is how a video learns the card is shared.
    */
   async loadedBytes(): Promise<number> {
     const loaded = await this.opts.server()?.listLoaded()
-    return (loaded ?? []).reduce((sum, m) => sum + (m.sizeBytes ?? 0), 0)
+    return (loaded ?? []).reduce((sum, m) => sum + estimatedBytes(m), 0)
   }
 
   /** Resolves once no model is being loaded back, so a video never starts while one is still coming in. */
@@ -205,7 +214,9 @@ export class CardShare {
       for (const { sizeBytes: _size, ...m } of loaded) {
         // Noted earlier but loaded again by hand since: it is back, so it is noted afresh rather than skipped.
         this.taken = this.taken.filter((t) => t.instanceId !== m.instanceId)
-        if (await server.unload(m.instanceId)) {
+        // An unload that timed out or answered oddly may still have happened: if the model is gone, note it.
+        const gone = await server.unload(m.instanceId) || !((await server.listLoaded()) ?? [m]).some((l) => l.instanceId === m.instanceId)
+        if (gone) {
           this.taken.push(m)
           unloaded = true
         }
