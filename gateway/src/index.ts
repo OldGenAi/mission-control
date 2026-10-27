@@ -33,7 +33,7 @@ import { startWatchdog } from './pipeline/watchdog.js'
 import { startDailyNoteSweep } from './memory/sweep.js'
 import { ProviderRegistry } from './providers/registry.js'
 import { resolveBootProvider } from './providers/unconfigured.js'
-import { pricesWanted, startPricingRefresh } from './providers/pricing.js'
+import { pricesWanted, refreshLocalContext, startPricingRefresh } from './providers/pricing.js'
 import { registerInstancesMethods } from './methods/instances.js'
 import { registerVideoMethods } from './methods/video.js'
 import { VideoJobs } from './video/jobs.js'
@@ -117,6 +117,7 @@ const settings        = settingsStore.get()
 const cardShare: CardShare = new CardShare({
   server: () => { const s = settingsStore.get(); return lmStudioServer(s.localProviderUrl, s.providerKeys.local || undefined) },
   freeVideoMemory: (): Promise<void> => videoJobs.freeMemory(),
+  onLoadedBack: () => { const s = settingsStore.get(); return refreshLocalContext(s.localProviderUrl, s.providerKeys.local || undefined) },
   notePath: path.join(DATA_DIR, 'card-share.json'),
   emit: (event) => broadcastEvent('card.event', { ...event }),
 })

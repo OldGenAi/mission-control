@@ -592,7 +592,13 @@ export function ChatPage() {
   useEffect(() => {
     gateway.request<CardState>("card.restore", {}).then(setCardState).catch(() => { /* an older gateway has no card sharing */ })
     return gateway.onEvent(ev => {
-      if (ev.event === "card.event") setCardState(ev.payload as CardState)
+      if (ev.event !== "card.event") return
+      const next = ev.payload as CardState
+      setCardState(next)
+      // The model is back: list it again, so its real context window shows instead of the 32k default.
+      if (next.state === "free") {
+        gateway.request<ModelsResponse>("models.list", {}).then(r => { if (r.models?.length) setModels(r.models) }).catch(() => {})
+      }
     })
   }, [])
   const cardNotice = cardMessage(cardState)
