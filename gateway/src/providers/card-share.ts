@@ -42,6 +42,7 @@ export type CardShareEvent = { state: 'free' } | { state: 'held' | 'restoring' |
 export interface CardShareOptions {
   server: () => ModelServer | null
   freeVideoMemory: () => Promise<void>   // asks ComfyUI for its memory back before a model is loaded again
+  onLoadedBack?: () => Promise<void>     // after models are loaded back (learns their context window again)
   notePath: string
   emit: (event: CardShareEvent) => void
   pollMs?: number
@@ -264,6 +265,7 @@ export class CardShare {
     this.taken = this.taken.filter((m) => !models.includes(m))
     this.failed = failed
     this.saveNote()
+    try { await this.opts.onLoadedBack?.() } catch { /* the regular refresh catches up */ }
     if (failed.length > 0) console.warn(`[card-share] could not load back after the video: ${failed.join(', ')}`)
   }
 

@@ -289,6 +289,24 @@ test('the "could not be loaded" notice goes once the model is loaded by hand', a
   assert.ok(await waitFor(() => share.state().state === 'free'))
 })
 
+test('once a model is back, its context window is learned again before the page is told', async () => {
+  const { server } = fakeServer([QWEN])
+  const order: string[] = []
+  const share = new CardShare({
+    server: () => server,
+    freeVideoMemory: async () => {},
+    onLoadedBack: async () => { order.push('learned') },
+    notePath: join(mkdtempSync(join(tmpdir(), 'mc-card-')), 'card-share.json'),
+    emit: (e) => { if (e.state === 'free') order.push('free') },
+    pollMs: 10,
+  })
+  share.setVideoBusy(true)
+  await share.makeRoom(never, noStage)
+  share.setVideoBusy(false)
+  ;(await share.enter())()
+  assert.deepEqual(order, ['learned', 'free'])
+})
+
 test('a damaged note is ignored rather than loading something unexpected', async () => {
   const { server, state } = fakeServer([])
   const notePath = join(mkdtempSync(join(tmpdir(), 'mc-card-')), 'card-share.json')
