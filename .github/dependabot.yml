@@ -1,0 +1,29 @@
+# Monthly pull requests for dependency updates, one per folder, so each goes through the normal review and audit before
+# it is merged. Security fixes still arrive as soon as GitHub knows of them.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /gateway
+    schedule:
+      interval: monthly
+    groups:
+      gateway:
+        patterns: ["*"]
+    open-pull-requests-limit: 2
+
+  - package-ecosystem: npm
+    directory: /app
+    schedule:
+      interval: monthly
+    groups:
+      app:
+        patterns: ["*"]
+    open-pull-requests-limit: 2
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
