@@ -7,9 +7,24 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openDatabase } from '../src/store/db.js'
 import { VideoCast, MAX_CAST, MAX_THUMB_BYTES } from '../src/video/cast.js'
-import { VideoRequestError } from '../src/video/jobs.js'
+import { VideoJobs, VideoRequestError } from '../src/video/jobs.js'
+import { registerVideoMethods } from '../src/methods/video.js'
+import { dispatch } from '../src/router.js'
+import type { ConnectedClient } from '../src/types.js'
 
 const PICTURE = 'a'.repeat(32)
+
+function png(width: number, height: number): Buffer {
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(width, 0)
+  ihdr.writeUInt32BE(height, 4)
+  const chunk = (type: string, data: Buffer) => {
+    const len = Buffer.alloc(4)
+    len.writeUInt32BE(data.length, 0)
+    return Buffer.concat([len, Buffer.from(type, 'latin1'), data, Buffer.alloc(4)])
+  }
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IEND', Buffer.alloc(0))])
+}
 
 // The smallest JPEG the picture check accepts: a start-of-frame marker giving the size.
 function jpeg(width = 96, height = 64, padTo = 0): Buffer {
@@ -93,6 +108,58 @@ test('deleting a character takes it off the list and frees its name', () => {
   assert.throws(() => cast.save({ id: rex.id, name: 'Rex', wording: 'x' }), /no longer in the cast/)
   cast.save({ name: 'Rex', wording: 'again' })
   assert.equal(cast.list().length, 1)
+})
+
+test('a thumbnail of a wide or tall picture is fine (only the page makes them, at most 256 pixels long)', () => {
+  const { cast } = setup()
+  cast.save({ name: 'Wide', wording: 'x', thumb: thumbOf(jpeg(256, 40)) })
+  cast.save({ name: 'Tall', wording: 'x', thumb: thumbOf(jpeg(30, 256)) })
+  cast.save({ name: 'Full', wording: 'x', thumb: thumbOf(jpeg(96, 64, MAX_THUMB_BYTES)) })
+  assert.throws(() => cast.save({ name: 'Huge', wording: 'x', thumb: thumbOf(jpeg(2000, 100)) }), /thumbnail is too large/)
+  assert.equal(cast.list().length, 3)
+})
+
+test('a name is one plain line: no line breaks, tabs or invisible characters that would dodge the same-name rule', () => {
+  const { cast } = setup()
+  cast.save({ name: 'Rex', wording: 'x' })
+  for (const name of ['Rex​', 'Re\nx', 'Re\tx', '⁦Rex']) {
+    assert.throws(() => cast.save({ name, wording: 'x' }), /one line of plain text/, JSON.stringify(name))
+  }
+  cast.save({ name: 'Rex the 2nd', wording: 'x\nwith a second line' })   // wording may have line breaks, as prompts may
+})
+
+test('a deleted character keeps no thumbnail, so saving and deleting again and again does not fill the database', () => {
+  const { db, cast } = setup()
+  const rex = cast.save({ name: 'Rex', wording: 'x', thumb: thumbOf(jpeg()) })
+  cast.delete(rex.id)
+  assert.equal((db.prepare('SELECT thumb FROM video_cast WHERE id = ?').get(rex.id) as { thumb: string | null }).thumb, null)
+})
+
+test('the page reaches the cast through video.cast.*: refusals come back as plain errors, junk ids are ignored', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mc-cast-methods-'))
+  const db = openDatabase(join(dir, 'test.sqlite'))
+  const jobs = new VideoJobs(db, join(dir, 'media'), () => ({ comfyUrl: 'http://127.0.0.1:1', freeAfterJob: false }), () => {})
+  registerVideoMethods(jobs, new VideoCast(db, (id) => jobs.hasImage(id)), () => 'http://127.0.0.1:1')
+  const client = {} as ConnectedClient
+
+  await assert.rejects(dispatch('video.cast.save', { member: { name: '', wording: 'x' } }, client), { code: 'INVALID_PARAMS', message: 'The character needs a name.' })
+  await assert.rejects(dispatch('video.cast.save', { member: { name: 'Rex', wording: 'x', imageId: 'c'.repeat(32) } }, client), { code: 'INVALID_PARAMS' })
+  const picture = jobs.uploadImage(png(640, 480).toString('base64'))
+  const { member } = await dispatch('video.cast.save', { member: { name: 'Rex', wording: 'collie', imageId: picture.id } }, client) as { member: { id: string } }
+  assert.deepEqual((await dispatch('video.cast.list', {}, client))['cast'], [{ ...member }])
+  assert.deepEqual(await dispatch('video.cast.delete', { id: '../../x' }, client), { deleted: false })
+  assert.deepEqual(await dispatch('video.cast.delete', { id: 42 }, client), { deleted: false })
+  assert.deepEqual(await dispatch('video.cast.delete', { id: member.id }, client), { deleted: true })
+})
+
+test('hasImage knows only pictures that were uploaded and checked', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mc-cast-images-'))
+  const jobs = new VideoJobs(openDatabase(join(dir, 'test.sqlite')), join(dir, 'media'), () => ({ comfyUrl: '', freeAfterJob: false }), () => {})
+  const picture = jobs.uploadImage(png(640, 480).toString('base64'))
+  assert.equal(jobs.hasImage(picture.id), true)
+  assert.equal(jobs.hasImage('d'.repeat(32)), false)
+  assert.equal(jobs.hasImage('../inputs/x'), false)
+  assert.equal(jobs.hasImage(7), false)
 })
 
 test(`the cast holds at most ${MAX_CAST} characters`, () => {

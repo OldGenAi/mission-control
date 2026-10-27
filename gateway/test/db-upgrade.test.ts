@@ -142,6 +142,6 @@ test('a folder name with a quote in it is copied safely', () => {
 
 test('the real migrations still open a fresh database', () => {
   const db = openDatabase(join(freshDir(), 'gateway.sqlite'))
-  assert.ok((db.prepare('SELECT MAX(version) AS v FROM schema_version').get() as { v: number }).v >= 16)
+  assert.ok((db.prepare('SELECT MAX(version) AS v FROM schema_version').get() as { v: number }).v >= 17)
   db.close()
 })

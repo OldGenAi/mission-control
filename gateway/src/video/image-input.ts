@@ -65,13 +65,17 @@ function webpInfo(buf: Buffer): ImageInfo | string {
   return 'the WebP file is damaged'
 }
 
-/** What the picture is, judged by its contents, or why it can't be used. */
+/** What the picture is and its size, judged by its contents, or why it isn't a picture we read. */
+export function readImageInfo(buf: Buffer): ImageInfo | string {
+  if (buf.length >= 8 && buf.readUInt32BE(0) === 0x89504e47 && buf.readUInt32BE(4) === 0x0d0a1a0a) return pngInfo(buf)
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return jpegInfo(buf)
+  if (buf.length >= 12 && buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP') return webpInfo(buf)
+  return 'the file is not a PNG, JPEG or WebP picture'
+}
+
+/** What the picture is, or why it can't be used as a video's picture (too small for the model, too large to handle). */
 export function inspectImage(buf: Buffer): ImageInfo | string {
-  let info: ImageInfo | string
-  if (buf.length >= 8 && buf.readUInt32BE(0) === 0x89504e47 && buf.readUInt32BE(4) === 0x0d0a1a0a) info = pngInfo(buf)
-  else if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) info = jpegInfo(buf)
-  else if (buf.length >= 12 && buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP') info = webpInfo(buf)
-  else return 'the file is not a PNG, JPEG or WebP picture'
+  const info = readImageInfo(buf)
   if (typeof info === 'string') return info
   if (info.width < MIN_SIDE || info.height < MIN_SIDE) return `the picture is too small (at least ${MIN_SIDE} pixels on each side)`
   if (info.width > MAX_SIDE || info.height > MAX_SIDE) return `the picture is too large (at most ${MAX_SIDE} pixels on each side)`

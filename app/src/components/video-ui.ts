@@ -12,9 +12,9 @@ export const button = (primary = false): React.CSSProperties => ({
 export const linkButton = (color: string): React.CSSProperties => ({ background: 'none', border: 'none', color, cursor: 'pointer' })
 
 // The gateway takes pictures up to 11 MB (PNG, JPEG or WebP) and checks them itself.
-export const MAX_PICTURE_BYTES = 11 * 1024 * 1024
+const MAX_PICTURE_BYTES = 11 * 1024 * 1024
 
-export function readAsDataUrl(file: File): Promise<string> {
+function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(String(reader.result))
@@ -24,7 +24,7 @@ export function readAsDataUrl(file: File): Promise<string> {
 }
 
 /** A small JPEG copy of the picture, small enough for the browser's storage and the cast list. */
-export function thumbnail(dataUrl: string): Promise<string> {
+function thumbnail(dataUrl: string): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image()
     img.onload = () => {
@@ -47,6 +47,16 @@ export async function uploadPicture(dataUrl: string): Promise<UploadedPicture> {
   const data = dataUrl.slice(dataUrl.indexOf(',') + 1)
   const uploaded = await gateway.request<{ id: string; width: number; height: number }>('video.uploadImage', { data })
   return { ...uploaded, dataUrl, thumb: await thumbnail(dataUrl) }
+}
+
+/** The width and height of a picture given as a data: URL, or 0 by 0 if it can't be read. */
+export function pictureSize(dataUrl: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight })
+    img.onerror = () => resolve({ width: 0, height: 0 })
+    img.src = dataUrl
+  })
 }
 
 /** Reads a chosen file and uploads it, or says plainly why it couldn't. */

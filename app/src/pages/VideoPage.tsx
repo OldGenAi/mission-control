@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { gateway } from '../lib/gateway-client'
 import { lastFrame } from '../lib/last-frame'
 import { VideoCast, type CastMember } from '../components/VideoCast'
-import { button, card, input, linkButton, uploadPicture, uploadPictureFile, type UploadedPicture } from '../components/video-ui'
+import { button, card, input, linkButton, pictureSize, uploadPicture, uploadPictureFile, type UploadedPicture } from '../components/video-ui'
 
 type ParamSpec =
   | { kind: 'text'; maxLength: number; required?: boolean; default?: string }
@@ -81,11 +81,12 @@ const asSaved = (picture: UploadedPicture): SavedPicture => ({ id: picture.id, t
 // one look while its prompts change. Unticked, the number goes back to 0 (a new one each time).
 const SEED_LOCK_KEY = 'mc:video-seed-lock'
 const MAX_PICKED_SEED = 2 ** 40   // the same range the gateway picks from for 0
+const MAX_SEED = 2 ** 48   // the most the recipes take
 
 function loadSeedLock(): number | null {
   try {
     const seed = Number(localStorage.getItem(SEED_LOCK_KEY))
-    return Number.isInteger(seed) && seed > 0 && seed <= 2 ** 48 ? seed : null
+    return Number.isInteger(seed) && seed > 0 && seed <= MAX_SEED ? seed : null
   } catch {
     return null
   }
@@ -134,6 +135,7 @@ export const VideoPage: React.FC = () => {
   const [disk, setDisk] = useState<{ used: number; limit: number } | null>(null)   // the media folder, for the storage bar
   const [shown, setShown] = useState(VIDEOS_PER_PAGE)   // how many finished videos are on the page
   const [seedLock, setSeedLock] = useState<number | null>(loadSeedLock)   // the kept variation number, or null
+  const seedLockRef = useRef(seedLock)
   const [continuing, setContinuing] = useState<string | null>(null)   // the video whose last frame is being read
   const formRef = useRef<HTMLDivElement>(null)
   const refreshTimer = useRef<number | null>(null)
@@ -227,30 +229,44 @@ export const VideoPage: React.FC = () => {
   const pickRecipe = (id: string) => {
     const next = recipes.find((r) => r.id === id)
     setRecipeId(id)
-    if (next) setValues(startValues(next, loadSavedPicture(), seedLock))
+    if (next) setValues(startValues(next, loadSavedPicture(), seedLockRef.current))
   }
 
+  // The lock is also kept in a ref: Continue reads it after reading a video, which can take a while.
+  const keepSeedLock = (seed: number | null) => {
+    saveSeedLock(seed)
+    seedLockRef.current = seed
+    setSeedLock(seed)
+  }
   // Ticking picks a number now (if the field says 0) and keeps it; unticking goes back to a new one each time.
   const lockSeed = (locked: boolean) => {
     const seed = locked ? (Number(values['seed']) || Math.floor(Math.random() * MAX_PICKED_SEED) + 1) : null
-    saveSeedLock(seed)
-    setSeedLock(seed)
+    keepSeedLock(seed)
     setValues((prev) => ({ ...prev, seed: seed ?? 0 }))
   }
-  const changeSeed = (seed: number) => {
+  // Clearing the number (or typing 0) while it is kept would quietly send 0, a new one each time: that unticks the box instead.
+  const changeSeed = (typed: number) => {
+    if (seedLockRef.current !== null && typed <= 0) {
+      lockSeed(false)
+      return
+    }
+    const seed = Math.min(Math.max(typed, 0), MAX_SEED)
     setValues((prev) => ({ ...prev, seed }))
-    if (seedLock !== null && seed > 0) { saveSeedLock(seed); setSeedLock(seed) }
+    if (seedLockRef.current !== null) keepSeedLock(seed)
   }
 
   // Moves the form to a recipe that starts from a picture, with this picture, keeping what is already written
   // (the variation number follows the lock, and a picture of known size picks the shape).
   const startFromPicture = (picture: SavedPicture, keep: Record<string, unknown>) => {
     const target = recipes.find((r) => Object.values(r.params).some((spec) => spec.kind === 'image'))
-    if (!target) return setError('None of the recipes can start from a picture.')
+    if (!target) {
+      setError('None of the recipes can start from a picture.')
+      return
+    }
     savePicture(picture)
     const thumb = picture.thumb
     if (thumb) setPictures((prev) => ({ ...prev, [picture.id]: thumb }))
-    const next = startValues(target, picture, seedLock)
+    const next = startValues(target, picture, seedLockRef.current)
     for (const [name, value] of Object.entries(keep)) {
       const spec = target.params[name]
       if (!spec || spec.kind === 'image' || name === 'seed' || (name === 'aspect' && picture.width > 0)) continue
@@ -262,12 +278,13 @@ export const VideoPage: React.FC = () => {
   }
 
   // The next clip starts where this one ends: its last frame becomes the picture, and its description stays to be changed.
+  // A fresh link is asked for: the list's links last an hour, and the page may have been open longer.
   const continueFrom = async (v: Video) => {
-    if (!v.link) return
     setError('')
     setContinuing(v.id)
     try {
-      startFromPicture(asSaved(await uploadPicture(await lastFrame(v.link))), v.params)
+      const { link } = await gateway.request<{ link: string }>('video.link', { id: v.id })
+      startFromPicture(asSaved(await uploadPicture(await lastFrame(link))), v.params)
     } catch (err) {
       setError(`Could not continue from that clip: ${err instanceof Error ? err.message : 'no answer from Mission Control'}`)
       formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -278,16 +295,25 @@ export const VideoPage: React.FC = () => {
 
   const addToPrompt = (member: CastMember) => {
     const words = `${member.name}: ${member.wording.replace(/[.\s]+$/, '')}.`
-    setValues((prev) => {
-      const prompt = String(prev['prompt'] ?? '')
-      if (prompt.includes(words)) return prev
-      return { ...prev, prompt: prompt.trim() === '' ? words : `${prompt.trimEnd()} ${words}` }
-    })
+    const prompt = String(values['prompt'] ?? '')
+    const spec = recipe?.params['prompt']
+    const longest = spec?.kind === 'text' ? spec.maxLength : Infinity
     formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    if (prompt.includes(words)) return
+    const next = prompt.trim() === '' ? words : `${prompt.trimEnd()} ${words}`
+    if ([...next].length > longest) {
+      setError(`Adding ${member.name} would make the description longer than ${longest} characters. Shorten it first.`)
+      return
+    }
+    setError('')
+    setValues((prev) => ({ ...prev, prompt: next }))
   }
 
-  const startFromCast = (member: CastMember) => {
-    if (member.imageId) startFromPicture({ id: member.imageId, thumb: member.thumb ?? '', width: 0, height: 0 }, values)
+  // The thumbnail has the picture's shape, so it picks the video's shape as a chosen picture would.
+  const startFromCast = async (member: CastMember) => {
+    if (!member.imageId) return
+    const size = member.thumb ? await pictureSize(member.thumb) : { width: 0, height: 0 }
+    startFromPicture({ id: member.imageId, thumb: member.thumb ?? '', ...size }, values)
   }
 
   const choosePicture = async (name: string, file: File | undefined) => {
@@ -422,7 +448,7 @@ export const VideoPage: React.FC = () => {
         </div>
       </div>
 
-      <VideoCast onAddToPrompt={addToPrompt} onStartFrom={startFromCast} />
+      <VideoCast onAddToPrompt={addToPrompt} onStartFrom={(member) => void startFromCast(member)} />
 
       {/* New video */}
       {recipe && (
@@ -562,7 +588,7 @@ export const VideoPage: React.FC = () => {
                     {continuing === v.id ? 'Reading the last frame...' : 'Continue'}
                   </button>
                 )}
-                <button onClick={() => makeAgain(v)} style={linkButton('#67e8f9')}>Use again</button>
+                <button onClick={() => makeAgain(v)} disabled={continuing !== null} style={{ ...linkButton('#67e8f9'), opacity: continuing !== null ? 0.5 : 1 }}>Use again</button>
                 <button onClick={() => void deleteVideo(v.id)} style={linkButton('#6B7280')}>Delete</button>
               </span>
             </div>
