@@ -20,7 +20,7 @@
     "express": "^4.19.2",
     "js-yaml": "^4.1.0",
     "jsonrepair": "^3.14.0",
-    "openai": "^4.52.0",
+    "openai": "~7.32.0",
     "ws": "^8.21.0"
   },
   "devDependencies": {
