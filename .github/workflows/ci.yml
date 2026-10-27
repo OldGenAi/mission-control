@@ -82,6 +82,24 @@ jobs:
           $problems | Format-Table -AutoSize
           if ($problems) { throw "install.ps1 has $(@($problems).Count) error(s)" }
 
+  # An update must never touch the person's chats, settings or videos: install twice over pretend data and compare.
+  installers-keep-data:
+    name: Installer keeps data (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - if: runner.os == 'Linux'
+        run: shellcheck --shell=sh test/installers/keep-data.sh
+      - if: runner.os != 'Windows'
+        run: sh test/installers/keep-data.sh
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./test/installers/keep-data.ps1
+
   # Every run, not just nightly: a pull request must not merge with a known high-severity
   # advisory in a shipped dependency (dev-only tools are left out with --omit=dev).
   audit:
