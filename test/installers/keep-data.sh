@@ -41,7 +41,8 @@ make_package() {
 }
 
 # Everything of the person's outside the program folder: each file's checksum and permissions, each link's target,
-# each folder (empty ones too).
+# each folder (empty ones too). ls is read for its permission column only (portable across GNU and BSD, unlike stat).
+# shellcheck disable=SC2012
 snapshot() {
   (cd "$HOME/.missioncontrol" && find . -path ./app -prune -o -print | LC_ALL=C sort | while IFS= read -r f; do
     if [ -L "$f" ]; then printf 'link %s -> %s\n' "$f" "$(readlink "$f")"
