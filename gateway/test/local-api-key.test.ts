@@ -128,6 +128,13 @@ test('isLocalServerUrl accepts what the local provider accepts and nothing else'
   }
 })
 
+test('a web name that starts like a home-network address is not local', () => {
+  // These are internet names, not addresses: only a real IPv4 address counts as the home network.
+  for (const bad of ['http://10.evil.example.com/v1', 'http://192.168.example.net/v1', 'http://172.16.attacker.io/v1', 'http://10.0.0.5.example.com/v1']) {
+    assert.equal(isLocalServerUrl(bad), false, bad)
+  }
+})
+
 test('the key is never sent to an address the local provider would refuse', async () => {
   const sent: Array<{ url: string; auth: string | undefined }> = []
   const realFetch = globalThis.fetch
