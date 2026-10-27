@@ -134,9 +134,10 @@ export class LocalProvider implements ProviderAdapter {
     let release: () => void
     try {
       release = await this.gate.enter(request.signal)
-    } catch {
+    } catch (err) {
       // Stopped while waiting for the graphics card: a clean stop, and nothing reached the server.
-      yield { type: 'done', usage: { inputTokens: 0, outputTokens: 0 } }
+      if (request.signal?.aborted) yield { type: 'done', usage: { inputTokens: 0, outputTokens: 0 } }
+      else yield { type: 'done', usage: { inputTokens: 0, outputTokens: 0 }, error: `the local model could not be reached: ${err instanceof Error ? err.message : String(err)}` }
       return
     }
     try {

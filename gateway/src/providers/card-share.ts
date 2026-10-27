@@ -9,7 +9,7 @@
 //
 // Security-sensitive. Do not modify without Claude review.
 
-import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
 
 /** The load settings LM Studio reports for a loaded model and accepts back when loading one, by type. */
 export const LOAD_SETTINGS = {
@@ -26,6 +26,7 @@ export interface LoadedModel {
   model: string        // the model's key, used to load it again
   instanceId: string   // the loaded copy, used to unload it
   config: LoadConfig
+  sizeBytes?: number   // the model file's size, as the server lists it (not kept in the note)
 }
 
 /** The model server's controls (lmstudio-control.ts). listLoaded answers null when it can't tell: not LM Studio, or refused. */
@@ -78,6 +79,17 @@ export function toLoadedModel(value: unknown): LoadedModel | null {
   return { model: value['model'], instanceId: value['instanceId'], config: pickLoadConfig(value['config']) }
 }
 
+// Waits for a promise, or rejects as soon as the call is stopped.
+function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new Error('stopped'))
+    if (signal.aborted) return onAbort()
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
+  })
+}
+
 // The note of models taken away; a missing or damaged note means none.
 function readNote(path: string): LoadedModel[] {
   try {
@@ -127,7 +139,7 @@ export class CardShare {
         continue
       }
       if (this.restoring || this.taken.length > 0) {
-        await this.restore()
+        await abortable(this.restore(), signal)
         continue
       }
       this.inFlight++
@@ -139,6 +151,20 @@ export class CardShare {
         this.wake()
       }
     }
+  }
+
+  /**
+   * How much graphics memory the local server's loaded models take, at least (their files' size; 0 when it
+   * can't say). ComfyUI counts only its own memory, so this is how a video learns the card is shared.
+   */
+  async loadedBytes(): Promise<number> {
+    const loaded = await this.opts.server()?.listLoaded()
+    return (loaded ?? []).reduce((sum, m) => sum + (m.sizeBytes ?? 0), 0)
+  }
+
+  /** Resolves once no model is being loaded back, so a video never starts while one is still coming in. */
+  async settled(): Promise<void> {
+    while (this.restoring) await this.restoring
   }
 
   /** The video queue says whether a video is running or waiting. */
@@ -175,13 +201,14 @@ export class CardShare {
       // Asked again: what is loaded may have changed while those calls finished.
       const loaded = (await server.listLoaded()) ?? []
       let unloaded = false
-      for (const m of loaded) {
-        if (this.taken.some((t) => t.instanceId === m.instanceId)) continue
+      for (const { sizeBytes: _size, ...m } of loaded) {
+        // Noted earlier but loaded again by hand since: it is back, so it is noted afresh rather than skipped.
+        this.taken = this.taken.filter((t) => t.instanceId !== m.instanceId)
         if (await server.unload(m.instanceId)) {
           this.taken.push(m)
-          this.saveNote()
           unloaded = true
         }
+        this.saveNote()
       }
       if (unloaded) {
         this.failed = []
@@ -197,6 +224,17 @@ export class CardShare {
   /** The Chat page was opened: put back what videos took, unless a video still needs the card. */
   restoreNow(): void {
     if ((this.taken.length > 0 || this.restoring) && !this.videoBusy && !this.draining) void this.restore()
+    else if (this.failed.length > 0 && !this.restoring) void this.recheckFailed()
+  }
+
+  // A model that could not be loaded back may have been loaded by hand since: then the notice goes.
+  private async recheckFailed(): Promise<void> {
+    const loaded = await this.opts.server()?.listLoaded()
+    if (!loaded) return
+    const still = this.failed.filter((name) => !loaded.some((m) => m.model === name))
+    if (still.length === this.failed.length) return
+    this.failed = still
+    this.opts.emit(this.state())
   }
 
   private restore(): Promise<void> {
@@ -213,8 +251,11 @@ export class CardShare {
     this.opts.emit({ state: 'restoring', models: models.map((m) => m.model) })
     try { await this.opts.freeVideoMemory() } catch { /* ComfyUI not running: its memory is free anyway */ }
     const server = this.opts.server()
+    // One loaded again by hand meanwhile is not loaded a second time.
+    const already = (await server?.listLoaded().catch(() => null)) ?? []
     const failed: string[] = []
     for (const m of models) {
+      if (already.some((a) => a.model === m.model)) continue
       let loaded = false
       try { loaded = server !== null && await server.load(m) } catch { loaded = false }
       if (!loaded) failed.push(m.model)
@@ -229,6 +270,7 @@ export class CardShare {
   private saveNote(): void {
     try {
       const tmp = `${this.opts.notePath}.tmp`
+      rmSync(tmp, { force: true })   // a leftover would keep its own permissions
       writeFileSync(tmp, JSON.stringify({ models: this.taken }), { mode: 0o600 })
       renameSync(tmp, this.opts.notePath)
     } catch (err) {

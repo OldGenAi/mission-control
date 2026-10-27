@@ -221,7 +221,8 @@ type CardState = { state: "free" } | { state: "held" | "restoring" | "restore-fa
 function cardMessage(card: CardState): string | null {
   if (card.state === "free") return null
   const names = card.models.join(", ")
-  if (card.state === "held") return `The graphics card is making videos, so ${names} is unloaded for now. Messages wait until the videos are done, then it loads again.`
+  const isAre = card.models.length === 1 ? "is" : "are"
+  if (card.state === "held") return `The graphics card is making videos, so ${names} ${isAre} unloaded for now. Messages wait until the videos are done, then ${card.models.length === 1 ? "it loads" : "they load"} again.`
   if (card.state === "restoring") return `Loading ${names} again after the videos…`
   return `${names} could not be loaded again after the videos. Load it in LM Studio, then try again.`
 }

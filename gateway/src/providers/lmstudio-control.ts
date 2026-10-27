@@ -44,7 +44,8 @@ export function lmStudioServer(baseUrl: string, apiKey?: string): ModelServer | 
         for (const instance of m['loaded_instances']) {
           if (!isRecord(instance)) continue
           const entry = toLoadedModel({ model: m['key'], instanceId: instance['id'], config: instance['config'] })
-          if (entry) loaded.push(entry)
+          const size = m['size_bytes']
+          if (entry) loaded.push(typeof size === 'number' && Number.isFinite(size) && size > 0 ? { ...entry, sizeBytes: size } : entry)
         }
       }
       return loaded

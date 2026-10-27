@@ -60,6 +60,16 @@ test('a local call waits at the gate, then runs, and lets go of the gate when it
   })
 })
 
+test('a gate that fails for any other reason gives an error, not an empty reply', async () => {
+  await withServer(async (baseUrl, requests) => {
+    const provider = new LocalProvider({ baseUrl, gate: { enter: async () => { throw new Error('broken') } } })
+    const chunks: StreamChunk[] = []
+    for await (const c of provider.complete({ model: 'm', messages: [{ role: 'user', content: 'hi' }], correlationId: 't' })) chunks.push(c)
+    assert.equal(requests(), 0)
+    assert.match((chunks.at(-1) as { error?: string }).error ?? '', /broken/)
+  })
+})
+
 test('a local call stopped while it waits ends quietly and never reaches the server', async () => {
   await withServer(async (baseUrl, requests) => {
     const held = heldGate()

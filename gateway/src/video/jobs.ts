@@ -57,8 +57,13 @@ export interface VideoSettings { comfyUrl: string; freeAfterJob: boolean }
 /** The card sharing (providers/card-share.ts), as the queue sees it: told when videos are waiting, asked to make room. */
 export interface VideoCardShare {
   setVideoBusy(busy: boolean): void
+  loadedBytes(): Promise<number>
+  settled(): Promise<void>
   makeRoom(stopped: () => boolean, onStage: (stage: string) => void): Promise<'unloaded' | 'nothing' | { error: string }>
 }
+
+// A loaded local model takes more than its file (the context cache, the runtime): this much is allowed on top.
+const LOCAL_OVERHEAD_GB = 1.5
 
 export { listensBeyondThisComputer }
 
@@ -350,12 +355,16 @@ export class VideoJobs {
 
   // Refuses to run when ComfyUI is not there, is open to the network, or the card is too full. Straight after another
   // job, a card that is too full is asked again for a short while first, as that job's memory may still be on its way back.
-  // A card too full because the local model server holds a model is freed once by the card sharing, then waited for.
+  // ComfyUI's free memory counts only its own use, so a model the local server holds is taken off the card's total
+  // as well (card sharing); when that is what leaves too little room, the card sharing unloads it once, then it is waited for.
   private async preflight(id: string, start: { cancelled: boolean }, client: ComfyClient, recipe: { minFreeVramGb: number }, comfyUrl: string): Promise<string | null> {
     const justFreed = performance.now() - this.freedAt < this.timing.recentFreeMs
     let giveUpAt = justFreed ? performance.now() + this.timing.memoryWaitMs : 0
     let triedRoom = false
     let announced = false
+    // A model still being loaded back after the last videos would not be counted yet.
+    await this.cardShare?.settled()
+    let localGb = this.cardShare ? (await this.cardShare.loadedBytes()) / 1024 ** 3 : 0
     while (true) {
       let stats
       try { stats = await client.stats() } catch { stats = null }
@@ -363,12 +372,15 @@ export class VideoJobs {
       if (listensBeyondThisComputer(stats.argv)) {
         return 'ComfyUI is open to your network (it was started with --listen). Restart it without --listen so only this computer can use it.'
       }
-      const freeGb = stats.device ? stats.device.vramFree / 1024 ** 3 : Infinity
+      const comfyFreeGb = stats.device ? stats.device.vramFree / 1024 ** 3 : Infinity
+      const besideLocalGb = stats.device && localGb > 0 ? stats.device.vramTotal / 1024 ** 3 - localGb - LOCAL_OVERHEAD_GB : Infinity
+      const freeGb = Math.min(comfyFreeGb, besideLocalGb)
       if (freeGb >= recipe.minFreeVramGb) {
         if (announced || triedRoom) this.emit({ id, status: 'running', stage: 'Getting the video ready' })
         return null
       }
-      if (this.cardShare && !triedRoom) {
+      // Only the local model's share decides this: memory ComfyUI is still handing back after a job is waited for instead.
+      if (this.cardShare && !triedRoom && besideLocalGb < recipe.minFreeVramGb) {
         triedRoom = true
         this.emit({ id, status: 'running', stage: 'Making room on the graphics card' })
         const room = await this.cardShare.makeRoom(() => start.cancelled, (stage) => this.emit({ id, status: 'running', stage }))
@@ -376,12 +388,14 @@ export class VideoJobs {
         if (typeof room === 'object') return room.error
         if (room === 'unloaded') {
           // The model server hands its memory back over a moment: wait for it like after a job.
+          localGb = (await this.cardShare.loadedBytes()) / 1024 ** 3
           giveUpAt = performance.now() + this.timing.memoryWaitMs
           continue
         }
       }
       if (performance.now() >= giveUpAt) {
-        return `Not enough free graphics memory: ${freeGb.toFixed(1)} GB free, this recipe needs about ${recipe.minFreeVramGb} GB. Unload other models (for example in LM Studio) and try again.`
+        const advice = triedRoom ? 'Something else is using the graphics card. Close it and try again.' : 'Unload other models (for example in LM Studio) and try again.'
+        return `Not enough free graphics memory: ${freeGb.toFixed(1)} GB free, this recipe needs about ${recipe.minFreeVramGb} GB. ${advice}`
       }
       if (!announced) this.emit({ id, status: 'running', stage: 'Waiting for graphics memory' })
       announced = true
