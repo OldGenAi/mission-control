@@ -215,6 +215,17 @@ class MarkdownBoundary extends Component<{ text: string }, { crashed: boolean }>
 
 // ---------- part renderer -----------------------------------------
 
+// The graphics card sharing's state (gateway providers/card-share.ts).
+type CardState = { state: "free" } | { state: "held" | "restoring" | "restore-failed"; models: string[] }
+
+function cardMessage(card: CardState): string | null {
+  if (card.state === "free") return null
+  const names = card.models.join(", ")
+  if (card.state === "held") return `The graphics card is making videos, so ${names} is unloaded for now. Messages wait until the videos are done, then it loads again.`
+  if (card.state === "restoring") return `Loading ${names} again after the videos…`
+  return `${names} could not be loaded again after the videos. Load it in LM Studio, then try again.`
+}
+
 function Part({ part, showTools, showThinking }: { part: MessagePart; showTools: boolean; showThinking: boolean }) {
   if (part.kind === "thought") {
     if (!showThinking) return null
@@ -573,6 +584,17 @@ export function ChatPage() {
     setListedProvider(activeProvider)
     if (activeProvider) setModelsLoading(true)
   }
+
+  // A video may have unloaded the local model to make room on the graphics card. Opening Chat asks for it back
+  // (the gateway only loads a model a video took away), and a line says what is happening meanwhile.
+  const [cardState, setCardState] = useState<CardState>({ state: "free" })
+  useEffect(() => {
+    gateway.request<CardState>("card.restore", {}).then(setCardState).catch(() => { /* an older gateway has no card sharing */ })
+    return gateway.onEvent(ev => {
+      if (ev.event === "card.event") setCardState(ev.payload as CardState)
+    })
+  }, [])
+  const cardNotice = cardMessage(cardState)
 
   // Subscribe to monitor ticks so paused-pipeline approval cards can appear inline.
   // Each page subscribes independently — when this page unmounts, it unsubscribes.
@@ -1120,6 +1142,8 @@ export function ChatPage() {
           Export
         </button>
       </div>
+
+      {cardNotice && <div className="chat-card-notice" role="status">{cardNotice}</div>}
 
       {/* Thread */}
       <div className="chat-thread" ref={threadRef} onScroll={(ev) => { const el = ev.currentTarget; stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80 }}>

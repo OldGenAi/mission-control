@@ -55,7 +55,8 @@ export type PushEventName =
   | 'error.occurred'
   | 'settings.changed'
   | 'video.event'
-  | 'doctor.event';
+  | 'doctor.event'
+  | 'card.event';
 
 // Agent status
 export type AgentStatus =

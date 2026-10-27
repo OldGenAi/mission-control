@@ -446,6 +446,13 @@ body::before {
   margin: 0 4px;
 }
 
+.chat-card-notice {
+  padding: 8px 16px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(0, 200, 255, 0.06);
+}
+
 .chat-thread {
   flex: 1;
   overflow-y: auto;
