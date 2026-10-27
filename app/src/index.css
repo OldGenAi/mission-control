@@ -691,6 +691,15 @@ body::before {
 .tool-result summary::-webkit-details-marker { display: none; }
 .tool-result pre { padding: 6px 10px; white-space: pre-wrap; font-size: 11px; margin: 0; overflow-x: auto; }
 
+/* Web search results, readable */
+.search-results { margin: 0; padding: 4px 12px 8px 30px; color: var(--text, #e5e7eb); font-size: 13px; line-height: 1.45; }
+.search-results li { margin: 6px 0; }
+.search-results a { color: #7dd3fc; text-decoration: none; font-weight: 600; }
+.search-results a:hover { text-decoration: underline; }
+.search-results__age { color: rgba(156, 163, 175, 0.9); font-size: 12px; }
+.search-results p { margin: 2px 0 0; color: rgba(209, 213, 219, 0.85); }
+.search-results__raw summary { padding: 4px 12px; font-size: 11px; opacity: 0.7; }
+
 /* Streaming cursor */
 .streaming-cursor {
   display: inline-block;

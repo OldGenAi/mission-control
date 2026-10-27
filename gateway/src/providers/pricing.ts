@@ -76,7 +76,8 @@ export async function refreshLocalContext(localBaseUrl: string | undefined, apiK
 
   // LM Studio — native /api/v0/models reports loaded_context_length per model.
   try {
-    const res = await fetch(`${root}/api/v0/models`, { headers })
+    // A stopped server can leave the connection hanging from WSL instead of refusing it: give up after a few seconds.
+    const res = await fetch(`${root}/api/v0/models`, { headers, signal: AbortSignal.timeout(5000) })
     if (res.ok) {
       const data = await res.json() as {
         data?: Array<{ id: string; loaded_context_length?: number; max_context_length?: number }>
@@ -96,7 +97,7 @@ export async function refreshLocalContext(localBaseUrl: string | undefined, apiK
 
   // Ollama — /api/ps lists running models with their loaded context_length.
   try {
-    const res = await fetch(`${root}/api/ps`, { headers })
+    const res = await fetch(`${root}/api/ps`, { headers, signal: AbortSignal.timeout(5000) })
     if (res.ok) {
       const data = await res.json() as {
         models?: Array<{ name?: string; model?: string; context_length?: number }>

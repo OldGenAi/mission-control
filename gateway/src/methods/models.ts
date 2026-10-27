@@ -1,7 +1,7 @@
 import { registerMethod } from '../router.js'
 import type { MethodHandler } from '../types.js'
 import { isLocalServerUrl } from '../providers/local.js'
-import { knownContextWindow } from '../providers/pricing.js'
+import { knownContextWindow, refreshLocalContext } from '../providers/pricing.js'
 
 export type ModelsConfig =
   | { mode: 'local'; baseUrl: string; apiKey?: string }
@@ -65,6 +65,10 @@ export async function listLocalModels(baseUrl: string, apiKey?: string, timeoutM
     const data = await res.json() as { data?: Array<{ id: string }> }
     // /v1/models carries no context size; the loaded window comes from the context refresh in pricing.ts (for the server
     // at the saved local URL). Without it the chat's context gauge fell back to a fixed 32k whatever the person loaded.
+    // That refresh runs every 90 s, so a model loaded (or a server started) since is asked about now instead of later.
+    if ((data.data ?? []).some((m) => knownContextWindow('local', m.id) === undefined)) {
+      await Promise.race([refreshLocalContext(baseUrl, apiKey), new Promise((resolve) => setTimeout(resolve, timeoutMs))])
+    }
     return {
       models: (data.data ?? []).map((m) => ({ id: m.id, label: m.id, contextLength: knownContextWindow('local', m.id) })),
       probedUrl,
