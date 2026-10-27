@@ -332,7 +332,7 @@ export const OverviewPage: React.FC = () => {
             }}
             onMouseLeave={(e) => {
               const el = e.currentTarget as HTMLDivElement
-              el.style.background = 'rgba(255,255,255,0.04)'
+              el.style.background = 'rgba(6,10,16,0.88)'   // back to the resting colour set above, so a hover leaves no trace
               el.style.boxShadow = ''
             }}
           >
