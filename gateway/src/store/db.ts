@@ -337,40 +337,59 @@ export function migrateDatabase(db: Database.Database, dbPath: string, migration
   const newest = Math.max(0, ...migrations.map((m) => m.version))
   if (current > newest) {
     throw new Error(`This database was made by a newer version of Mission Control (database version ${current}; this version knows up to ${newest}). `
-      + `Install the newer version again, or restore one of the copies saved beside ${dbPath}.`)
+      + `Install the newer version again. To go back to an older version instead, stop Mission Control, delete ${path.basename(dbPath)}-wal `
+      + `and ${path.basename(dbPath)}-shm, and put one of the copies saved beside ${dbPath} in its place (anything done since that copy is lost).`)
   }
 
   const pending = migrations.filter((m) => m.version > current)
   if (pending.length === 0) return
-  if (current > 0) backUp(db, dbPath, pending[0]!.version)
+  const copy = current > 0 ? backUp(db, dbPath, pending[0]!.version) : null
 
-  for (const migration of pending) {
-    db.transaction(() => {
+  // All in one transaction: an upgrade that fails part-way leaves the database exactly as it was (and as the copy).
+  db.transaction(() => {
+    for (const migration of pending) {
       db.exec(migration.sql)
       db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(
         migration.version,
         Date.now()
       )
-    })()
-    console.log(`[db] applied migration v${migration.version}`)
-  }
+    }
+  })()
+  for (const migration of pending) console.log(`[db] applied migration v${migration.version}`)
+  if (copy) pruneCopies(dbPath, copy)
 }
 
-// Copies the whole database to <name>.before-v<next>-<UTC time> beside it, then keeps only the newest copies.
-function backUp(db: Database.Database, dbPath: string, nextVersion: number): void {
-  if (dbPath === ':memory:') return
+// Copies the whole database to <name>.before-v<next>-<UTC time> beside it. Returns the copy's path.
+function backUp(db: Database.Database, dbPath: string, nextVersion: number): string | null {
+  if (dbPath === ':memory:') return null
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)
   const copy = `${dbPath}.before-v${nextVersion}-${stamp}`
-  db.exec(`VACUUM INTO '${copy.replace(/'/g, "''")}'`)
-  fs.chmodSync(copy, 0o600)
+  // A second try within the same second: the database hasn't changed since (upgrades are all or nothing), so that copy stands.
+  if (isFile(copy)) return copy
+  try {
+    db.prepare('VACUUM INTO ?').run(copy)
+    fs.chmodSync(copy, 0o600)
+  } catch (err) {
+    if (isFile(copy)) fs.rmSync(copy, { force: true })
+    throw new Error(`Could not save a copy of the database before upgrading it, so it was not upgraded (${err instanceof Error ? err.message : String(err)}). `
+      + `Check there is free disk space in ${path.dirname(dbPath)}, then start Mission Control again.`)
+  }
   console.log(`[db] saved a copy before upgrading: ${copy}`)
+  return copy
+}
 
+function isFile(p: string): boolean {
+  try { return fs.statSync(p).isFile() } catch { return false }
+}
+
+// Keeps the newest copies, by their time stamp, and always the one just made (even if the clock has gone back).
+function pruneCopies(dbPath: string, keep: string): void {
   const dir = path.dirname(dbPath)
   const prefix = `${path.basename(dbPath)}.before-v`
   const copies = fs.readdirSync(dir)
-    .filter((name) => name.startsWith(prefix) && /-\d{8}-\d{6}$/.test(name))
+    .filter((name) => name.startsWith(prefix) && /-\d{8}-\d{6}$/.test(name) && name !== path.basename(keep))
     .sort((a, b) => a.slice(-15).localeCompare(b.slice(-15)))
-  for (const old of copies.slice(0, Math.max(0, copies.length - KEEP_BACKUPS))) fs.rmSync(path.join(dir, old), { force: true })
+  for (const old of copies.slice(0, Math.max(0, copies.length - (KEEP_BACKUPS - 1)))) fs.rmSync(path.join(dir, old), { force: true })
 }
 
 // ---------------------------------------------------------------------------

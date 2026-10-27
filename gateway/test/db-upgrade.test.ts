@@ -2,7 +2,7 @@
 // Upgrading the database safely: a copy is saved before any upgrade, and a database from a newer version is refused.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
@@ -88,15 +88,48 @@ test('a database from a newer Mission Control is refused, and left exactly as it
   assert.deepEqual(backups(dir), [], 'no copy for a refused database')
 })
 
-test('an upgrade that fails leaves the database at the old version, with the copy beside it', () => {
+const versionOf = (file: string) => {
+  const check = new Database(file, { readonly: true })
+  try { return (check.prepare('SELECT MAX(version) AS v FROM schema_version').get() as { v: number }).v } finally { check.close() }
+}
+
+test('an upgrade of several steps that fails part-way changes nothing, however often it is retried', () => {
   const dir = freshDir()
   const path = join(dir, 'gateway.sqlite')
+  open(path, [V1]).close()
+  // Mission Control's supervisor restarts it up to three times after a crash: four tries in all.
+  for (let i = 0; i < 4; i++) assert.throws(() => open(path, [V1, V2, BROKEN]))
+  assert.equal(versionOf(path), 1, 'v2 was not left half-applied')
+  const saved = backups(dir)
+  assert.ok(saved.length >= 1 && saved.length <= 3)
+  for (const name of saved) assert.equal(versionOf(join(dir, name)), 1, 'every copy kept is the database as it was before')
+})
+
+test('the copy just made is kept even when the clock has gone back', () => {
+  const dir = freshDir()
+  const path = join(dir, 'gateway.sqlite')
+  open(path, [V1]).close()
+  for (const stamp of ['20300101-000000', '20300201-000000', '20300301-000000']) writeFileSync(`${path}.before-v1-${stamp}`, 'copy from the future')
   open(path, [V1, V2]).close()
-  assert.throws(() => open(path, [V1, V2, BROKEN]))
-  const check = new Database(path, { readonly: true })
-  assert.equal((check.prepare('SELECT MAX(version) AS v FROM schema_version').get() as { v: number }).v, 2)
-  check.close()
-  assert.equal(backups(dir).length, 1)
+  const saved = backups(dir)
+  assert.equal(saved.length, 3)
+  assert.ok(saved.some((name) => name.startsWith('gateway.sqlite.before-v2-')), 'the new copy is still there')
+})
+
+test('no room for the copy: the database is not upgraded, and the reason is plain', () => {
+  const dir = freshDir()
+  const path = join(dir, 'gateway.sqlite')
+  open(path, [V1]).close()
+  const db = new Database(path)
+  // Stand-in for a full disk: the copy's name is already taken by a folder, so VACUUM INTO cannot write it.
+  // (this second and the next, so the test can't straddle a second boundary)
+  for (const ms of [0, 1000]) {
+    const stamp = new Date(Date.now() + ms).toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)
+    mkdirSync(`${path}.before-v2-${stamp}`, { recursive: true })
+  }
+  assert.throws(() => migrateDatabase(db, path, [V1, V2]), (err: Error) => err.message.includes('it was not upgraded') || /Could not save a copy/.test(err.message))
+  db.close()
+  assert.equal(versionOf(path), 1)
 })
 
 test('a folder name with a quote in it is copied safely', () => {

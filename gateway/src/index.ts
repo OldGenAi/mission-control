@@ -70,7 +70,16 @@ const SPECS_DIR     = path.join(__dirname, 'agents', 'specs')
 // Core infrastructure
 // ---------------------------------------------------------------------------
 
-const db = openDatabase(DB_PATH)
+// A database that can't be opened safely (made by a newer version, or no room for the copy before an upgrade) stops
+// Mission Control with one plain line in the log. Exit code 0 keeps the supervisor from retrying something that can't work.
+const db = (() => {
+  try {
+    return openDatabase(DB_PATH)
+  } catch (err) {
+    console.error(`[db] Mission Control did not start: ${err instanceof Error ? err.message : String(err)}`)
+    process.exit(0)
+  }
+})()
 installFtsTriggers(db)
 // The assistant's file tools work inside this folder only. Nothing else creates it, and on a fresh install every file
 // call failed with "no such file or directory" until someone made it by hand.

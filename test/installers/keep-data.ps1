@@ -32,10 +32,14 @@ function New-Package([string]$Version) {
 
 # Everything of the person's, by checksum, outside the program folder.
 function Get-Snapshot {
-  Get-ChildItem -Path $data -Recurse -File -Force |
-    Where-Object { -not $_.FullName.StartsWith((Join-Path $data 'app') + '\') } |
+  $appPrefix = (Join-Path $data 'app') + '\'
+  Get-ChildItem -Path $data -Recurse -Force |
+    Where-Object { -not $_.FullName.StartsWith($appPrefix, [StringComparison]::OrdinalIgnoreCase) -and $_.FullName -ne (Join-Path $data 'app') } |
     Sort-Object FullName |
-    ForEach-Object { "$((Get-FileHash -Algorithm SHA256 $_.FullName).Hash)  $($_.FullName.Substring($data.Length))" }
+    ForEach-Object {
+      $rel = $_.FullName.Substring($data.Length)
+      if ($_.PSIsContainer) { "dir  $rel" } else { "file $((Get-FileHash -Algorithm SHA256 $_.FullName).Hash)  $rel  $($_.Attributes)" }
+    }
 }
 
 try {
@@ -48,6 +52,10 @@ try {
   Set-Content (Join-Path $data 'media\video\0123456789abcdef0123456789abcdef.mp4') 'pretend video'
   Set-Content (Join-Path $data 'media\video\inputs\0123456789abcdef0123456789abcdef.png') 'pretend picture'
   Set-Content (Join-Path $data 'logs\gateway.log') 'log line'
+  Set-Content (Join-Path $data 'gateway.sqlite-wal') 'pretend write-ahead log'
+  Set-Content (Join-Path $data 'gateway.sqlite-shm') 'pretend shared memory'
+  Set-Content (Join-Path $data 'fal.key') 'secret'
+  New-Item -ItemType Directory -Force -Path (Join-Path $data 'empty-folder') | Out-Null
   $before = (Get-Snapshot) -join "`n"
 
   foreach ($version in '1.0.0', '1.0.1') {
