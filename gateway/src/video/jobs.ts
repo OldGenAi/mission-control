@@ -173,6 +173,11 @@ export class VideoJobs {
     return saved
   }
 
+  /** True when a picture with this id has been uploaded and is still kept. */
+  hasImage(id: unknown): boolean {
+    return this.images.find(id) !== null
+  }
+
   // Copies each picture the job uses into ComfyUI and swaps its id for the name ComfyUI gave it.
   // Returns why it couldn't, or the values ready for the recipe.
   private async placeImages(client: ComfyClient, recipe: Recipe, values: ParamValues): Promise<ParamValues | string> {
