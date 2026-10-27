@@ -9,7 +9,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function hasControlCharacter(text: string): boolean {
+export function hasControlCharacter(text: string): boolean {
   for (const ch of text) {
     const code = ch.codePointAt(0)!
     if ((code <= 0x1f && ch !== '\n' && ch !== '\t') || code === 0x7f) return true

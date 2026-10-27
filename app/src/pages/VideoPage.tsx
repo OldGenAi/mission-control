@@ -1,5 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { gateway } from '../lib/gateway-client'
+import { lastFrame } from '../lib/last-frame'
+import { VideoCast, type CastMember } from '../components/VideoCast'
+import { button, card, input, linkButton, uploadPicture, uploadPictureFile, type UploadedPicture } from '../components/video-ui'
 
 type ParamSpec =
   | { kind: 'text'; maxLength: number; required?: boolean; default?: string }
@@ -38,52 +41,15 @@ interface Video {
 
 interface Live { step?: number; steps?: number; stage?: string; preview?: string; startedAt: number }
 
-const card: React.CSSProperties = { background: 'rgba(6,10,16,0.88)', border: '1px solid rgba(255,255,255,0.07)' }
-const input: React.CSSProperties = { background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: '#E5E7EB' }
-const button = (primary = false): React.CSSProperties => ({
-  background: primary ? 'rgba(0,200,255,0.12)' : 'rgba(255,255,255,0.05)',
-  border: `1px solid ${primary ? 'rgba(0,200,255,0.35)' : 'rgba(255,255,255,0.1)'}`,
-  color: primary ? '#67e8f9' : '#9CA3AF',
-})
-
 // Finished videos are shown a few at a time, so a busy day doesn't bury the form.
 const VIDEOS_PER_PAGE = 6
 
 const LABELS: Record<string, string> = { image: 'Picture (it becomes the first frame)', prompt: 'Describe the video', negative: 'Avoid', seconds: 'Length (seconds)', aspect: 'Shape', seed: 'Variation number (0 = a new one each time)' }
 
-// The gateway takes pictures up to 11 MB (PNG, JPEG or WebP) and checks them itself.
-const MAX_PICTURE_BYTES = 11 * 1024 * 1024
-
 /** The recipe shape that best fits a picture, so it isn't cropped more than it has to be. */
 function shapeFor(width: number, height: number): string {
   const ratio = width / height
   return ratio > 1.2 ? '16:9' : ratio < 0.83 ? '9:16' : '1:1'
-}
-
-function readAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result))
-    reader.onerror = () => reject(new Error('Could not read that file.'))
-    reader.readAsDataURL(file)
-  })
-}
-
-/** A small JPEG copy of the picture, so the remembered choice fits in the browser's storage. */
-function thumbnail(dataUrl: string): Promise<string> {
-  return new Promise((resolve) => {
-    const img = new Image()
-    img.onload = () => {
-      const scale = Math.min(1, 256 / Math.max(img.width, img.height))
-      const canvas = document.createElement('canvas')
-      canvas.width = Math.max(1, Math.round(img.width * scale))
-      canvas.height = Math.max(1, Math.round(img.height * scale))
-      canvas.getContext('2d')?.drawImage(img, 0, 0, canvas.width, canvas.height)
-      resolve(canvas.toDataURL('image/jpeg', 0.8))
-    }
-    img.onerror = () => resolve('')
-    img.src = dataUrl
-  })
 }
 
 // The chosen picture is remembered until Remove is pressed, so a restart or crash doesn't lose it.
@@ -109,17 +75,39 @@ function savePicture(picture: SavedPicture | null) {
     else localStorage.removeItem(SAVED_PICTURE_KEY)
   } catch { /* storage off: the picture is kept for this visit only */ }
 }
+const asSaved = (picture: UploadedPicture): SavedPicture => ({ id: picture.id, thumb: picture.thumb, width: picture.width, height: picture.height })
+
+// "Keep this number" holds one variation number across clips, recipe changes and restarts, so a story keeps
+// one look while its prompts change. Unticked, the number goes back to 0 (a new one each time).
+const SEED_LOCK_KEY = 'mc:video-seed-lock'
+const MAX_PICKED_SEED = 2 ** 40   // the same range the gateway picks from for 0
+
+function loadSeedLock(): number | null {
+  try {
+    const seed = Number(localStorage.getItem(SEED_LOCK_KEY))
+    return Number.isInteger(seed) && seed > 0 && seed <= 2 ** 48 ? seed : null
+  } catch {
+    return null
+  }
+}
+function saveSeedLock(seed: number | null) {
+  try {
+    if (seed) localStorage.setItem(SEED_LOCK_KEY, String(seed))
+    else localStorage.removeItem(SEED_LOCK_KEY)
+  } catch { /* storage off: the number is kept for this visit only */ }
+}
 
 const fmtDate = (ts: number) => new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 const fmtSecs = (ms: number) => `${Math.round(ms / 1000)} s`
 
-function startValues(recipe: Recipe, picture: SavedPicture | null): Record<string, string | number> {
+function startValues(recipe: Recipe, picture: SavedPicture | null, lockedSeed: number | null): Record<string, string | number> {
   const values: Record<string, string | number> = {}
   for (const [name, spec] of Object.entries(recipe.params)) {
     if ('default' in spec && spec.default !== undefined) values[name] = spec.default
     else if (spec.kind !== 'image') values[name] = spec.kind === 'int' ? spec.min : ''
     if (spec.kind === 'image' && picture) values[name] = picture.id
   }
+  if (lockedSeed && 'seed' in recipe.params) values['seed'] = lockedSeed
   if (picture && picture.width > 0 && picture.height > 0 && 'aspect' in recipe.params && Object.values(recipe.params).some((s) => s.kind === 'image')) {
     values['aspect'] = shapeFor(picture.width, picture.height)
   }
@@ -145,6 +133,9 @@ export const VideoPage: React.FC = () => {
   const [checkedAt, setCheckedAt] = useState<number | null>(null)   // when ComfyUI was last asked
   const [disk, setDisk] = useState<{ used: number; limit: number } | null>(null)   // the media folder, for the storage bar
   const [shown, setShown] = useState(VIDEOS_PER_PAGE)   // how many finished videos are on the page
+  const [seedLock, setSeedLock] = useState<number | null>(loadSeedLock)   // the kept variation number, or null
+  const [continuing, setContinuing] = useState<string | null>(null)   // the video whose last frame is being read
+  const formRef = useRef<HTMLDivElement>(null)
   const refreshTimer = useRef<number | null>(null)
   // Signed links change on every list call; keeping the one a player already has stops the
   // browser reloading every finished video each time the list refreshes. Links last an hour.
@@ -193,7 +184,7 @@ export const VideoPage: React.FC = () => {
         ])
         setRecipes(available)
         setComfyUrl(settings.comfyUrl)
-        if (available[0]) { setRecipeId(available[0].id); setValues(startValues(available[0], loadSavedPicture())) }
+        if (available[0]) { setRecipeId(available[0].id); setValues(startValues(available[0], loadSavedPicture(), loadSeedLock())) }
       } catch (err) {
         setError(`Could not load the video recipes: ${err instanceof Error ? err.message : 'no answer from Mission Control'}`)
       }
@@ -236,23 +227,77 @@ export const VideoPage: React.FC = () => {
   const pickRecipe = (id: string) => {
     const next = recipes.find((r) => r.id === id)
     setRecipeId(id)
-    if (next) setValues(startValues(next, loadSavedPicture()))
+    if (next) setValues(startValues(next, loadSavedPicture(), seedLock))
+  }
+
+  // Ticking picks a number now (if the field says 0) and keeps it; unticking goes back to a new one each time.
+  const lockSeed = (locked: boolean) => {
+    const seed = locked ? (Number(values['seed']) || Math.floor(Math.random() * MAX_PICKED_SEED) + 1) : null
+    saveSeedLock(seed)
+    setSeedLock(seed)
+    setValues((prev) => ({ ...prev, seed: seed ?? 0 }))
+  }
+  const changeSeed = (seed: number) => {
+    setValues((prev) => ({ ...prev, seed }))
+    if (seedLock !== null && seed > 0) { saveSeedLock(seed); setSeedLock(seed) }
+  }
+
+  // Moves the form to a recipe that starts from a picture, with this picture, keeping what is already written
+  // (the variation number follows the lock, and a picture of known size picks the shape).
+  const startFromPicture = (picture: SavedPicture, keep: Record<string, unknown>) => {
+    const target = recipes.find((r) => Object.values(r.params).some((spec) => spec.kind === 'image'))
+    if (!target) return setError('None of the recipes can start from a picture.')
+    savePicture(picture)
+    const thumb = picture.thumb
+    if (thumb) setPictures((prev) => ({ ...prev, [picture.id]: thumb }))
+    const next = startValues(target, picture, seedLock)
+    for (const [name, value] of Object.entries(keep)) {
+      const spec = target.params[name]
+      if (!spec || spec.kind === 'image' || name === 'seed' || (name === 'aspect' && picture.width > 0)) continue
+      if (typeof value === 'string' || typeof value === 'number') next[name] = value
+    }
+    setRecipeId(target.id)
+    setValues(next)
+    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  // The next clip starts where this one ends: its last frame becomes the picture, and its description stays to be changed.
+  const continueFrom = async (v: Video) => {
+    if (!v.link) return
+    setError('')
+    setContinuing(v.id)
+    try {
+      startFromPicture(asSaved(await uploadPicture(await lastFrame(v.link))), v.params)
+    } catch (err) {
+      setError(`Could not continue from that clip: ${err instanceof Error ? err.message : 'no answer from Mission Control'}`)
+      formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    } finally {
+      setContinuing(null)
+    }
+  }
+
+  const addToPrompt = (member: CastMember) => {
+    const words = `${member.name}: ${member.wording.replace(/[.\s]+$/, '')}.`
+    setValues((prev) => {
+      const prompt = String(prev['prompt'] ?? '')
+      if (prompt.includes(words)) return prev
+      return { ...prev, prompt: prompt.trim() === '' ? words : `${prompt.trimEnd()} ${words}` }
+    })
+    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  const startFromCast = (member: CastMember) => {
+    if (member.imageId) startFromPicture({ id: member.imageId, thumb: member.thumb ?? '', width: 0, height: 0 }, values)
   }
 
   const choosePicture = async (name: string, file: File | undefined) => {
     if (!file || !recipe) return
     setError('')
-    if (file.size > MAX_PICTURE_BYTES) {
-      setError(`That picture is ${(file.size / 1024 ** 2).toFixed(1)} MB. The limit is 11 MB.`)
-      return
-    }
     setUploading(true)
     try {
-      const dataUrl = await readAsDataUrl(file)
-      const data = dataUrl.slice(dataUrl.indexOf(',') + 1)
-      const uploaded = await gateway.request<{ id: string; width: number; height: number }>('video.uploadImage', { data })
-      setPictures((prev) => ({ ...prev, [uploaded.id]: dataUrl }))
-      savePicture({ id: uploaded.id, thumb: await thumbnail(dataUrl), width: uploaded.width, height: uploaded.height })
+      const uploaded = await uploadPictureFile(file)
+      setPictures((prev) => ({ ...prev, [uploaded.id]: uploaded.dataUrl }))
+      savePicture(asSaved(uploaded))
       setValues((prev) => {
         const next: Record<string, string | number> = { ...prev, [name]: uploaded.id }
         if ('aspect' in recipe.params) next['aspect'] = shapeFor(uploaded.width, uploaded.height)
@@ -330,6 +375,8 @@ export const VideoPage: React.FC = () => {
     if (image) savePicture({ id: v.params[image[0]] as string, thumb: '', width: 0, height: 0 })
     pickRecipe(v.recipeId)
     setValues(v.params as Record<string, string | number>)
+    // A kept number moves to this clip's, so Use again repeats it exactly and the clips after it keep its look.
+    if (typeof v.params['seed'] === 'number') changeSeed(v.params['seed'])
   }
 
   const saveComfyUrl = async () => {
@@ -375,9 +422,11 @@ export const VideoPage: React.FC = () => {
         </div>
       </div>
 
+      <VideoCast onAddToPrompt={addToPrompt} onStartFrom={startFromCast} />
+
       {/* New video */}
       {recipe && (
-        <div className="rounded-xl p-4 flex flex-col gap-3" style={card}>
+        <div ref={formRef} className="rounded-xl p-4 flex flex-col gap-3" style={{ ...card, scrollMarginTop: 16 }}>
           <div className="flex items-center gap-3">
             <select value={recipeId} onChange={(e) => pickRecipe(e.target.value)} className="px-2 py-1 rounded text-xs" style={input}>
               {recipes.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
@@ -393,9 +442,19 @@ export const VideoPage: React.FC = () => {
                 <textarea id={`p-${name}`} rows={name === 'prompt' ? 4 : 2} maxLength={spec.maxLength} value={String(values[name] ?? '')}
                   onChange={(e) => setValues({ ...values, [name]: e.target.value })} className="px-2 py-1 rounded text-xs" style={input} />
               )}
-              {spec.kind === 'int' && (
+              {spec.kind === 'int' && name !== 'seed' && (
                 <input id={`p-${name}`} type="number" min={spec.min} max={spec.max} step={1} value={Number(values[name] ?? spec.min)}
                   onChange={(e) => setValues({ ...values, [name]: Math.trunc(Number(e.target.value)) })} className="px-2 py-1 rounded text-xs w-40" style={input} />
+              )}
+              {spec.kind === 'int' && name === 'seed' && (
+                <div className="flex items-center gap-3">
+                  <input id={`p-${name}`} type="number" min={spec.min} max={spec.max} step={1} value={Number(values[name] ?? spec.min)}
+                    onChange={(e) => changeSeed(Math.trunc(Number(e.target.value)))} className="px-2 py-1 rounded text-xs w-40" style={input} />
+                  <label className="flex items-center gap-2 text-xs text-gray-400" title="Every clip uses this number until you untick it, even after a restart">
+                    <input type="checkbox" checked={seedLock !== null} onChange={(e) => lockSeed(e.target.checked)} />
+                    Keep this number for the next clips
+                  </label>
+                </div>
               )}
               {spec.kind === 'image' && (
                 <div className="flex items-center gap-3">
@@ -497,8 +556,14 @@ export const VideoPage: React.FC = () => {
               <span className="flex gap-3">
                 <button onClick={() => void starVideo(v.id, !v.kept)} title={v.kept ? 'Starred: Clear unstarred leaves it alone' : 'Star it to keep it when you clear the rest'}
                   style={{ background: 'none', border: 'none', color: v.kept ? '#fbbf24' : '#6B7280', cursor: 'pointer' }}>{v.kept ? '★ Starred' : '☆ Star'}</button>
-                <button onClick={() => makeAgain(v)} style={{ background: 'none', border: 'none', color: '#67e8f9', cursor: 'pointer' }}>Use again</button>
-                <button onClick={() => void deleteVideo(v.id)} style={{ background: 'none', border: 'none', color: '#6B7280', cursor: 'pointer' }}>Delete</button>
+                {v.status === 'done' && v.link && (
+                  <button onClick={() => void continueFrom(v)} disabled={continuing !== null} title="Start the next clip from the last frame of this one"
+                    style={{ ...linkButton('#67e8f9'), opacity: continuing !== null && continuing !== v.id ? 0.5 : 1 }}>
+                    {continuing === v.id ? 'Reading the last frame...' : 'Continue'}
+                  </button>
+                )}
+                <button onClick={() => makeAgain(v)} style={linkButton('#67e8f9')}>Use again</button>
+                <button onClick={() => void deleteVideo(v.id)} style={linkButton('#6B7280')}>Delete</button>
               </span>
             </div>
           </div>

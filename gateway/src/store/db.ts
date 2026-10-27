@@ -311,6 +311,23 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE videos ADD COLUMN kept INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 17,
+    sql: `
+      -- The cast on the Video page (video/cast.ts): a name, fixed prompt wording and an optional picture
+      -- (an uploaded picture's id, never a path) for each character of a story. Soft delete like videos.
+      CREATE TABLE IF NOT EXISTS video_cast (
+        id          TEXT PRIMARY KEY,
+        name        TEXT NOT NULL,
+        wording     TEXT NOT NULL,
+        image_id    TEXT,
+        thumb       TEXT,
+        created_at  INTEGER NOT NULL,
+        updated_at  INTEGER NOT NULL,
+        deleted_at  INTEGER
+      );
+    `,
+  },
 ]
 
 // How many copies saved before an upgrade are kept beside the database.

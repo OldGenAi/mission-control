@@ -4,6 +4,7 @@ import { RECIPES, nodeClasses, findRecipe } from '../video/recipes.js'
 import { ComfyClient, checkComfyUrl } from '../video/comfyui.js'
 import { issueMediaLink } from '../video/media-links.js'
 import { VideoRequestError, listensBeyondThisComputer, type VideoJobs } from '../video/jobs.js'
+import type { VideoCast } from '../video/cast.js'
 import type { RecipeParams, ParamValues } from '../video/recipe-types.js'
 
 function invalid(message: string): never {
@@ -28,7 +29,7 @@ function defaults(params: RecipeParams): ParamValues {
   return values
 }
 
-export function registerVideoMethods(jobs: VideoJobs, comfyUrl: () => string): void {
+export function registerVideoMethods(jobs: VideoJobs, cast: VideoCast, comfyUrl: () => string): void {
   registerMethod('video.recipes', async () => ({
     recipes: RECIPES.map(({ id, name, description, hardware, params }) => ({ id, name, description, hardware, params })),
   }))
@@ -114,6 +115,20 @@ export function registerVideoMethods(jobs: VideoJobs, comfyUrl: () => string): v
       diskLimitBytes: jobs.diskLimit,
     }
   })
+
+  // The cast: characters with fixed prompt wording and a picture, so a story describes them the same way every clip.
+  registerMethod('video.cast.list', async () => ({ cast: cast.list() }))
+
+  registerMethod('video.cast.save', async (params) => {
+    try {
+      return { member: cast.save(params['member']) }
+    } catch (err) {
+      if (err instanceof VideoRequestError) invalid(err.message)
+      throw err
+    }
+  })
+
+  registerMethod('video.cast.delete', async (params) => ({ deleted: cast.delete(params['id']) }))
 
   registerMethod('video.link', async (params) => {
     const id = videoId(params['id'])

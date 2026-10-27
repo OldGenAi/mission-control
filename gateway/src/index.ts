@@ -37,6 +37,7 @@ import { pricesWanted, refreshLocalContext, startPricingRefresh } from './provid
 import { registerInstancesMethods } from './methods/instances.js'
 import { registerVideoMethods } from './methods/video.js'
 import { VideoJobs } from './video/jobs.js'
+import { VideoCast } from './video/cast.js'
 import { CardShare } from './providers/card-share.js'
 import { lmStudioServer } from './providers/lmstudio-control.js'
 import { registerCardShareMethods } from './methods/card-share.js'
@@ -245,7 +246,7 @@ const videoJobs = new VideoJobs(
   cardShare,
 )
 registerCardShareMethods(cardShare)
-registerVideoMethods(videoJobs, () => settingsStore.get().comfyUrl)
+registerVideoMethods(videoJobs, new VideoCast(db, (id) => videoJobs.hasImage(id)), () => settingsStore.get().comfyUrl)
 setVideoFileResolver((id) => videoJobs.filePath(id))
 
 // ---------------------------------------------------------------------------
