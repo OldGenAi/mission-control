@@ -196,6 +196,46 @@ function summariseToolCall(rawText: string): { name: string; brief: string } {
   }
 }
 
+// A web search result as people read it: headline, link, age and summary, with the search engine's markup taken out.
+type SearchResult = { title: string; url: string | null; age: string; snippet: string }
+
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " }
+
+// Plain text from a snippet: tags dropped, entities decoded. Shown as text, never as HTML.
+function snippetText(html: unknown): string {
+  if (typeof html !== "string") return ""
+  return html
+    .replace(/<[^>]*>/g, "")
+    .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, code: string) => {
+      if (code[0] === "#") {
+        const n = code[1].toLowerCase() === "x" ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10)
+        return Number.isFinite(n) && n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : whole
+      }
+      return ENTITIES[code.toLowerCase()] ?? whole
+    })
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function searchResults(rawText: string): SearchResult[] | null {
+  try {
+    const parsed = JSON.parse(rawText) as { results?: unknown }
+    if (!Array.isArray(parsed.results) || parsed.results.length === 0) return null
+    const list = parsed.results.map((r): SearchResult | null => {
+      if (!r || typeof r !== "object") return null
+      const item = r as Record<string, unknown>
+      const title = snippetText(item.title)
+      if (!title) return null
+      // Only web links become clickable.
+      const url = typeof item.url === "string" && /^https?:\/\//i.test(item.url) ? item.url : null
+      return { title, url, age: snippetText(item.age), snippet: snippetText(item.snippet) }
+    })
+    return list.every((r): r is SearchResult => r !== null) ? list : null
+  } catch {
+    return null
+  }
+}
+
 function stringifyArg(v: unknown): string {
   if (typeof v === "string") return v.length > 24 ? `"${v.slice(0, 24)}…"` : `"${v}"`
   if (typeof v === "number" || typeof v === "boolean") return String(v)
@@ -261,10 +301,29 @@ function Part({ part, showTools, showThinking }: { part: MessagePart; showTools:
         preview = `${parsed.results.length} results`
       }
     } catch { /* leave preview as-is */ }
+    const results = searchResults(part.text)
     return (
       <details className="tool-result">
         <summary>✅ Tool result · {preview}</summary>
-        <pre>{part.text.trim()}</pre>
+        {results ? (
+          <>
+            <ol className="search-results">
+              {results.map((r, i) => (
+                <li key={i}>
+                  {r.url ? <a href={r.url} target="_blank" rel="noopener noreferrer">{r.title}</a> : <span>{r.title}</span>}
+                  {r.age && <span className="search-results__age"> · {r.age}</span>}
+                  {r.snippet && <p>{r.snippet}</p>}
+                </li>
+              ))}
+            </ol>
+            <details className="search-results__raw">
+              <summary>Show raw</summary>
+              <pre>{part.text.trim()}</pre>
+            </details>
+          </>
+        ) : (
+          <pre>{part.text.trim()}</pre>
+        )}
       </details>
     )
   }
@@ -745,7 +804,10 @@ export function ChatPage() {
 
   // A model list that came back empty or with an error (a local server with nothing loaded yet) is asked for again every 10 seconds, so loading
   // a model afterwards needs no page refresh and the warning clears by itself.
-  const modelsMissing = models.length === 0 || modelsError !== null
+  // The same goes for a model whose context window isn't known yet (the server was still starting): the gauge would
+  // otherwise show the 32k default until the page was reloaded.
+  const windowUnknown = activeProvider === "local" && selectedModel !== "" && models.some(m => m.id === selectedModel) && models.find(m => m.id === selectedModel)?.contextLength === undefined
+  const modelsMissing = models.length === 0 || modelsError !== null || windowUnknown
   useEffect(() => {
     if (!activeProvider || modelsLoading || !modelsMissing) return
     const again = window.setInterval(async () => {
@@ -1269,7 +1331,8 @@ export function ChatPage() {
             value={draft}
             onChange={onInput}
             onKeyDown={onKeyDown}
-            disabled={!selectedId || sending}
+            // Not switched off while a message is sending: that would drop the cursor. submit() refuses a second send meanwhile.
+            disabled={!selectedId}
           />
           {isGenerating ? (
             <button
