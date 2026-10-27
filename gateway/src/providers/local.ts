@@ -10,6 +10,7 @@
  * Any non-loopback URL causes an immediate hard error — the gateway will not start.
  */
 
+import { isIP } from 'node:net'
 import OpenAI from 'openai'
 import type {
   ProviderAdapter,
@@ -56,11 +57,12 @@ function assertLoopbackUrl(baseUrl: string): void {
   // vEthernet (WSL) adapter IP (172.x.x.x) rather than loopback.
   // NOTE: this URL comes from admin config in .env, not from agent input —
   // the SSRF risk is admin misconfiguration, not prompt injection.
+  // Only a real IPv4 address counts: a name such as 10.example.com is an internet name, whatever it starts with.
   const parsed = hostname.split('.').map(Number)
-  const isPrivate =
+  const isPrivate = isIP(hostname) === 4 && (
     (parsed[0] === 10) ||
     (parsed[0] === 172 && parsed[1] >= 16 && parsed[1] <= 31) ||
-    (parsed[0] === 192 && parsed[1] === 168)
+    (parsed[0] === 192 && parsed[1] === 168))
 
   if (!isLoopback && !isDockerHost && !isPrivate) {
     throw new Error(
