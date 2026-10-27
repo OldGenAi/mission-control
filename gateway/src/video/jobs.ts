@@ -21,6 +21,11 @@ const MAX_QUEUED = 10
 const MAX_MEDIA_BYTES = 50 * 1024 ** 3
 const PREVIEW_MIN_INTERVAL_MS = 250
 const POLL_MS = 3000
+// ComfyUI hands graphics memory back a few seconds after /free, so a job that starts soon after another (within
+// RECENT_FREE_MS) waits up to MEMORY_WAIT_MS for it before refusing. Otherwise a full card is refused at once.
+const MEMORY_WAIT_MS = 20_000
+const MEMORY_POLL_MS = 1000
+const RECENT_FREE_MS = 30_000
 
 export type VideoStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
 
@@ -85,6 +90,10 @@ type Outcome = 'success' | 'cancelled' | { error: string }
 export class VideoJobs {
   private readonly queue: string[] = []
   private running: Running | null = null
+  // A job that has left the queue but is still in its checks (ComfyUI, pictures, nodes), so not yet running.
+  // Counting it as busy stops a second press of Make video from starting alongside it; it can be stopped there too.
+  private starting: { id: string; cancelled: boolean } | null = null
+  private freedAt = -Infinity   // performance.now() when the last job asked ComfyUI for its memory back
   private readonly images: ImageInputs
 
   constructor(
@@ -92,6 +101,7 @@ export class VideoJobs {
     private readonly mediaDir: string,
     private readonly settings: () => VideoSettings,
     private readonly emit: (event: VideoEvent) => void,
+    private readonly timing = { memoryWaitMs: MEMORY_WAIT_MS, memoryPollMs: MEMORY_POLL_MS, recentFreeMs: RECENT_FREE_MS },
   ) {
     mkdirSync(mediaDir, { recursive: true, mode: 0o700 })
     this.images = new ImageInputs(join(mediaDir, 'inputs'))
@@ -205,6 +215,11 @@ export class VideoJobs {
       this.finish(id, 'cancelled', null)
       return true
     }
+    if (this.starting?.id === id) {
+      this.starting.cancelled = true   // run() stops at its next step, before the job is sent to ComfyUI
+      this.emit({ id, status: 'running', stage: 'Stopping' })
+      return true
+    }
     if (this.running?.id === id) {
       this.running.cancelled = true
       if (this.running.promptId) void this.running.client.cancel(this.running.promptId)
@@ -233,21 +248,26 @@ export class VideoJobs {
   }
 
   private async pump(): Promise<void> {
-    if (this.running) return
+    if (this.running || this.starting) return
     const id = this.queue.shift()
     if (!id) return
+    const start = { id, cancelled: false }
+    this.starting = start
     try {
-      await this.run(id)
+      await this.run(id, start)
     } catch (err) {
+      // A job stopped during its checks ends as stopped, even if ComfyUI dropped out under it.
+      if (start.cancelled) return this.finish(id, 'cancelled', null)
       console.error('[video] job failed unexpectedly:', err)
       this.finish(id, 'failed', 'Something went wrong in Mission Control while making this video.')
     } finally {
+      this.starting = null
       this.running = null
       void this.pump()
     }
   }
 
-  private async run(id: string): Promise<void> {
+  private async run(id: string, start: { cancelled: boolean }): Promise<void> {
     const row = this.db.prepare(`SELECT recipe_id AS recipeId, params FROM videos WHERE id = ?`).get(id) as { recipeId: string; params: string }
     const recipe = findRecipe(row.recipeId)
     if (!recipe) return this.finish(id, 'failed', 'This recipe no longer exists.')
@@ -259,13 +279,19 @@ export class VideoJobs {
     this.db.prepare(`UPDATE videos SET status = 'running', started_at = ? WHERE id = ?`).run(Date.now(), id)
     this.emit({ id, status: 'running', stage: 'Checking ComfyUI' })
 
-    const problem = await this.preflight(client, recipe, comfyUrl)
+    // Stopped during the checks: Stop was pressed while this was still starting (see cancel).
+    const stopped = () => start.cancelled
+
+    const problem = await this.preflight(id, start, client, recipe, comfyUrl)
+    if (stopped()) return this.finish(id, 'cancelled', null)
     if (problem) return this.finish(id, 'failed', problem)
 
     const values = await this.placeImages(client, recipe, JSON.parse(row.params) as ParamValues)
+    if (stopped()) return this.finish(id, 'cancelled', null)
     if (typeof values === 'string') return this.finish(id, 'failed', values)
     const graph = recipe.build(values, `mission-control/${id}`)
     const missing = await client.missing(nodeClasses(graph), recipe.models)
+    if (stopped()) return this.finish(id, 'cancelled', null)
     if (missing.length > 0) {
       return this.finish(id, 'failed', `ComfyUI is missing what this recipe needs: ${missing.join(', ')}.`)
     }
@@ -286,6 +312,7 @@ export class VideoJobs {
         job.settle({ error: 'The video took longer than 30 minutes, so it was stopped.' })
       }, JOB_TIMEOUT_MS)
       this.running = job
+      this.starting = null
       void this.start(job)
     })
 
@@ -297,25 +324,39 @@ export class VideoJobs {
       this.emit({ id, status: 'running', stage: 'Fetching the video' })
       await this.collect(job)
     } finally {
-      if (freeAfterJob) await client.free()
+      if (freeAfterJob) {
+        await client.free()
+        this.freedAt = performance.now()
+      }
     }
   }
 
-  // Refuses to run when ComfyUI is not there, is open to the network, or the card is too full.
-  private async preflight(client: ComfyClient, recipe: { minFreeVramGb: number }, comfyUrl: string): Promise<string | null> {
-    let stats
-    try { stats = await client.stats() } catch { stats = null }
-    if (!stats) return `ComfyUI isn't answering at ${comfyUrl}. Start it, or fix the address in Settings, then try again.`
-    if (listensBeyondThisComputer(stats.argv)) {
-      return 'ComfyUI is open to your network (it was started with --listen). Restart it without --listen so only this computer can use it.'
-    }
-    if (stats.device) {
-      const freeGb = stats.device.vramFree / 1024 ** 3
-      if (freeGb < recipe.minFreeVramGb) {
+  // Refuses to run when ComfyUI is not there, is open to the network, or the card is too full. Straight after another
+  // job, a card that is too full is asked again for a short while first, as that job's memory may still be on its way back.
+  private async preflight(id: string, start: { cancelled: boolean }, client: ComfyClient, recipe: { minFreeVramGb: number }, comfyUrl: string): Promise<string | null> {
+    const justFreed = performance.now() - this.freedAt < this.timing.recentFreeMs
+    const giveUpAt = justFreed ? performance.now() + this.timing.memoryWaitMs : 0
+    let announced = false
+    while (true) {
+      let stats
+      try { stats = await client.stats() } catch { stats = null }
+      if (!stats) return `ComfyUI isn't answering at ${comfyUrl}. Start it, or fix the address in Settings, then try again.`
+      if (listensBeyondThisComputer(stats.argv)) {
+        return 'ComfyUI is open to your network (it was started with --listen). Restart it without --listen so only this computer can use it.'
+      }
+      const freeGb = stats.device ? stats.device.vramFree / 1024 ** 3 : Infinity
+      if (freeGb >= recipe.minFreeVramGb) {
+        if (announced) this.emit({ id, status: 'running', stage: 'Getting the video ready' })
+        return null
+      }
+      if (performance.now() >= giveUpAt) {
         return `Not enough free graphics memory: ${freeGb.toFixed(1)} GB free, this recipe needs about ${recipe.minFreeVramGb} GB. Unload other models (for example in LM Studio) and try again.`
       }
+      if (!announced) this.emit({ id, status: 'running', stage: 'Waiting for graphics memory' })
+      announced = true
+      await new Promise((resolve) => setTimeout(resolve, this.timing.memoryPollMs))
+      if (start.cancelled) return null   // run() finishes a stopped job; checked before asking ComfyUI again
     }
-    return null
   }
 
   private async start(job: Running): Promise<void> {
