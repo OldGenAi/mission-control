@@ -221,6 +221,74 @@ test('the note survives a restart of Mission Control, so the model still comes b
   assert.ok(await waitFor(() => (JSON.parse(readFileSync(first.notePath, 'utf8')) as { models: unknown[] }).models.length === 0), 'the note is cleared once it is back')
 })
 
+test('a model loaded again by hand during the videos is not loaded a second time', async () => {
+  const { server, state } = fakeServer([QWEN])
+  const { share } = setup(server)
+  share.setVideoBusy(true)
+  await share.makeRoom(never, noStage)
+  state.loaded.push(QWEN)   // loaded by hand in LM Studio
+  share.setVideoBusy(false)
+  share.restoreNow()
+  assert.ok(await waitFor(() => share.state().state === 'free'))
+  assert.equal(state.loads.length, 0)
+  assert.equal(state.loaded.length, 1)
+})
+
+test('a model loaded again by hand between videos is unloaded for the next one and still comes back once', async () => {
+  const { server, state } = fakeServer([QWEN])
+  const { share } = setup(server)
+  share.setVideoBusy(true)
+  await share.makeRoom(never, noStage)
+  state.loaded.push(QWEN)
+  assert.equal(await share.makeRoom(never, noStage), 'unloaded', 'the next video is not refused')
+  assert.equal(state.loaded.length, 0)
+  share.setVideoBusy(false)
+  share.restoreNow()
+  assert.ok(await waitFor(() => state.loads.length === 1))
+  await new Promise((r) => setTimeout(r, 50))
+  assert.equal(state.loads.length, 1)
+})
+
+test('how much the local models take is reported from their sizes', async () => {
+  const { server } = fakeServer([{ ...QWEN, sizeBytes: 11e9 }])
+  assert.equal(await setup(server).share.loadedBytes(), 11e9)
+  assert.equal(await setup(null).share.loadedBytes(), 0)
+})
+
+test('a chat stopped while the model is being loaded back stops at once', async () => {
+  let finishLoad!: () => void
+  let loaded = true
+  const slow: ModelServer = {
+    listLoaded: async () => loaded ? [QWEN] : [],
+    unload: async () => { loaded = false; return true },
+    load: () => new Promise<boolean>((r) => { finishLoad = () => r(true) }),
+  }
+  const { share } = setup(slow)
+  share.setVideoBusy(true)
+  await share.makeRoom(never, noStage)
+  share.setVideoBusy(false)
+  const stop = new AbortController()
+  const waiting = share.enter(stop.signal)
+  await new Promise((r) => setTimeout(r, 30))
+  stop.abort()
+  await assert.rejects(waiting)
+  finishLoad()
+  await share.settled()
+})
+
+test('the "could not be loaded" notice goes once the model is loaded by hand', async () => {
+  const { server, state } = fakeServer([QWEN], { loadWorks: false })
+  const { share } = setup(server)
+  share.setVideoBusy(true)
+  await share.makeRoom(never, noStage)
+  share.setVideoBusy(false)
+  ;(await share.enter())()
+  assert.equal(share.state().state, 'restore-failed')
+  state.loaded.push(QWEN)
+  share.restoreNow()   // the Chat page opened again
+  assert.ok(await waitFor(() => share.state().state === 'free'))
+})
+
 test('a damaged note is ignored rather than loading something unexpected', async () => {
   const { server, state } = fakeServer([])
   const notePath = join(mkdtempSync(join(tmpdir(), 'mc-card-')), 'card-share.json')

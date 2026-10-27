@@ -23,7 +23,7 @@ const SECRET_PROMPT = Buffer.from('"prompt": "my private prompt"')
 const MP4 = Buffer.concat([box('ftyp', Buffer.from('isom')), box('moov', box('udta', SECRET_PROMPT)), box('mdat', Buffer.from('frames'))])
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3])
 
-interface FakeOptions { argv?: string[]; vramFreeGb?: number | (() => number); missingNode?: string; fail?: boolean; videoBody?: Buffer; hang?: boolean; statsDelayMs?: number; vramFreeSequence?: number[] }
+interface FakeOptions { argv?: string[]; vramTotalGb?: number; vramFreeGb?: number | (() => number); missingNode?: string; fail?: boolean; videoBody?: Buffer; hang?: boolean; statsDelayMs?: number; vramFreeSequence?: number[] }
 
 async function fakeComfy(opts: FakeOptions = {}) {
   const sockets = new Map<string, WebSocket>()
@@ -40,7 +40,7 @@ async function fakeComfy(opts: FakeOptions = {}) {
       // vramFreeSequence: free memory as ComfyUI reports it on each ask (the last value repeats), like memory coming back after a job.
       const seq = opts.vramFreeSequence
       const freeGb = seq ? seq[Math.min(statsCalls - 1, seq.length - 1)]! : typeof opts.vramFreeGb === 'function' ? opts.vramFreeGb() : (opts.vramFreeGb ?? 15)
-      const stats = { system: { comfyui_version: '0.9.9', argv: opts.argv ?? ['main.py'] }, devices: [{ name: 'Fake GPU', vram_total: 16 * 1024 ** 3, vram_free: freeGb * 1024 ** 3 }] }
+      const stats = { system: { comfyui_version: '0.9.9', argv: opts.argv ?? ['main.py'] }, devices: [{ name: 'Fake GPU', vram_total: (opts.vramTotalGb ?? 16) * 1024 ** 3, vram_free: freeGb * 1024 ** 3 }] }
       // A slow answer holds a job in its checks before anything reaches ComfyUI (the window two quick presses fell into).
       if (opts.statsDelayMs) return void setTimeout(() => json(stats), opts.statsDelayMs)
       return json(stats)
@@ -449,21 +449,66 @@ test('picture to video: the picture is checked, copied into ComfyUI under our na
 })
 
 // A stand-in for the card sharing (src/providers/card-share.ts): records what the queue tells it, and answers makeRoom as told.
-function fakeCardShare(answer: 'unloaded' | 'nothing' | { error: string }, onRoom?: () => void) {
+// localGb: what LM Studio's loaded models take, until makeRoom unloads them.
+function fakeCardShare(answer: 'unloaded' | 'nothing' | { error: string }, onRoom?: () => void, localGb = 0) {
   const busy: boolean[] = []
   let rooms = 0
+  let local = localGb
   const share: VideoCardShare = {
     setVideoBusy: (b) => { busy.push(b) },
-    makeRoom: async (_stopped, onStage) => { rooms++; onStage('Waiting for a chat to finish'); onRoom?.(); return answer },
+    loadedBytes: async () => local * 1024 ** 3,
+    settled: async () => {},
+    makeRoom: async (_stopped, onStage) => {
+      rooms++
+      onStage('Waiting for a chat to finish')
+      onRoom?.()
+      if (answer === 'unloaded') local = 0
+      return answer
+    },
   }
   return { share, busy, rooms: () => rooms }
 }
+
+test('ComfyUI says the card is free, but LM Studio holds an 11 GB model: the model is unloaded before the video', async () => {
+  // As measured on a 16 GB card: ComfyUI reported 14.4 GB free with LM Studio using 14 GB, as it counts only its own memory.
+  const comfy = await fakeComfy({ vramFreeGb: 14.4 })
+  const card = fakeCardShare('unloaded', undefined, 11)
+  const { jobs, events, finished } = setup(comfy.url, undefined, card.share)
+  try {
+    const id = jobs.submit('ltx25-t2v', { prompt: 'x' })
+    assert.equal((await finished(id)).status, 'done')
+    assert.equal(card.rooms(), 1, 'the local model was unloaded')
+    assert.ok(events.some((e) => e.id === id && e.stage === 'Making room on the graphics card'))
+  } finally { await comfy.close() }
+})
+
+test('a card big enough for both: a loaded local model is left alone', async () => {
+  // A 48 GB card with a 12 GB model loaded still has room for a 14 GB recipe.
+  const comfy = await fakeComfy({ vramFreeGb: 40, vramTotalGb: 48 })
+  const card = fakeCardShare('unloaded', undefined, 12)
+  const { jobs, finished } = setup(comfy.url, undefined, card.share)
+  try {
+    assert.equal((await finished(jobs.submit('ltx25-t2v', { prompt: 'x' }))).status, 'done')
+    assert.equal(card.rooms(), 0)
+  } finally { await comfy.close() }
+})
+
+test('memory still coming back after the last video is waited for, not taken from the local model', async () => {
+  const comfy = await fakeComfy({ vramFreeSequence: [15, 3, 3, 15] })
+  const card = fakeCardShare('unloaded', undefined, 0)
+  const { jobs, finished } = setup(comfy.url, undefined, card.share)
+  try {
+    assert.equal((await finished(jobs.submit('ltx25-t2v', { prompt: 'first' }))).status, 'done')
+    assert.equal((await finished(jobs.submit('ltx25-t2v', { prompt: 'second' }))).status, 'done')
+    assert.equal(card.rooms(), 0, 'nothing unloaded for a passing shortage of ComfyUI\'s own memory')
+  } finally { await comfy.close() }
+})
 
 test('a card too full because LM Studio holds a model: the model is unloaded and the video runs', async () => {
   // Full until the model is unloaded, then free.
   let unloaded = false
   const comfy = await fakeComfy({ vramFreeGb: () => unloaded ? 15 : 3 })
-  const card = fakeCardShare('unloaded', () => { unloaded = true })
+  const card = fakeCardShare('unloaded', () => { unloaded = true }, 11)
   const { jobs, events, finished } = setup(comfy.url, undefined, card.share)
   try {
     const id = jobs.submit('ltx25-t2v', { prompt: 'x' })
@@ -487,22 +532,34 @@ test('a card with room for both: the local model is left alone', async () => {
   } finally { await comfy.close() }
 })
 
-test('a full card with nothing to unload is refused as before', async () => {
+test('a full card with no local model loaded is refused as before, and nothing is unloaded', async () => {
   const comfy = await fakeComfy({ vramFreeGb: 3 })
-  const card = fakeCardShare('nothing')
+  const card = fakeCardShare('unloaded', undefined, 0)
   const { jobs, finished } = setup(comfy.url, undefined, card.share)
   try {
     const end = await finished(jobs.submit('ltx25-t2v', { prompt: 'x' }))
     assert.equal(end.status, 'failed')
     assert.match(end.error!, /Not enough free graphics memory: 3\.0 GB free/)
-    assert.equal(card.rooms(), 1)
+    assert.equal(card.rooms(), 0)
     assert.equal(comfy.prompts.length, 0)
+  } finally { await comfy.close() }
+})
+
+test('a local model that could not be unloaded: refused, with a plain reason', async () => {
+  const comfy = await fakeComfy({ vramFreeGb: 14.4 })
+  const card = fakeCardShare('nothing', undefined, 11)
+  const { jobs, finished } = setup(comfy.url, undefined, card.share)
+  try {
+    const end = await finished(jobs.submit('ltx25-t2v', { prompt: 'x' }))
+    assert.equal(end.status, 'failed')
+    assert.match(end.error!, /Not enough free graphics memory: 3\.5 GB free.*Something else is using the graphics card/)
+    assert.equal(card.rooms(), 1)
   } finally { await comfy.close() }
 })
 
 test('when the card sharing cannot make room, its reason is given', async () => {
   const comfy = await fakeComfy({ vramFreeGb: 3 })
-  const card = fakeCardShare({ error: 'A chat is still running after 10 minutes.' })
+  const card = fakeCardShare({ error: 'A chat is still running after 10 minutes.' }, undefined, 11)
   const { jobs, finished } = setup(comfy.url, undefined, card.share)
   try {
     const end = await finished(jobs.submit('ltx25-t2v', { prompt: 'x' }))

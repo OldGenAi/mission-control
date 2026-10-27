@@ -53,6 +53,7 @@ test('lists only loaded chat models, with the load settings LM Studio can be giv
       model: 'qwen/qwen3.5-9b',
       instanceId: 'qwen/qwen3.5-9b',
       config: { context_length: 32768, flash_attention: true, eval_batch_size: 512, offload_kv_cache_to_gpu: true },
+      sizeBytes: 6.5e9,
     }])
     assert.equal(seen[0]!.auth, `Bearer ${KEY}`, 'the saved key is sent')
   })
