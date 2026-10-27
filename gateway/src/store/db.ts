@@ -42,7 +42,7 @@ export function openDatabase(dbPath?: string): Database.Database {
   // Foreign keys enforced at runtime
   db.pragma('foreign_keys = ON')
 
-  runMigrations(db)
+  migrateDatabase(db, resolvedPath)
 
   return db
 }
@@ -55,7 +55,7 @@ export function openDatabase(dbPath?: string): Database.Database {
 // Migrations run in version order. Already-applied versions are skipped.
 // Never modify a migration that has already shipped — add a new one instead.
 
-interface Migration {
+export interface Migration {
   version: number
   sql: string
 }
@@ -313,7 +313,15 @@ const MIGRATIONS: Migration[] = [
   },
 ]
 
-function runMigrations(db: Database.Database): void {
+// How many copies saved before an upgrade are kept beside the database.
+const KEEP_BACKUPS = 3
+
+/**
+ * Brings the database up to date. A database made by a newer version is refused (it would be run with code that
+ * doesn't know its tables), and an existing database is copied beside itself before any upgrade, so an upgrade
+ * that goes wrong can always be undone.
+ */
+export function migrateDatabase(db: Database.Database, dbPath: string, migrations: Migration[] = MIGRATIONS): void {
   // Ensure the version tracker exists before we query it
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_version (
@@ -326,9 +334,15 @@ function runMigrations(db: Database.Database): void {
     'SELECT version FROM schema_version ORDER BY version DESC LIMIT 1'
   )
   const current = getVersion.get()?.version ?? 0
+  const newest = Math.max(0, ...migrations.map((m) => m.version))
+  if (current > newest) {
+    throw new Error(`This database was made by a newer version of Mission Control (database version ${current}; this version knows up to ${newest}). `
+      + `Install the newer version again, or restore one of the copies saved beside ${dbPath}.`)
+  }
 
-  const pending = MIGRATIONS.filter((m) => m.version > current)
+  const pending = migrations.filter((m) => m.version > current)
   if (pending.length === 0) return
+  if (current > 0) backUp(db, dbPath, pending[0]!.version)
 
   for (const migration of pending) {
     db.transaction(() => {
@@ -340,6 +354,23 @@ function runMigrations(db: Database.Database): void {
     })()
     console.log(`[db] applied migration v${migration.version}`)
   }
+}
+
+// Copies the whole database to <name>.before-v<next>-<UTC time> beside it, then keeps only the newest copies.
+function backUp(db: Database.Database, dbPath: string, nextVersion: number): void {
+  if (dbPath === ':memory:') return
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)
+  const copy = `${dbPath}.before-v${nextVersion}-${stamp}`
+  db.exec(`VACUUM INTO '${copy.replace(/'/g, "''")}'`)
+  fs.chmodSync(copy, 0o600)
+  console.log(`[db] saved a copy before upgrading: ${copy}`)
+
+  const dir = path.dirname(dbPath)
+  const prefix = `${path.basename(dbPath)}.before-v`
+  const copies = fs.readdirSync(dir)
+    .filter((name) => name.startsWith(prefix) && /-\d{8}-\d{6}$/.test(name))
+    .sort((a, b) => a.slice(-15).localeCompare(b.slice(-15)))
+  for (const old of copies.slice(0, Math.max(0, copies.length - KEEP_BACKUPS))) fs.rmSync(path.join(dir, old), { force: true })
 }
 
 // ---------------------------------------------------------------------------
