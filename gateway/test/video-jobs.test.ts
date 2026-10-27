@@ -23,7 +23,7 @@ const SECRET_PROMPT = Buffer.from('"prompt": "my private prompt"')
 const MP4 = Buffer.concat([box('ftyp', Buffer.from('isom')), box('moov', box('udta', SECRET_PROMPT)), box('mdat', Buffer.from('frames'))])
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3])
 
-interface FakeOptions { argv?: string[]; vramFreeGb?: number; missingNode?: string; fail?: boolean; videoBody?: Buffer; hang?: boolean }
+interface FakeOptions { argv?: string[]; vramFreeGb?: number; missingNode?: string; fail?: boolean; videoBody?: Buffer; hang?: boolean; statsDelayMs?: number; vramFreeSequence?: number[] }
 
 async function fakeComfy(opts: FakeOptions = {}) {
   const sockets = new Map<string, WebSocket>()
@@ -31,11 +31,19 @@ async function fakeComfy(opts: FakeOptions = {}) {
   const uploads: Array<{ name: string; body: Buffer }> = []
   let freed = 0
   let cancelled = 0
+  let statsCalls = 0
   const server = http.createServer((req, res) => {
     const url = new URL(req.url!, 'http://x')
     const json = (value: unknown, status = 200) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(value)) }
     if (url.pathname === '/system_stats') {
-      return json({ system: { comfyui_version: '0.9.9', argv: opts.argv ?? ['main.py'] }, devices: [{ name: 'Fake GPU', vram_total: 16 * 1024 ** 3, vram_free: (opts.vramFreeGb ?? 15) * 1024 ** 3 }] })
+      statsCalls++
+      // vramFreeSequence: free memory as ComfyUI reports it on each ask (the last value repeats), like memory coming back after a job.
+      const seq = opts.vramFreeSequence
+      const freeGb = seq ? seq[Math.min(statsCalls - 1, seq.length - 1)]! : (opts.vramFreeGb ?? 15)
+      const stats = { system: { comfyui_version: '0.9.9', argv: opts.argv ?? ['main.py'] }, devices: [{ name: 'Fake GPU', vram_total: 16 * 1024 ** 3, vram_free: freeGb * 1024 ** 3 }] }
+      // A slow answer holds a job in its checks before anything reaches ComfyUI (the window two quick presses fell into).
+      if (opts.statsDelayMs) return void setTimeout(() => json(stats), opts.statsDelayMs)
+      return json(stats)
     }
     if (url.pathname.startsWith('/object_info/')) {
       const cls = decodeURIComponent(url.pathname.slice('/object_info/'.length))
@@ -93,16 +101,17 @@ async function fakeComfy(opts: FakeOptions = {}) {
   const port = (server.address() as AddressInfo).port
   return {
     url: `http://127.0.0.1:${port}`,
-    prompts, uploads, freed: () => freed, cancelled: () => cancelled,
-    close: () => new Promise<void>((r) => { wss.close(); server.closeAllConnections(); server.close(() => r()) }),
+    prompts, uploads, freed: () => freed, cancelled: () => cancelled, statsCalls: () => statsCalls,
+    close: () => new Promise<void>((r) => { for (const c of wss.clients) c.terminate(); wss.close(); server.closeAllConnections(); server.close(() => r()) }),
   }
 }
 
-function setup(comfyUrl: string) {
+// Memory is waited for briefly here; the real wait is longer (see MEMORY_WAIT_MS in jobs.ts).
+function setup(comfyUrl: string, timing = { memoryWaitMs: 1000, memoryPollMs: 20, recentFreeMs: 30_000 }) {
   const dir = mkdtempSync(join(tmpdir(), 'mc-video-'))
   const db = openDatabase(join(dir, 'test.sqlite'))
   const events: VideoEvent[] = []
-  const jobs = new VideoJobs(db, join(dir, 'media'), () => ({ comfyUrl, freeAfterJob: true }), (e) => events.push(e))
+  const jobs = new VideoJobs(db, join(dir, 'media'), () => ({ comfyUrl, freeAfterJob: true }), (e) => events.push(e), timing)
   const finished = (id: string) => new Promise<VideoEvent>((resolve) => {
     const timer = setInterval(() => {
       const end = events.find((e) => e.id === id && ['done', 'failed', 'cancelled'].includes(e.status))
@@ -171,13 +180,47 @@ test('--listen 127.0.0.1 is fine', async () => {
 
 test('too little free graphics memory stops the job with a plain reason', async () => {
   const comfy = await fakeComfy({ vramFreeGb: 3 })
-  const { jobs, finished } = setup(comfy.url)
+  const { jobs, events, finished } = setup(comfy.url)
   try {
-    const end = await finished(jobs.submit('ltx25-t2v', { prompt: 'x' }))
+    const id = jobs.submit('ltx25-t2v', { prompt: 'x' })
+    const end = await finished(id)
     assert.equal(end.status, 'failed')
     assert.match(end.error!, /Not enough free graphics memory: 3\.0 GB free/)
+    assert.ok(!events.some((e) => e.id === id && e.stage === 'Waiting for graphics memory'), 'no wait when no job has just finished')
     assert.equal(comfy.prompts.length, 0)
   } finally { await comfy.close() }
+})
+
+test('memory still being handed back after the last job: the next one waits for it instead of failing', async () => {
+  // The first job sees a free card; the second sees the first's memory still in use for two asks, then free.
+  const comfy = await fakeComfy({ vramFreeSequence: [15, 3, 3, 15] })
+  const { jobs, events, finished } = setup(comfy.url)
+  try {
+    assert.equal((await finished(jobs.submit('ltx25-t2v', { prompt: 'first' }))).status, 'done')
+    const second = jobs.submit('ltx25-t2v', { prompt: 'second' })
+    assert.equal((await finished(second)).status, 'done')
+    assert.ok(events.some((e) => e.id === second && e.stage === 'Waiting for graphics memory'), 'the page is told it is waiting')
+    assert.ok(events.some((e) => e.id === second && e.stage === 'Getting the video ready'), 'and when the wait is over')
+    assert.ok(comfy.statsCalls() >= 4, 'ComfyUI was asked again')
+    assert.equal(comfy.prompts.length, 2)
+  } finally { await comfy.close() }
+})
+
+test('a job waiting for graphics memory can be stopped', { timeout: 10_000 }, async () => {
+  // A first job runs on a free card; after it the card stays full, so the second waits until it is stopped.
+  const comfy = await fakeComfy({ vramFreeSequence: [15, 3] })
+  const { jobs, events, finished } = setup(comfy.url, { memoryWaitMs: 5000, memoryPollMs: 200, recentFreeMs: 30_000 })
+  try {
+    assert.equal((await finished(jobs.submit('ltx25-t2v', { prompt: 'first' }))).status, 'done')
+    const id = jobs.submit('ltx25-t2v', { prompt: 'x' })
+    assert.ok(await waitFor(() => events.some((e) => e.id === id && e.stage === 'Waiting for graphics memory')))
+    assert.equal(jobs.cancel(id), true)
+    assert.ok(await waitFor(() => events.some((e) => e.id === id && e.status === 'cancelled'), 1000), 'it stops without waiting the full time')
+    assert.equal(comfy.prompts.length, 1, 'only the first job was sent')
+  } finally {
+    for (const v of jobs.list()) jobs.cancel(v.id)
+    await comfy.close()
+  }
 })
 
 test('a missing node is named, and nothing is sent', async () => {
@@ -226,6 +269,57 @@ test('a running job can be stopped', async () => {
     assert.ok(comfy.cancelled() > 0, 'ComfyUI was told to stop')
     for (let i = 0; i < 50 && comfy.freed() === 0; i++) await new Promise((r) => setTimeout(r, 10))   // let the job hand memory back before the fake closes
   } finally { await comfy.close() }
+})
+
+// Waits up to a few seconds for a condition, so a broken queue fails the test instead of hanging it.
+async function waitFor(check: () => boolean, ms = 3000): Promise<boolean> {
+  const end = Date.now() + ms
+  while (!check() && Date.now() < end) await new Promise((r) => setTimeout(r, 10))
+  return check()
+}
+
+// The timeout turns a broken queue into a failure: there, the first job can no longer be stopped and would hold the run open.
+test('pressing Make video twice quickly: the second waits its turn instead of starting alongside the first', { timeout: 10_000 }, async () => {
+  const comfy = await fakeComfy({ hang: true, statsDelayMs: 150 })
+  const { jobs, events, finished } = setup(comfy.url)
+  try {
+    const first = jobs.submit('ltx25-t2v', { prompt: 'first' })
+    await new Promise((r) => setTimeout(r, 20))   // the first job is now in its checks, not yet in ComfyUI
+    const second = jobs.submit('ltx25-t2v', { prompt: 'second' })
+    assert.ok(await waitFor(() => comfy.prompts.length > 0), 'the first job reaches ComfyUI')
+    await new Promise((r) => setTimeout(r, 300))   // time for a wrongly started second job to reach ComfyUI too
+    assert.equal(comfy.prompts.length, 1, 'only one job is sent to ComfyUI')
+    assert.ok(!events.some((e) => e.id === second && e.status === 'running'), 'the second job is still waiting')
+    assert.deepEqual(jobs.list().map((v) => [v.id, v.status]), [[second, 'queued'], [first, 'running']])
+
+    // Stopping the first lets the second start.
+    assert.equal(jobs.cancel(first), true)
+    assert.ok(await waitFor(() => events.some((e) => e.id === first && e.status === 'cancelled')), 'the first job stops')
+    assert.ok(await waitFor(() => comfy.prompts.length === 2), 'then the second job starts')
+    assert.equal(jobs.cancel(second), true)
+    assert.equal((await finished(second)).status, 'cancelled')
+    await waitFor(() => comfy.freed() === 2, 500)
+  } finally {
+    for (const v of jobs.list()) jobs.cancel(v.id)   // on a failure, nothing is left running to keep the test alive
+    await comfy.close()
+  }
+})
+
+test('a job can be stopped while it is still being checked, before anything reaches ComfyUI', { timeout: 10_000 }, async () => {
+  const comfy = await fakeComfy({ hang: true, statsDelayMs: 150 })
+  const { jobs, events } = setup(comfy.url)
+  try {
+    const id = jobs.submit('ltx25-t2v', { prompt: 'x' })
+    assert.ok(await waitFor(() => comfy.statsCalls() > 0), 'the job is in its checks')
+    assert.equal(jobs.cancel(id), true, 'a job in its checks can be stopped')
+    assert.ok(events.some((e) => e.id === id && e.stage === 'Stopping'), 'the page is told at once that it is stopping')
+    assert.ok(await waitFor(() => events.some((e) => e.id === id && e.status === 'cancelled')), 'it ends as stopped')
+    await new Promise((r) => setTimeout(r, 300))
+    assert.equal(comfy.prompts.length, 0, 'nothing was sent to ComfyUI')
+  } finally {
+    for (const v of jobs.list()) jobs.cancel(v.id)
+    await comfy.close()
+  }
 })
 
 test('only a loopback ComfyUI address is used', async () => {
