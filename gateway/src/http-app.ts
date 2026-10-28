@@ -136,11 +136,11 @@ export function buildHttpApp(uiDir: string | null): Express {
       setHeaders: (res) => { res.setHeader('Cache-Control', 'no-cache') },
     }))
 
-    // Client-side routes (/chat, /settings, ...) all load the app shell.
-    const indexHtml = join(uiDir, 'index.html')
-    app.get('*', (_req, res) => {
+    // Client-side routes (/chat, /settings, ...) all load the app shell. Sent relative to `root`: Express 5 refuses an
+    // absolute path with a dot-folder in it, and installed copies keep the UI inside ~/.missioncontrol.
+    app.get('/{*splat}', (_req, res) => {
       res.setHeader('Cache-Control', 'no-store')
-      res.sendFile(indexHtml)
+      res.sendFile('index.html', { root: uiDir })
     })
   }
 
