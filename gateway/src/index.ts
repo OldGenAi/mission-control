@@ -40,6 +40,7 @@ import { VideoJobs } from './video/jobs.js'
 import { VideoCast } from './video/cast.js'
 import { FilmStore } from './video/films.js'
 import { FilmDirector } from './video/film-director.js'
+import { FilmHelper } from './video/film-helper.js'
 import { FILM_EDIT_FAST, FILM_EDIT_FINE } from './video/film-recipes.js'
 import { findFfmpeg, joinFilm, makeSheet } from './video/ffmpeg.js'
 import { CardShare } from './providers/card-share.js'
@@ -267,7 +268,17 @@ filmDirector = new FilmDirector({
 })
 void filmDirector.start()
 registerVideoMethods(videoJobs, new VideoCast(db, (id) => videoJobs.hasImage(id)), () => settingsStore.get().comfyUrl, films, ffmpeg)
-registerFilmMakingMethods(filmDirector)
+// The story helper uses the local model chat uses, through the same gate (card sharing counts it). No tools.
+const filmHelper = new FilmHelper({
+  server: () => {
+    const s = settingsStore.get()
+    const active = s.instances.find((i) => i.id === s.activeInstanceId)
+    const local = active?.provider === 'local' ? active : s.instances.find((i) => i.provider === 'local')
+    return { baseUrl: s.localProviderUrl, apiKey: s.providerKeys.local || undefined, model: local?.model ?? s.defaultModel }
+  },
+  gate: cardShare,
+})
+registerFilmMakingMethods(filmDirector, films, filmHelper)
 // A Video page video, or one of a live film's shot clips (whose links only video.film.get hands out).
 setVideoFileResolver((id) => videoJobs.filePath(id) ?? films.clipPath(id))
 setPictureFileResolver((id) => films.picturePath(id))
