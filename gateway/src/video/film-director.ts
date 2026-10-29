@@ -20,6 +20,7 @@ import {
 } from './film-wording.js'
 import { PICTURE_STAGES, STOP_FIRST, followsOn, slotBasis, type Film, type FilmCastMember, type FilmShot, type FilmStage, type FilmStore, type OwnerKind } from './films.js'
 import { VideoRequestError, type VideoEvent, type VideoStatus } from './jobs.js'
+import { plainPng } from './png-strip.js'
 import type { Recipe } from './recipes.js'
 
 const FPS = 24
@@ -29,6 +30,8 @@ const SHEET_TIMEOUT_MS = 30_000
 const JOIN_TIMEOUT_MS = 10 * 60_000
 const FADE_FRAMES: Record<string, 0 | 12 | 24> = { follows: 0, fade_short: 12, fade_long: 24 }
 const SHEET_SIZE = { width: 1280, height: 704 }
+// The size the picture edits work at (FluxKontextImageScale keeps this 16:9-ish shape), for the first place's blank.
+const BLANK_SIZE = { width: 1392, height: 752 }
 // Room a sheet or a join needs on the drive, with plenty to spare: a joined film is at most 1 GB.
 const MIN_FREE_BYTES = 2 * 1024 ** 3
 const RESTARTED = 'Mission Control restarted while this was being made. Press Make film to carry on.'
@@ -419,7 +422,12 @@ export class FilmDirector {
   private masters(film: Film, place: Film['places'][number]): PictureTask[] {
     const first = film.places[0]!
     const slot = { ownerKind: 'place' as const, ownerId: place.id, role: 'master' }
-    if (place.id === first.id) return this.twice(film, this.o.recipes.fast, film.cast[0]!.pictureId!, [{ prompt: firstMasterPrompt(place, film.look as FilmLook) }], slot)
+    // The first place is drawn from a plain blank picture: drawn from a character's picture, the character could stay
+    // in it (hand test T9, a master of Tom's picture kept Tom).
+    if (place.id === first.id) {
+      const blank = this.o.queue.savePicture(plainPng(BLANK_SIZE.width, BLANK_SIZE.height, 200), BLANK_SIZE)
+      return this.twice(film, this.o.recipes.fast, blank, [{ prompt: firstMasterPrompt(place, film.look as FilmLook) }], slot)
+    }
     return this.twice(film, this.o.recipes.fast, first.masterId!, [{ prompt: laterMasterPrompt(place) }], slot)
   }
 

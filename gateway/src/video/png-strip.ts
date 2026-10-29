@@ -7,6 +7,8 @@
 // IHDR must come first, every chunk's checksum must match, and nothing after IEND is kept. An animated PNG is
 // refused rather than cut down to its first frame.
 
+import { deflateSync } from 'node:zlib'
+
 const SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 // The picture itself, and the two colour hints that are plain numbers.
 const KEPT = new Set(['IHDR', 'PLTE', 'tRNS', 'IDAT', 'IEND', 'sRGB', 'gAMA'])
@@ -26,6 +28,28 @@ function crc32(buf: Buffer, start: number, end: number): number {
   let c = 0xffffffff
   for (let i = start; i < end; i++) c = CRC_TABLE[(c ^ buf[i]!) & 0xff]! ^ (c >>> 8)
   return (c ^ 0xffffffff) >>> 0
+}
+
+function chunk(type: string, data: Buffer): Buffer {
+  const out = Buffer.alloc(12 + data.length)
+  out.writeUInt32BE(data.length, 0)
+  out.write(type, 4, 'latin1')
+  data.copy(out, 8)
+  out.writeUInt32BE(crc32(out, 4, 8 + data.length), 8 + data.length)
+  return out
+}
+
+/** A plain grey picture of this size: what the first place of a film is drawn from (nobody in it to keep). */
+export function plainPng(width: number, height: number, grey: number): Buffer {
+  const header = Buffer.alloc(13)
+  header.writeUInt32BE(width, 0)
+  header.writeUInt32BE(height, 4)
+  header[8] = 8 // bits per sample
+  header[9] = 2 // RGB
+  const row = Buffer.alloc(1 + width * 3, grey)
+  row[0] = 0 // no filter
+  const pixels = deflateSync(Buffer.concat(Array.from({ length: height }, () => row)))
+  return Buffer.concat([SIGNATURE, chunk('IHDR', header), chunk('IDAT', pixels), chunk('IEND', Buffer.alloc(0))])
 }
 
 /** The picture without its metadata, or null when it isn't a sound, still PNG. */
