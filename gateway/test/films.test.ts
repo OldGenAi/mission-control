@@ -10,7 +10,7 @@ import { join } from 'node:path'
 import { openDatabase } from '../src/store/db.js'
 import { VideoCast } from '../src/video/cast.js'
 import { VideoJobs, VideoRequestError } from '../src/video/jobs.js'
-import { FilmStore, MAX_FILMS, MAX_PLACES, MAX_SHOTS, MAX_CANDIDATES } from '../src/video/films.js'
+import { FilmStore, MAX_FILMS, MAX_PLACES, MAX_SHOTS, MAX_CANDIDATES, slotBasis } from '../src/video/films.js'
 import { registerFilmMakingMethods, registerVideoMethods } from '../src/methods/video.js'
 import type { FilmDirector } from '../src/video/film-director.js'
 import type { FilmHelper } from '../src/video/film-helper.js'
@@ -635,6 +635,87 @@ test('video.film.plan: the helper sees the film\'s own cast with its kinds, and 
   await assert.rejects(dispatch('video.film.plan', { filmId: film.id }, client), { code: 'INVALID_PARAMS', message: 'This film already has a plan. Replace it?' })
   await dispatch('video.film.plan', { filmId: film.id, replace: true }, client)
   assert.equal(s.films.get(film.id)!.shots.length, 1)
+})
+
+test('a picture made from older words, characters or master is out of date: refused when chosen, current again if the change is undone (review M1)', () => {
+  const s = setup()
+  const { film, garden, shots } = filmWithPlan(s)
+  setStage(s.db, film.id, 'shots')
+  s.films.choose(film.id, candidate(s, film.id, 'place', garden.id, 'master').pictureId)
+  s.films.useMasterAsEmpty(film.id)
+  const shot = shots[0]!
+  const basis = () => slotBasis(s.films.get(film.id)!, 'shot', shot.id, 'start')
+  const made = (b: string | null) => s.films.addCandidate(film.id, { ownerKind: 'shot', ownerId: shot.id, role: 'start', jobId: finishedPictureJob(s, film.id).jobId, seed: 1, basis: b ?? '' })
+  const old = made(basis())
+  const shown = () => s.films.get(film.id)!.pictures.find((p) => p.id === old)!
+  assert.equal(shown().stale, false)
+  const rex = shot.characters[0]!
+  const fields = { id: shot.id, placeId: garden.id, characters: [rex], action: shot.action, seconds: shot.seconds, joins: shot.joins, closeUp: false }
+  s.films.saveShot(film.id, { ...fields, characters: [{ ...rex, startPose: 'sitting by the gate' }] })
+  assert.equal(shown().stale, true, 'the start pose changed')
+  refused(() => s.films.choose(film.id, old), /made before/)
+  refused(() => made('["old"]'), /changed/)
+  s.films.saveShot(film.id, { ...fields, characters: [rex] })
+  assert.equal(shown().stale, false, 'the same words again')
+  s.films.saveShot(film.id, { ...fields, action: 'trots to the door' })
+  assert.equal(shown().stale, false, 'a new action keeps the pictures')
+  s.films.choose(film.id, candidate(s, film.id, 'place', garden.id, 'master').pictureId)
+  assert.equal(shown().stale, true, 'a new master for the place')
+  // A candidate with no basis (the store's own tests) is never out of date.
+  assert.equal(s.films.get(film.id)!.pictures.filter((p) => p.ownerKind === 'place').every((p) => !p.stale), true)
+})
+
+test('a follows-on shot always starts on the end picture of the shot before (review S1)', () => {
+  const s = setup()
+  const { film, garden, shots } = filmWithPlan(s)
+  setStage(s.db, film.id, 'shots')
+  const end = candidate(s, film.id, 'shot', shots[0]!.id, 'end')
+  s.films.choose(film.id, end.pictureId)
+  const second = s.films.get(film.id)!.shots[1]!
+  assert.equal(second.startId, end.imageId)
+  const rex = second.characters[0]!
+  const fields = { id: second.id, placeId: garden.id, characters: [rex], action: second.action, seconds: second.seconds, joins: 'follows', closeUp: false }
+  s.films.saveShot(film.id, { ...fields, characters: [{ ...rex, startPose: 'a new start' }] })
+  assert.equal(s.films.get(film.id)!.shots[1]!.startId, end.imageId, 'a new start pose still starts where shot 1 ends')
+  // A shot that becomes follows-on drops its own start for the end picture before it.
+  s.films.saveShot(film.id, { ...fields, joins: 'fade_short' })
+  const own = candidate(s, film.id, 'shot', second.id, 'start')
+  s.films.choose(film.id, own.pictureId)
+  assert.equal(s.films.get(film.id)!.shots[1]!.startId, own.imageId)
+  const before = s.films.get(film.id)!.shots[1]!.revision
+  s.films.saveShot(film.id, { ...fields, joins: 'follows' })
+  assert.equal(s.films.get(film.id)!.shots[1]!.startId, end.imageId)
+  assert.ok(s.films.get(film.id)!.shots[1]!.revision > before)
+})
+
+test('moving shots keeps every follows-on shot on the end picture of the shot now before it', () => {
+  const s = setup()
+  const film = s.films.create({ ...FILM, castIds: [s.rex.id] })
+  const garden = s.films.savePlace(film.id, { name: 'The garden', description: 'a garden', keep: 'the door stays shut' })
+  const shot = () => s.films.saveShot(film.id, { placeId: garden.id, characters: [{ castId: s.rex.id, startPose: 'standing', endPose: 'sitting' }], action: 'sits', seconds: 5, joins: 'follows', closeUp: false })
+  const [p, q, r] = [shot(), shot(), shot()]
+  setStage(s.db, film.id, 'shots')
+  const ends = [p, q, r].map((x) => { const c = candidate(s, film.id, 'shot', x.id, 'end'); s.films.choose(film.id, c.pictureId); return c.imageId })
+  s.films.moveShot(film.id, r.id, 0)
+  const moved = s.films.get(film.id)!.shots
+  assert.deepEqual(moved.map((x) => x.id), [r.id, p.id, q.id])
+  assert.deepEqual(moved.map((x) => x.startId), [ends[1], ends[2], ends[0]], 'R keeps the start it had; P now starts on the end of R, Q on the end of P')
+  s.films.deleteShot(film.id, p.id)
+  assert.equal(s.films.get(film.id)!.shots[1]!.startId, ends[2], 'Q now follows R')
+})
+
+test('a new reference sheet for a place remakes the shots there; the sheet remembers what it was made from (review S2)', () => {
+  const s = setup()
+  const { film, garden, shots } = filmWithPlan(s)
+  setStage(s.db, film.id, 'shots')
+  s.films.setSheet(film.id, garden.id, s.picture(), 'basis one')
+  const first = s.films.get(film.id)!
+  assert.equal(first.places[0]!.sheetBasis, 'basis one')
+  s.films.setSheet(film.id, garden.id, s.picture(), 'basis two')
+  const second = s.films.get(film.id)!
+  assert.equal(second.places[0]!.sheetBasis, 'basis two')
+  assert.deepEqual(second.shots.map((x, i) => x.revision - first.shots[i]!.revision), [1, 1, 0], 'only the garden\'s shots')
+  assert.equal(shots.length, 3)
 })
 
 test('no AI tool can reach the film modules (harness fit, storyboard spec 16)', () => {
