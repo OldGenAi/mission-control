@@ -150,7 +150,9 @@ function buildShot(values: ParamValues, outputPrefix: string): ComfyGraph {
   })
   const split = g.add('LTXVSeparateAVLatent', { av_latent: sampled(1) })
   const cropped = g.add('LTXVCropGuides', { positive: guided(0), negative: guided(1), latent: split(0) })
-  const decoded = g.add('VAEDecodeTiled', { samples: cropped(2), vae: vae(), tile_size: 512, overlap: 64, temporal_size: 64, temporal_overlap: 8 })
+  // 16 frames of overlap, as the Video page's recipes: at the proven script's 8 the clip flickers where one 64-frame
+  // chunk hands over to the next (hand test T8).
+  const decoded = g.add('VAEDecodeTiled', { samples: cropped(2), vae: vae(), tile_size: 512, overlap: 64, temporal_size: 64, temporal_overlap: 16 })
   const audio = g.add('LTXVAudioVAEDecode', { samples: split(1), audio_vae: audioVae() })
   g.add('SaveVideo', {
     video: g.add('CreateVideo', { images: decoded(), audio: audio(), fps: SHOT_FPS })(), filename_prefix: outputPrefix, format: 'auto', codec: 'auto',
