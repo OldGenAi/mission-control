@@ -1,7 +1,7 @@
 // Run with: npm test
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { checkMediaLink, issueMediaLink, MEDIA_LINK_TTL_SEC } from '../src/video/media-links.js'
+import { checkMediaLink, checkPictureLink, issueMediaLink, issuePictureLink, MEDIA_LINK_TTL_SEC } from '../src/video/media-links.js'
 
 const SECRET = 'ab'.repeat(32)
 const OTHER = 'cd'.repeat(32)
@@ -50,4 +50,15 @@ test('malformed parts are refused without throwing', () => {
 
 test('only video ids can be signed', () => {
   assert.throws(() => issueMediaLink(SECRET, '../x', NOW))
+})
+
+test('a picture link opens only a picture, and a video link only a video', () => {
+  assert.match(issuePictureLink(SECRET, ID, NOW), /^\/media\/picture\/[0-9a-f]{32}\?e=\d+&s=[0-9a-f]{64}$/)
+  const picture = parts(issuePictureLink(SECRET, ID, NOW))
+  assert.equal(checkPictureLink(SECRET, picture.id, picture.e, picture.s, NOW), true)
+  assert.equal(checkMediaLink(SECRET, picture.id, picture.e, picture.s, NOW), false)
+  const video = parts(issueMediaLink(SECRET, ID, NOW))
+  assert.equal(checkPictureLink(SECRET, video.id, video.e, video.s, NOW), false)
+  assert.equal(checkPictureLink(SECRET, picture.id, picture.e, picture.s, NOW + MEDIA_LINK_TTL_SEC * 1000), false)
+  assert.equal(checkPictureLink(SECRET, '../x', picture.e, picture.s, NOW), false)
 })
