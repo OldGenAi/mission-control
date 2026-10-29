@@ -55,8 +55,9 @@ function setup(opts: { shot?: Recipe | null } = {}) {
   const events: FilmEvent[] = []
   const joins: JoinPlan[] = []
   const sheets: SheetPictures[] = []
-  const calls = { interruptAndFree: 0, maxActive: 0 }
+  const calls = { interruptAndFree: 0, maxActive: 0, stopLeftover: [] as string[], pidFiles: [] as string[] }
   let diskUsage: number | null = null
+  let freeBytes = 100 * 1024 ** 3
   let director: FilmDirector
   const active = () => submitted.filter((j) => j.status === 'queued' || j.status === 'running').length
 
@@ -77,12 +78,13 @@ function setup(opts: { shot?: Recipe | null } = {}) {
     },
     statusOf: (id) => jobs.statusOf(id),
     pictureOf: (id) => jobs.pictureOf(id),
-    savePicture: (buf) => jobs.savePicture(buf),
+    savePicture: (buf, size) => jobs.savePicture(buf, size),
     addJoinedFilm: (id, bytes) => jobs.addJoinedFilm(id, bytes),
     removeFilmClip: (id, filmId) => jobs.removeFilmClip(id, filmId),
     removeUnkept: (id) => jobs.removeUnkept(id),
     diskUsage: () => diskUsage ?? jobs.diskUsage(),
     diskLimit: jobs.diskLimit,
+    freeBytes: () => freeBytes,
     interruptAndFree: async () => { calls.interruptAndFree++ },
   }
 
@@ -100,8 +102,9 @@ function setup(opts: { shot?: Recipe | null } = {}) {
     recipes: { fast: FILM_EDIT_FAST, fine: FILM_EDIT_FINE, shot },
     ffmpeg: {
       tools: () => ({ ffmpeg: '/usr/bin/ffmpeg', ffprobe: '/usr/bin/ffprobe', version: '8.0.1' }),
-      join: async (_tools, dirOut, plan, outId) => { joins.push(plan); writeFileSync(join(dirOut, `${outId}.mp4`), 'film'); return { frames: 1, bytes: 4 } },
-      sheet: async (_tools, _inputs, pictures) => { sheets.push(pictures); return PNG },
+      join: async (_tools, dirOut, plan, outId, options) => { joins.push(plan); calls.pidFiles.push(options.pidFile!); writeFileSync(join(dirOut, `${outId}.mp4`), 'film'); return { frames: 1, bytes: 4 } },
+      sheet: async (_tools, _inputs, pictures, options) => { sheets.push(pictures); calls.pidFiles.push(options.pidFile!); return PNG },
+      stopLeftover: (pidFile) => { calls.stopLeftover.push(pidFile) },
     },
   })
   director = make(opts.shot === undefined ? SHOT : opts.shot)
@@ -142,7 +145,7 @@ function setup(opts: { shot?: Recipe | null } = {}) {
   const tom = cast.save({ name: 'Tom', wording: 'a man in his sixties with a flat tweed cap', imageId: castPicture() })
   return { db, mediaDir, jobs, cast, films, picture, submitted, events, joins, sheets, calls, rex, nip, tom, next, finishAll, active,
     get director() { return director }, restart: () => { director = make(opts.shot === undefined ? SHOT : opts.shot); return director },
-    setDiskUsage: (bytes: number | null) => { diskUsage = bytes } }
+    setDiskUsage: (bytes: number | null) => { diskUsage = bytes }, setFreeBytes: (bytes: number) => { freeBytes = bytes } }
 }
 
 type Setup = ReturnType<typeof setup>
@@ -714,4 +717,31 @@ test('Redo refused because another film is being made leaves the shot\'s seed as
   assert.throws(() => s.director.redo(a.film.id, a.shots[1]!.id, true), /another film/)
   assert.equal(s.films.get(a.film.id)!.shots[1]!.seed, seed)
   await s.director.stop(b.film.id)
+})
+
+test('Make film stops before a sheet or the join when the drive itself is nearly full (spec 15.7)', async () => {
+  const s = setup()
+  const p = await readyToMake(s)
+  s.setFreeBytes(500 * 1024 ** 2)
+  s.director.make(p.film.id)
+  await s.director.idle()
+  const film = s.films.get(p.film.id)!
+  assert.equal(film.stage, 'stopped')
+  assert.match(film.problem!, /nearly full/)
+  assert.equal(s.sheets.length, 0)
+})
+
+test('at start, a leftover ffmpeg from before a restart is stopped first (spec 15.7)', async () => {
+  const s = setup()
+  await s.restart().start()
+  assert.deepEqual(s.calls.stopLeftover, [join(s.mediaDir, 'ffmpeg.pid')])
+})
+
+test('sheets and the join name the pid file that lets a restart stop a leftover ffmpeg', async () => {
+  const s = setup()
+  const p = await readyToMake(s)
+  s.director.make(p.film.id)
+  await s.finishAll()
+  assert.ok(s.calls.pidFiles.length >= 3)
+  assert.ok(s.calls.pidFiles.every((f) => f === join(s.mediaDir, 'ffmpeg.pid')))
 })

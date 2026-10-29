@@ -5,11 +5,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import {
-  checkFilterGraph, findFfmpeg, joinCommand, joinFilm, makeSheet, runFfmpeg, FfmpegError, type JoinPlan,
+  checkFilterGraph, ffmpegMajor, findFfmpeg, joinCommand, joinFilm, makeSheet, runFfmpeg, stopLeftoverFfmpeg, supportsOptionFiles, FfmpegError, type JoinPlan,
 } from '../src/video/ffmpeg.js'
 
 const A = 'a'.repeat(32)
@@ -176,4 +176,61 @@ test('a real reference sheet in the red door layout', { skip: !tools }, async ()
   const noProp = await makeSheet(tools!, inputs, { place: ids[0]!, turnaround: ids[1]!, face: ids[2]!, placeWithCast: ids[4]! }, { timeoutMs: 60_000 })
   assert.equal(noProp.readUInt32BE(16), 1280)
   await assert.rejects(makeSheet(tools!, inputs, { place: '../../x', turnaround: ids[1]!, face: ids[2]!, placeWithCast: ids[4]! }, { timeoutMs: 60_000 }), FfmpegError)
+})
+
+test('the filter graph goes in a file only where ffmpeg can read option files (7.0 and newer); older ones get it inline', () => {
+  for (const [version, yes] of [['8.0.1-3ubuntu2', true], ['7.1-full_build-www.gyan.dev', true], ['n7.0.2', true], ['N-118000-gdeadbeef', true],
+    ['2025-01-20-git-1234-full_build-www.gyan.dev', true], ['6.1.1-3ubuntu5', false], ['4.4.2-0ubuntu0.22.04.1', false], ['test', false]] as const) {
+    assert.equal(supportsOptionFiles(version), yes, version)
+  }
+  assert.equal(ffmpegMajor('6.1.1-3ubuntu5'), 6)
+  assert.equal(ffmpegMajor('N-118000-gdeadbeef'), null)
+  const file = joinCommand('/media', plan(), [true, false], { filter: '/media/tmp-x.filter', output: '/media/tmp-y.mp4' })
+  assert.deepEqual(file.args.slice(file.args.indexOf('-/filter_complex'), file.args.indexOf('-/filter_complex') + 2), ['-/filter_complex', '/media/tmp-x.filter'])
+  const inline = joinCommand('/media', plan(), [true, false], { filter: '/media/tmp-x.filter', output: '/media/tmp-y.mp4' }, true)
+  assert.ok(!inline.args.includes('-/filter_complex'))
+  assert.equal(inline.args[inline.args.indexOf('-filter_complex') + 1], inline.filter)
+})
+
+// A stand-in ffmpeg that writes down how it was started, then fails.
+function recordingFfmpeg(version: string) {
+  const dir = mkdtempSync(join(tmpdir(), 'mc-ff-rec-'))
+  writeFileSync(join(dir, 'ffmpeg'), `#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "${dir}/args"\nexit 1\n`)
+  chmodSync(join(dir, 'ffmpeg'), 0o755)
+  return { tools: { ffmpeg: join(dir, 'ffmpeg'), ffprobe: join(dir, 'ffmpeg'), version }, args: () => readFileSync(join(dir, 'args'), 'utf8').trim().split('\n') }
+}
+
+test('the sheet run has its own size and time limits, and its filter inline for an older ffmpeg', { skip: !unix }, async () => {
+  const inputs = mkdtempSync(join(tmpdir(), 'mc-ff-inputs-'))
+  const ids = ['1', '2', '3', '4'].map((d) => d.repeat(32))
+  for (const id of ids) writeFileSync(join(inputs, `${id}.png`), 'png')
+  const pictures = { place: ids[0]!, turnaround: ids[1]!, face: ids[2]!, placeWithCast: ids[3]! }
+  const fresh = recordingFfmpeg('8.0.1')
+  await assert.rejects(makeSheet(fresh.tools, inputs, pictures, { timeoutMs: 10_000 }), /could not finish/)
+  const args = fresh.args()
+  assert.ok(args.includes('-fs') && Number(args[args.indexOf('-fs') + 1]) > 0)
+  assert.ok(args.includes('-timelimit'))
+  assert.match(args[args.indexOf('-/filter_complex') + 1]!, /tmp-[0-9a-f]{32}\.filter$/)
+  const old = recordingFfmpeg('6.1.1-3ubuntu5')
+  await assert.rejects(makeSheet(old.tools, inputs, pictures, { timeoutMs: 10_000 }), /could not finish/)
+  assert.match(old.args()[old.args().indexOf('-filter_complex') + 1]!, /^color=c=0x0c0c0c/)
+  assert.deepEqual(readdirSync(inputs).filter((n) => n.startsWith('tmp-')), [], 'no filter file left behind')
+})
+
+test('a leftover ffmpeg from before a crash is stopped, but only when its pid file names that very program', { skip: process.platform !== 'linux' }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mc-ff-pid-'))
+  const pidFile = join(dir, 'ffmpeg.pid')
+  const sleeper = { ffmpeg: realpathSync('/bin/sleep'), ffprobe: realpathSync('/bin/sleep'), version: 'test' }
+  const running = runFfmpeg(sleeper, ['30'], { timeoutMs: 60_000, pidFile })
+  await new Promise((r) => setTimeout(r, 200))
+  const [pid, program] = readFileSync(pidFile, 'utf8').split('\n')
+  assert.equal(program, sleeper.ffmpeg)
+  stopLeftoverFfmpeg(pidFile, sleeper)
+  await assert.rejects(running)
+  assert.throws(() => process.kill(Number(pid), 0), 'the leftover is gone')
+  assert.equal(existsSync(pidFile), false)
+  // A pid file whose process is some other program (here, this test itself) leaves it alone.
+  writeFileSync(pidFile, `${process.pid}\n${sleeper.ffmpeg}`)
+  stopLeftoverFfmpeg(pidFile, sleeper)
+  assert.equal(existsSync(pidFile), false)
 })
