@@ -578,6 +578,9 @@ test('ffmpeg\'s temp files count toward the disk cap and are swept when Mission 
 test('the video.film methods refuse with plain words, and get comes with signed links', async () => {
   const s = setup()
   registerVideoMethods(s.jobs, s.cast, () => 'http://127.0.0.1:1', s.films, null)
+  // Delete goes through the director first, so a round still running for the film is stopped (review S5).
+  const stopped: unknown[] = []
+  registerFilmMakingMethods({ stop: async (id: unknown) => { stopped.push(id) } } as unknown as FilmDirector, s.films, {} as FilmHelper)
   const client = {} as ConnectedClient
   await assert.rejects(dispatch('video.film.create', { film: { ...FILM, castIds: [] } }, client), { code: 'INVALID_PARAMS' })
   const { film } = await dispatch('video.film.create', { film: { ...FILM, castIds: [s.rex.id] } }, client) as { film: { id: string } }
@@ -597,8 +600,12 @@ test('the video.film methods refuse with plain words, and get comes with signed 
   assert.match(listed.films[0]!.thumbLink!, /^\/media\/picture\//)
   await assert.rejects(dispatch('video.film.get', { id: 'f'.repeat(32) }, client), { code: 'INVALID_PARAMS' })
   assert.deepEqual(await dispatch('video.film.delete', { id: film.id }, client), { deleted: true })
+  assert.deepEqual(stopped, [film.id])
   const status = await dispatch('video.status', {}, client) as { ffmpeg: unknown }
   assert.equal(status.ffmpeg, null, 'video.status says when ffmpeg is missing')
+  registerVideoMethods(s.jobs, s.cast, () => 'http://127.0.0.1:1', s.films, { ffmpeg: '/usr/bin/ffmpeg', ffprobe: '/usr/bin/ffprobe', version: '6.1.1-3ubuntu5' })
+  const old = await dispatch('video.status', {}, client) as { ffmpeg: unknown }
+  assert.deepEqual(old.ffmpeg, { path: '/usr/bin/ffmpeg', version: '6.1.1-3ubuntu5', old: true }, 'an old release is pointed out, not refused')
 })
 
 test('video.film.plan: the helper sees the film\'s own cast with its kinds, and its plan replaces an old one only when asked', async () => {
