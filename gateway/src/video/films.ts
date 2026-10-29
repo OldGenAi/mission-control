@@ -36,16 +36,16 @@ const JOINS = ['follows', 'fade_short', 'fade_long']
 const ID = /^[0-9a-f]{32}$/
 // As for cast names: a line break or an invisible character would break a one-line field.
 const NOT_ONE_PLAIN_LINE = /[\n\t]|\p{Cf}/u
-const STOP_FIRST = 'Stop the film first.'
+export const STOP_FIRST = 'Stop the film first.'
 
 export type FilmStage = 'story' | 'plan' | 'places' | 'shots' | 'making' | 'done' | 'stopped'
-type OwnerKind = 'place' | 'shot' | 'cast'
+export type OwnerKind = 'place' | 'shot' | 'cast'
 
 // Before any picture is made the look and the cast can still change; after, pictures can be chosen.
 const EARLY_STAGES: ReadonlySet<string> = new Set(['story', 'plan'])
 const PICTURE_STAGES: ReadonlySet<string> = new Set(['places', 'shots', 'stopped', 'done'])
 const MAKE_FROM: ReadonlySet<string> = new Set(['shots', 'stopped', 'done'])
-const ROLE_OWNER: Record<string, OwnerKind> = { master: 'place', empty: 'place', start: 'shot', end: 'shot', turnaround: 'cast', face: 'cast' }
+export const ROLE_OWNER: Readonly<Record<string, OwnerKind>> ={ master: 'place', empty: 'place', start: 'shot', end: 'shot', turnaround: 'cast', face: 'cast' }
 
 const FILM_FIELDS = new Set(['title', 'story', 'seconds', 'look', 'sound', 'castIds'])
 const PLACE_FIELDS = new Set(['id', 'name', 'description', 'keep', 'prop'])
@@ -361,21 +361,67 @@ export class FilmStore {
    * Records a picture job the director queued as a candidate for one of this film's places, shots or cast members.
    * The role must fit the owner, and the job must be this film's own picture job.
    */
-  addCandidate(filmId: unknown, input: { ownerKind: string; ownerId: unknown; role: string; jobId: unknown; seed: number }): string {
+  addCandidate(filmId: unknown, input: { ownerKind: string; ownerId: unknown; role: string; jobId: unknown; seed: number; checkState?: 'none' | 'off' }): string {
     const film = this.film(filmId)
-    if (ROLE_OWNER[input.role] === undefined || ROLE_OWNER[input.role] !== input.ownerKind) throw new VideoRequestError('That role doesn\'t fit what the picture is for.')
-    const ownerId = this.ownerOf(film.id, input.ownerKind as OwnerKind, input.ownerId)
+    const ownerId = this.checkSlot(film.id, input.ownerKind, input.ownerId, input.role, 1)
     const jobId = anId(input.jobId)
     if (!jobId || !this.db.prepare(`SELECT 1 FROM videos WHERE id = ? AND film_id = ? AND kind = 'picture' AND deleted_at IS NULL`).get(jobId, film.id)) {
       throw new VideoRequestError('That picture job is not this film\'s.')
     }
     if (!Number.isInteger(input.seed)) throw new VideoRequestError('The seed must be a whole number.')
-    const count = (this.db.prepare(`SELECT COUNT(*) AS n FROM film_pictures WHERE film_id = ? AND owner_id = ? AND role = ?`).get(film.id, ownerId, input.role) as { n: number }).n
-    if (count >= MAX_CANDIDATES) throw new VideoRequestError(`There can be at most ${MAX_CANDIDATES} pictures to choose from here. Choose one of them.`)
     const id = randomBytes(16).toString('hex')
-    this.db.prepare(`INSERT INTO film_pictures (id, film_id, owner_kind, owner_id, role, job_id, seed, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, film.id, input.ownerKind, ownerId, input.role, jobId, input.seed, Date.now())
+    this.db.prepare(`INSERT INTO film_pictures (id, film_id, owner_kind, owner_id, role, job_id, seed, check_state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, film.id, input.ownerKind, ownerId, input.role, jobId, input.seed, input.checkState ?? 'none', Date.now())
     return id
+  }
+
+  /**
+   * Checks that `adding` more candidates may go to this slot (the role fits the owner, the owner is this film's, and
+   * the slot stays within MAX_CANDIDATES), before the director queues their jobs. Returns the owner's id.
+   */
+  checkSlot(filmId: unknown, ownerKind: string, ownerId: unknown, role: string, adding: number): string {
+    const film = this.film(filmId)
+    if (ROLE_OWNER[role] === undefined || ROLE_OWNER[role] !== ownerKind) throw new VideoRequestError('That role doesn\'t fit what the picture is for.')
+    const owner = this.ownerOf(film.id, ownerKind as OwnerKind, ownerId)
+    const count = (this.db.prepare(`SELECT COUNT(*) AS n FROM film_pictures WHERE film_id = ? AND owner_id = ? AND role = ?`).get(film.id, owner, role) as { n: number }).n
+    if (count + adding > MAX_CANDIDATES) throw new VideoRequestError(`There can be at most ${MAX_CANDIDATES} pictures to choose from here. Choose one of them.`)
+    return owner
+  }
+
+  /** The director moving a film between its stages (the user's edits move it from story to plan). */
+  setStage(filmId: string, stage: FilmStage, problem: string | null = null): void {
+    this.db.prepare(`UPDATE films SET stage = ?, problem = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`).run(stage, problem, Date.now(), filmId)
+  }
+
+  /** A place with no picture of it on its own yet uses its chosen master (made with no people or animals in it). */
+  useMasterAsEmpty(filmId: string): void {
+    this.db.prepare(`UPDATE film_places SET empty_id = master_id WHERE film_id = ? AND empty_id IS NULL AND master_id IS NOT NULL AND deleted_at IS NULL`).run(filmId)
+  }
+
+  setSheet(filmId: string, placeId: string, imageId: string): void {
+    this.db.prepare(`UPDATE film_places SET sheet_id = ? WHERE id = ? AND film_id = ? AND deleted_at IS NULL`).run(imageId, placeId, filmId)
+  }
+
+  /** Records a finished clip, only if the shot hasn't changed since it was queued. False: throw the clip away. */
+  recordClip(filmId: string, shotId: string, revision: number, clipId: string, seed: number): boolean {
+    return this.db.prepare(`UPDATE film_shots SET clip_id = ?, clip_seed = ?, clip_rev = ? WHERE id = ? AND film_id = ? AND revision = ? AND deleted_at IS NULL`)
+      .run(clipId, seed, revision, shotId, filmId, revision).changes === 1
+  }
+
+  /** The finished film: its joined video and the `done` stage. Returns the film it replaces, if any. */
+  setJoined(filmId: string, videoId: string): string | null {
+    const before = this.find(filmId)?.videoId ?? null
+    this.db.prepare(`UPDATE films SET video_id = ?, stage = 'done', problem = NULL, updated_at = ? WHERE id = ?`).run(videoId, Date.now(), filmId)
+    return before
+  }
+
+  /** Redo: the shot's clip is no longer current, made again with a new seed if asked. */
+  prepareRedo(filmId: unknown, shotId: unknown, newSeed: boolean): void {
+    const film = this.editable(filmId)
+    if (!MAKE_FROM.has(film.stage) || film.stage === 'shots') throw new VideoRequestError('Make the film first; then any shot can be made again.')
+    const shot = this.shot(film.id, shotId)
+    if (newSeed) this.db.prepare(`UPDATE film_shots SET seed = ?, revision = revision + 1 WHERE id = ?`).run(randomInt(1, MAX_SEED), shot.id)
+    else this.db.prepare(`UPDATE film_shots SET clip_rev = NULL WHERE id = ?`).run(shot.id)
   }
 
   /**

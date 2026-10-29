@@ -55,6 +55,7 @@ export type PushEventName =
   | 'error.occurred'
   | 'settings.changed'
   | 'video.event'
+  | 'video.film'
   | 'doctor.event'
   | 'card.event';
 

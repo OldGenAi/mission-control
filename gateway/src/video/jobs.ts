@@ -227,6 +227,52 @@ export class VideoJobs {
     this.images.remove(id)
   }
 
+  /** Where a job stands, for the film director waiting on one of its jobs. */
+  statusOf(id: string): { status: VideoStatus; error: string | null } | null {
+    if (!ID.test(id)) return null
+    return (this.db.prepare(`SELECT status, error FROM videos WHERE id = ?`).get(id) as { status: VideoStatus; error: string | null } | undefined) ?? null
+  }
+
+  /** Keeps a picture Mission Control made itself (a reference sheet), stripped, under a new id. */
+  savePicture(buf: Buffer): string {
+    const saved = this.images.saveBuffer(buf)
+    if (typeof saved === 'string') throw new VideoRequestError(`Mission Control made a picture it can't keep (${saved}).`)
+    return saved.id
+  }
+
+  /** A joined film, already in place as <id>.mp4, as a normal Video page video (no story words in its params). */
+  addJoinedFilm(id: string, bytes: number): void {
+    if (!ID.test(id)) throw new Error('not a video id')
+    const now = Date.now()
+    this.db.prepare(`INSERT INTO videos (id, recipe_id, params, status, file_bytes, created_at, finished_at) VALUES (?, 'storyboard-join', '{}', 'done', ?, ?, ?)`)
+      .run(id, bytes, now, now)
+    this.emit({ id, status: 'done' })
+  }
+
+  /** Removes one of this film's shot clips (replaced by a Redo, or made for an older revision of its shot). */
+  removeFilmClip(id: string, filmId: string): void {
+    if (!ID.test(id) || !ID.test(filmId)) return
+    const removed = this.db.prepare(`UPDATE videos SET deleted_at = ? WHERE id = ? AND film_id = ? AND kind = 'video' AND deleted_at IS NULL
+                                     AND status NOT IN ('queued', 'running')`).run(Date.now(), id, filmId).changes > 0
+    if (removed) rmSync(join(this.mediaDir, `${id}.mp4`), { force: true })
+  }
+
+  /** Removes a Video page video unless it is starred (a film's previous join, once the new one is ready). */
+  removeUnkept(id: string): void {
+    const row = this.db.prepare(`SELECT kept FROM videos WHERE id = ? AND deleted_at IS NULL AND film_id IS NULL AND kind = 'video'`).get(id) as { kept: number } | undefined
+    if (row?.kept === 0) this.delete(id)
+  }
+
+  /** After a restart in the middle of a film: stops whatever ComfyUI is still running and takes its memory back. */
+  async interruptAndFree(): Promise<void> {
+    const checked = checkComfyUrl(this.settings().comfyUrl)
+    if ('error' in checked) return
+    const client = new ComfyClient(checked.url)
+    await client.interrupt()
+    await client.free()
+    this.freedAt = performance.now()
+  }
+
   /** Soft-deletes a deleted film's finished clips and picture jobs, and removes the clips' files. */
   deleteFilmRows(filmId: string): void {
     if (!ID.test(filmId)) return

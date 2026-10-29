@@ -32,7 +32,7 @@ const PNG = (() => {
 // The shot recipe waits for hand test T1; any recipe with its inputs stands in for it.
 const SHOT: Recipe = { ...FILM_EDIT_FAST, id: 'film-shot', output: 'video', params: {
   prompt: { kind: 'text', maxLength: 4000, required: true }, sheet: { kind: 'image', required: true }, start: { kind: 'image', required: true },
-  end: { kind: 'image' }, frames: { kind: 'int', min: 97, max: 193, required: true }, seed: { kind: 'int', min: 0, max: 2 ** 48 },
+  end: { kind: 'image' }, frames: { kind: 'int', min: 97, max: 193, default: 97 }, seed: { kind: 'int', min: 0, max: 2 ** 48 },
 } }
 
 interface Job { id: string; recipeId: string; params: Record<string, unknown>; filmId: string; status: string }
@@ -119,15 +119,19 @@ function setup(opts: { shot?: Recipe | null } = {}) {
     throw new Error('the director queued nothing')
   }
 
+  // Finishes every job the director queues until it has nothing more to do.
   async function finishAll(): Promise<Job[]> {
     const done: Job[] = []
     while (true) {
-      await new Promise((r) => setTimeout(r, 10))
-      if (!submitted.some((j) => j.status === 'queued')) {
-        await director.idle()
-        if (!submitted.some((j) => j.status === 'queued')) return done
+      const job = submitted.find((j) => j.status === 'queued')
+      if (job) {
+        await new Promise((r) => setImmediate(r))
+        finish(job, 'done')
+        done.push(job)
+        continue
       }
-      done.push(await next())
+      if (!director.busy) return done
+      await new Promise((r) => setTimeout(r, 2))
     }
   }
 
@@ -324,7 +328,8 @@ test('after a restart a film being made is stopped with plain words, ComfyUI is 
   const p = await readyToMake(s)
   s.director.make(p.film.id)
   await s.next()
-  // Mission Control stops here: the queue fails its running job, and a new director starts.
+  while (s.active() === 0) await new Promise((r) => setTimeout(r, 2))
+  // Mission Control stops here, with shot 1 made: the queue fails its running job, and a new director starts.
   s.db.prepare(`UPDATE videos SET status = 'failed' WHERE status IN ('queued', 'running')`).run()
   for (const job of s.submitted) if (job.status === 'queued') job.status = 'failed'
   const director = s.restart()

@@ -35,11 +35,13 @@ import { ProviderRegistry } from './providers/registry.js'
 import { resolveBootProvider } from './providers/unconfigured.js'
 import { pricesWanted, refreshLocalContext, startPricingRefresh } from './providers/pricing.js'
 import { registerInstancesMethods } from './methods/instances.js'
-import { registerVideoMethods } from './methods/video.js'
+import { registerVideoMethods, registerFilmMakingMethods } from './methods/video.js'
 import { VideoJobs } from './video/jobs.js'
 import { VideoCast } from './video/cast.js'
 import { FilmStore } from './video/films.js'
-import { findFfmpeg } from './video/ffmpeg.js'
+import { FilmDirector } from './video/film-director.js'
+import { FILM_EDIT_FAST, FILM_EDIT_FINE } from './video/film-recipes.js'
+import { findFfmpeg, joinFilm, makeSheet } from './video/ffmpeg.js'
 import { CardShare } from './providers/card-share.js'
 import { lmStudioServer } from './providers/lmstudio-control.js'
 import { registerCardShareMethods } from './methods/card-share.js'
@@ -239,17 +241,33 @@ registerMemoryIdentityMethods(db)
 registerOnboardingMethods(db, settingsStore)
 registerAgentToolsMethods()
 
+const videoMediaDir = path.join(DATA_DIR, 'media', 'video')
+// The film director waits on its own jobs' events, so it hears every queue event (it is made just below).
+let filmDirector: FilmDirector | null = null
 const videoJobs = new VideoJobs(
   db,
-  path.join(DATA_DIR, 'media', 'video'),
+  videoMediaDir,
   () => { const s = settingsStore.get(); return { comfyUrl: s.comfyUrl, freeAfterJob: s.videoFreeAfterJob } },
-  (event) => broadcastEvent('video.event', { ...event }),
+  (event) => {
+    broadcastEvent('video.event', { ...event })
+    filmDirector?.onVideoEvent(event)
+  },
   undefined,
   cardShare,
 )
 registerCardShareMethods(cardShare)
 const films = new FilmStore(db, videoJobs)
-registerVideoMethods(videoJobs, new VideoCast(db, (id) => videoJobs.hasImage(id)), () => settingsStore.get().comfyUrl, films, findFfmpeg())
+const ffmpeg = findFfmpeg()
+filmDirector = new FilmDirector({
+  films, queue: videoJobs, mediaDir: videoMediaDir,
+  emit: (event) => broadcastEvent('video.film', { ...event }),
+  // The shot recipe comes once hand test T1 settles its nodes; until then Make film says it isn't ready.
+  recipes: { fast: FILM_EDIT_FAST, fine: FILM_EDIT_FINE, shot: null },
+  ffmpeg: { tools: () => ffmpeg, join: joinFilm, sheet: makeSheet },
+})
+void filmDirector.start()
+registerVideoMethods(videoJobs, new VideoCast(db, (id) => videoJobs.hasImage(id)), () => settingsStore.get().comfyUrl, films, ffmpeg)
+registerFilmMakingMethods(filmDirector)
 // A Video page video, or one of a live film's shot clips (whose links only video.film.get hands out).
 setVideoFileResolver((id) => videoJobs.filePath(id) ?? films.clipPath(id))
 setPictureFileResolver((id) => films.picturePath(id))
