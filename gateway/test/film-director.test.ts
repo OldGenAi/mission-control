@@ -5,7 +5,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { crc32 } from 'node:zlib'
@@ -218,7 +218,14 @@ test('round one: the character\'s turnaround and face, then two masters for the 
   assert.deepEqual(jobs.map((j) => j.recipeId), ['film-edit-fine', 'film-edit-fine', 'film-edit-fine', 'film-edit-fine', 'film-edit-fast', 'film-edit-fast'])
   assert.equal(s.calls.maxActive, 1, 'never two jobs waiting at once')
   const castPicture = s.films.get(film.id)!.cast[0]!.pictureId
-  assert.ok(jobs.every((j) => j.params['image1'] === castPicture))
+  assert.ok(jobs.slice(0, 4).every((j) => j.params['image1'] === castPicture))
+  // The first place is drawn from a plain blank picture, never a character's: in the live test a master drawn from
+  // Tom's picture kept Tom in it (hand test T9).
+  const blank = String(jobs[4]!.params['image1'])
+  assert.notEqual(blank, castPicture)
+  assert.equal(jobs[5]!.params['image1'], blank)
+  const stored = readFileSync(s.jobs.findImage(blank)!.path)
+  assert.deepEqual([stored.readUInt32BE(16), stored.readUInt32BE(20)], [1392, 752])
   assert.match(String(jobs[0]!.params['prompt']), /three times side by side/)
   assert.match(String(jobs[4]!.params['prompt']), /^Show a new place: a small walled garden/)
   const pictures = s.films.get(film.id)!.pictures
