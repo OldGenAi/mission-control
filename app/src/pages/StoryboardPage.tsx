@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { gateway } from '../lib/gateway-client'
 import { button, card, input, linkButton } from '../components/video-ui'
 import { StoryboardPlan } from '../components/StoryboardPlan'
-import type { Film, FilmPicture, Stage } from '../components/storyboard-types'
+import { followsOn, type Film, type FilmPicture, type Stage } from '../components/storyboard-types'
 
 interface FilmSummary { id: string; title: string; stage: Stage; seconds: number; look: string; thumbLink: string | null; updatedAt: number }
 interface CastMember { id: string; name: string; wording: string; thumb: string | null }
@@ -295,12 +295,10 @@ export const StoryboardPage: React.FC = () => {
             </button>
           </div>
           {film.shots.map((s, i) => {
-            const before = film.shots[i - 1]
-            const followsOn = !s.closeUp && s.joins === 'follows' && before?.placeId === s.placeId
             return (
               <div key={s.id} className="flex flex-col gap-2">
                 <p className="text-xs text-gray-400">Shot {i + 1}: {s.action}</p>
-                {followsOn
+                {followsOn(film.shots[i - 1], s)
                   ? <p className="text-xs text-gray-500">Starts where shot {i} ends.</p>
                   : <Slot label={s.closeUp ? 'Close-up' : 'Start'} pictures={candidates(s.id, 'start')} chosen={s.startId} links={links}
                       disabled={!canChoose || busy} onChoose={(id) => void choose(id)} onMore={() => void makePictures({ ownerId: s.id, role: 'start' })} />}

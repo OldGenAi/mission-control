@@ -31,6 +31,12 @@ export interface Film {
   cast: FilmCast[]; places: FilmPlace[]; shots: FilmShot[]; pictures: FilmPicture[]
 }
 
+/** As the gateway's followsOn (video/films.ts): the shot starts on the picture the shot before ended on. */
+export function followsOn(before: FilmShot | undefined, shot: FilmShot): boolean {
+  return !!before && !before.closeUp && !shot.closeUp && shot.joins === 'follows' && before.placeId === shot.placeId &&
+    before.characters.length === shot.characters.length && shot.characters.every((c) => before.characters.some((b) => b.castId === c.castId))
+}
+
 export const JOINS: Record<string, string> = {
   follows: 'Follows on (a straight cut)',
   fade_short: 'Time passes (a short fade)',

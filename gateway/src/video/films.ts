@@ -175,6 +175,15 @@ export function checkKind(value: unknown): string | null {
   return word
 }
 
+/**
+ * A shot that carries straight on in the same place, with the same characters, starts on the picture the shot before
+ * ended on (and the join drops its first frame). A close-up has no end picture to start from.
+ */
+export function followsOn(before: FilmShot | undefined, shot: FilmShot): boolean {
+  return !!before && !before.closeUp && !shot.closeUp && shot.joins === 'follows' && before.placeId === shot.placeId &&
+    before.characters.length === shot.characters.length && shot.characters.every((c) => before.characters.some((b) => b.castId === c.castId))
+}
+
 // The characters column is written only by saveShot, as checked JSON.
 const toShot = (row: Omit<FilmShot, 'closeUp' | 'characters'> & { closeUp: number; characters: string }): FilmShot =>
   ({ ...row, characters: JSON.parse(row.characters) as ShotCharacter[], closeUp: row.closeUp !== 0 })
@@ -568,11 +577,11 @@ export class FilmStore {
         case 'end': {
           this.db.prepare(`UPDATE film_shots SET end_id = ? WHERE id = ?`).run(imageId, ownerId)
           remake.run(ownerId)
-          // A shot that follows on in the same place starts where this one ends (and the join drops its first frame).
+          // A shot that follows on starts where this one ends.
           const shots = this.liveShots(film.id)
           const at = shots.findIndex((s) => s.id === ownerId)
           const next = shots[at + 1]
-          if (next && next.joins === 'follows' && next.placeId === shots[at]!.placeId && !next.closeUp) {
+          if (next && followsOn(shots[at], next)) {
             this.db.prepare(`UPDATE film_shots SET start_id = ? WHERE id = ?`).run(imageId, next.id)
             remake.run(next.id)
           }
