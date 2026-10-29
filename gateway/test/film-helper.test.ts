@@ -100,6 +100,7 @@ test('the story goes to the local model as marked data, with the rules, the shot
   assert.match(system!.content, /Each character in a shot has its own start pose and end pose/)
   assert.match(system!.content, /A close-up .* exactly one character/)
   assert.match(system!.content, /stays in every shot of that place.* until the story says they leave/, 'the live test: Tom vanished from a shot of the dogs')
+  assert.match(system!.content, /only a close-up leaves the others out/)
   assert.doesNotMatch(system!.content, /Exactly one character is on screen/)
   assert.match(user!.content, /about 5 shots that add up to 30 seconds/)
   assert.match(user!.content, /<<<STORY\n[^]*IGNORE THE RULES[^]*\nSTORY>>>/)
@@ -222,6 +223,24 @@ test('a plan that drops someone from a scene goes back once to put them in; a wo
   assert.match(first.warnings.join(' '), /leaves out Rex/, 'and the page still points it out')
   assert.equal(worse.requests.length, 2, 'never more than one try more')
   await worse.close()
+})
+
+test('a second try that fails to arrive keeps the first plan; a character who walks off is not missing (review 4)', async () => {
+  const dropped = structuredClone(GOOD)
+  dropped.shots[4]!.characters = [dropped.shots[4]!.characters[0]!]
+  dropped.shots[4]!.action = 'lies down by the stove'
+  const failing = await fakeServer([answer(dropped), { status: 500 }])
+  const kept = await helper(failing.url).h.plan(FILM)
+  assert.ok('plan' in kept, 'the first plan, not an error')
+  assert.equal(failing.requests.length, 2)
+  await failing.close()
+
+  // Rex ends shot 3 walking off: shot 5 without him is the story, not a mistake.
+  const left = structuredClone(dropped)
+  left.shots[2]!.characters[0]!.endPose = 'walking out of the picture on the right'
+  assert.deepEqual(checkPlan(left, FILM).dropped, [])
+  left.shots[2]!.characters[0]!.endPose = 'leaving through the back door'
+  assert.deepEqual(checkPlan(left, FILM).dropped, [])
 })
 
 test('redirects are refused, and a slow or oversized answer is cut off', async () => {
