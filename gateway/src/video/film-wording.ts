@@ -38,6 +38,8 @@ const NUMBERS = ['no', 'one', 'two', 'three']
 const IRREGULAR: Readonly<Record<string, string>> = {
   child: 'children', person: 'people', mouse: 'mice', goose: 'geese', ox: 'oxen', wolf: 'wolves', calf: 'calves',
   sheep: 'sheep', deer: 'deer', fish: 'fish',
+  // Words that end in "man" but aren't a man.
+  human: 'humans', shaman: 'shamans', german: 'germans', roman: 'romans', caiman: 'caimans', talisman: 'talismans',
 }
 
 /**
@@ -75,7 +77,7 @@ function countLine(kinds: string[]): string {
   const counts = new Map<string, number>()
   for (const kind of kinds) counts.set(kind, (counts.get(kind) ?? 0) + 1)
   const groups = [...counts].map(([kind, n]) => `${NUMBERS[n]} ${n === 1 ? kind : plural(kind)}`)
-  return `There ${counts.values().next().value === 1 ? 'is' : 'are'} exactly ${names(groups)} in the whole picture.`
+  return `There ${kinds.length === 1 ? 'is' : 'are'} exactly ${names(groups)} in the whole picture.`
 }
 
 function keepLine(place: FilmPlace): string {

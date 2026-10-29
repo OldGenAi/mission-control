@@ -52,10 +52,12 @@ test('several characters: one edit each, the ones before kept, everyone so far c
   ])
 })
 
-test('the count reads as English: plurals, and "is" for one of the first kind', () => {
+test('the count reads as English: plurals, and "are" for more than one', () => {
   const kinds = (...k: string[]) => k.map((kind, i) => ({ cast: { name: `C${i}`, wording: 'w', kind }, pose: 'p' }))
   const last = (cast: ReturnType<typeof kinds>) => posePrompts(cast, GREEN, 'realistic').at(-1)!
-  assert.match(last(kinds('man', 'dog')), /There is exactly one man and one dog in the whole picture\./)
+  assert.match(last(kinds('man', 'dog')), /There are exactly one man and one dog in the whole picture\./)
+  assert.match(last(kinds('dog', 'man', 'man')), /There are exactly one dog and two men in/)
+  assert.match(last(kinds('human', 'human')), /exactly two humans in/)
   assert.match(last(kinds('woman', 'woman')), /exactly two women in/)
   assert.match(last(kinds('fireman', 'fireman', 'fox')), /exactly two firemen and one fox in/)
   assert.match(last(kinds('child', 'puppy', 'puppy')), /exactly one child and two puppies in/)

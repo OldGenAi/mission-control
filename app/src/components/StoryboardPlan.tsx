@@ -196,7 +196,8 @@ export const StoryboardPlan: React.FC<{ film: Film; onChanged: () => void; onErr
   const [adding, setAdding] = useState<'place' | 'shot' | null>(null)
   const [planning, setPlanning] = useState(false)
   const [warnings, setWarnings] = useState<string[]>([])
-  // Places and shots can change until pictures are made from them (then a new film is the way to a new plan).
+  // Places and shots can change at any time except while the film is being made; a change makes the pictures it
+  // affects out of date.
   const editable = film.stage !== 'making'
   const canPlan = film.stage === 'story' || film.stage === 'plan'
   const total = film.shots.reduce((sum, s) => sum + s.seconds, 0)

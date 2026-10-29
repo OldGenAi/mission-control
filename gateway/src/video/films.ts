@@ -54,7 +54,7 @@ export type OwnerKind = 'place' | 'shot' | 'cast'
 const EARLY_STAGES: ReadonlySet<string> = new Set(['story', 'plan'])
 const PICTURE_STAGES: ReadonlySet<string> = new Set(['places', 'shots', 'stopped', 'done'])
 const MAKE_FROM: ReadonlySet<string> = new Set(['shots', 'stopped', 'done'])
-export const ROLE_OWNER: Readonly<Record<string, OwnerKind>> ={ master: 'place', empty: 'place', start: 'shot', end: 'shot', turnaround: 'cast', face: 'cast' }
+export const ROLE_OWNER: Readonly<Record<string, OwnerKind>> = { master: 'place', empty: 'place', start: 'shot', end: 'shot', turnaround: 'cast', face: 'cast' }
 
 const FILM_FIELDS = new Set(['title', 'story', 'seconds', 'look', 'sound', 'castIds'])
 const PLACE_FIELDS = new Set(['id', 'name', 'description', 'keep', 'prop'])

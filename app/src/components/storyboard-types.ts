@@ -11,7 +11,7 @@ export interface ShotCharacter { castId: string; startPose: string; endPose: str
 
 export interface FilmPlace {
   id: string; position: number; name: string; description: string; keep: string; prop: string | null
-  masterId: string | null; emptyId: string | null; sheetId: string | null
+  masterId: string | null; emptyId: string | null; sheetId: string | null; sheetBasis: string | null
 }
 
 export interface FilmShot {
@@ -22,7 +22,7 @@ export interface FilmShot {
 
 export interface FilmPicture {
   id: string; ownerKind: 'place' | 'shot' | 'cast'; ownerId: string; role: string; jobId: string; status: string | null
-  imageId: string | null; steps: number; step: number; seed: number; checkState: string; checkNotes: string | null; createdAt: number
+  imageId: string | null; steps: number; step: number; stale: boolean; seed: number; checkState: string; checkNotes: string | null; createdAt: number
 }
 
 export interface Film {
@@ -31,7 +31,7 @@ export interface Film {
   cast: FilmCast[]; places: FilmPlace[]; shots: FilmShot[]; pictures: FilmPicture[]
 }
 
-/** As the gateway's followsOn (video/films.ts): the shot starts on the picture the shot before ended on. */
+/** As the gateway's followsOn (video/films.ts), which keeps such a shot's start on the end picture before it. */
 export function followsOn(before: FilmShot | undefined, shot: FilmShot): boolean {
   return !!before && !before.closeUp && !shot.closeUp && shot.joins === 'follows' && before.placeId === shot.placeId &&
     before.characters.length === shot.characters.length && shot.characters.every((c) => before.characters.some((b) => b.castId === c.castId))
