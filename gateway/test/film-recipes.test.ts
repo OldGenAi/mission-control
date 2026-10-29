@@ -85,6 +85,9 @@ test('the shot is the T1 graph: core nodes only, Ingredients at 1.5, the sheet a
   assert.equal(nodes(graph, 'CFGGuider')[0]!.inputs['cfg'], 1)
   assert.equal(nodes(graph, 'ManualSigmas')[0]!.inputs['sigmas'], '1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0')
   assert.equal(nodes(graph, 'RandomNoise')[0]!.inputs['noise_seed'], 424242)
+  // Hand test T8: with 8 frames of overlap the clip flickers where one 64-frame decode chunk hands over to the next.
+  const decode = nodes(graph, 'VAEDecodeTiled')[0]!.inputs
+  assert.deepEqual([decode['temporal_size'], decode['temporal_overlap']], [64, 16])
   assert.equal(nodes(graph, 'SaveVideo')[0]!.inputs['filename_prefix'], 'mission-control/abc')
   assert.deepEqual(nodes(graph, 'LoadImage').map((n) => n.inputs['image']), ['mc/sheet.png', 'mc/start.png', 'mc/end.png'])
 })
