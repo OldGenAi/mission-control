@@ -42,7 +42,7 @@ import { FilmStore } from './video/films.js'
 import { FilmDirector } from './video/film-director.js'
 import { FilmHelper } from './video/film-helper.js'
 import { FILM_EDIT_FAST, FILM_EDIT_FINE, FILM_SHOT } from './video/film-recipes.js'
-import { findFfmpeg, joinFilm, makeSheet } from './video/ffmpeg.js'
+import { findFfmpeg, joinFilm, makeSheet, stopLeftoverFfmpeg } from './video/ffmpeg.js'
 import { CardShare } from './providers/card-share.js'
 import { lmStudioServer } from './providers/lmstudio-control.js'
 import { registerCardShareMethods } from './methods/card-share.js'
@@ -263,7 +263,7 @@ filmDirector = new FilmDirector({
   films, queue: videoJobs, mediaDir: videoMediaDir,
   emit: (event) => broadcastEvent('video.film', { ...event }),
   recipes: { fast: FILM_EDIT_FAST, fine: FILM_EDIT_FINE, shot: FILM_SHOT },
-  ffmpeg: { tools: () => ffmpeg, join: joinFilm, sheet: makeSheet },
+  ffmpeg: { tools: () => ffmpeg, join: joinFilm, sheet: makeSheet, stopLeftover: stopLeftoverFfmpeg },
 })
 void filmDirector.start()
 registerVideoMethods(videoJobs, new VideoCast(db, (id) => videoJobs.hasImage(id)), () => settingsStore.get().comfyUrl, films, ffmpeg)

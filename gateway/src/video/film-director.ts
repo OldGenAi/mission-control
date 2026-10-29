@@ -14,7 +14,7 @@
 
 import { randomBytes, randomInt } from 'node:crypto'
 import { join } from 'node:path'
-import { FfmpegError, type FfmpegTools, type JoinClip, type JoinPlan, type joinFilm, type makeSheet } from './ffmpeg.js'
+import { FfmpegError, type FfmpegTools, type JoinClip, type JoinPlan, type joinFilm, type makeSheet, type stopLeftoverFfmpeg } from './ffmpeg.js'
 import {
   closeUpPrompt, facePrompt, firstMasterPrompt, laterMasterPrompt, posePrompts, shotPrompt, turnaroundPrompt, type FilmLook,
 } from './film-wording.js'
@@ -28,6 +28,9 @@ const MAX_SEED = 2 ** 40
 const SHEET_TIMEOUT_MS = 30_000
 const JOIN_TIMEOUT_MS = 10 * 60_000
 const FADE_FRAMES: Record<string, 0 | 12 | 24> = { follows: 0, fade_short: 12, fade_long: 24 }
+const SHEET_SIZE = { width: 1280, height: 704 }
+// Room a sheet or a join needs on the drive, with plenty to spare: a joined film is at most 1 GB.
+const MIN_FREE_BYTES = 2 * 1024 ** 3
 const RESTARTED = 'Mission Control restarted while this was being made. Press Make film to carry on.'
 // One install line per system; ffmpeg.org publishes only source code, so the Windows build is a third party's.
 const NO_FFMPEG = 'Making a film needs ffmpeg, which isn\'t installed. Install it (Ubuntu: sudo apt install ffmpeg; Mac: brew install ffmpeg; ' +
@@ -52,12 +55,13 @@ export interface DirectorQueue {
   statusOf(id: string): { status: VideoStatus; error: string | null } | null
   /** A finished picture job's stored picture, for the next edit of a chain. */
   pictureOf(jobId: string): string | null
-  savePicture(buf: Buffer): string
+  savePicture(buf: Buffer, size: { width: number; height: number }): string
   addJoinedFilm(id: string, bytes: number): void
   removeFilmClip(id: string, filmId: string): void
   removeUnkept(id: string): void
   diskUsage(): number
   readonly diskLimit: number
+  freeBytes(): number
   interruptAndFree(): Promise<void>
 }
 
@@ -68,7 +72,7 @@ export interface DirectorOptions {
   emit: (event: FilmEvent) => void
   /** The shot recipe can be left out (a test, or a Mission Control without it): Make film then says so. */
   recipes: { fast: Recipe; fine: Recipe; shot: Recipe | null }
-  ffmpeg: { tools: () => FfmpegTools | null; join: typeof joinFilm; sheet: typeof makeSheet }
+  ffmpeg: { tools: () => FfmpegTools | null; join: typeof joinFilm; sheet: typeof makeSheet; stopLeftover: typeof stopLeftoverFfmpeg }
 }
 
 export type PictureRequest = { round: 'places' | 'shots' } | { ownerId: unknown; role: string }
@@ -117,8 +121,12 @@ export class FilmDirector {
     return this.runs.size > 0
   }
 
-  /** At start: a film that was being made is stopped with plain words, and ComfyUI is cleared of what it was doing. */
+  /**
+   * At start: an ffmpeg left running by a crash is stopped, a film that was being made is stopped with plain words,
+   * and ComfyUI is cleared of what it was doing.
+   */
   async start(): Promise<void> {
+    this.o.ffmpeg.stopLeftover(this.pidFile, this.o.ffmpeg.tools())
     const making = this.o.films.list().filter((f) => f.stage === 'making')
     for (const film of making) this.stage(film.id, 'stopped', RESTARTED)
     if (making.length === 0) return
@@ -440,10 +448,20 @@ export class FilmDirector {
     return Array.from({ length: CANDIDATES }, () => ({ recipe, image1, steps, slot, basis }))
   }
 
+  // The 50 GB cap and the drive's own free space, before every sheet and join.
   private checkDisk(): void {
     if (this.o.queue.diskUsage() >= this.o.queue.diskLimit) {
       throw new VideoRequestError(`Your videos and pictures use the full ${this.o.queue.diskLimit / 1024 ** 3} GB. Delete some you no longer need, then press Make film to carry on.`)
     }
+    const free = this.o.queue.freeBytes()
+    if (free < MIN_FREE_BYTES) {
+      throw new VideoRequestError(`The drive Mission Control keeps videos on is nearly full (${(free / 1024 ** 3).toFixed(1)} GB free). Free some space, then press Make film to carry on.`)
+    }
+  }
+
+  // Names the running ffmpeg, so a restart after a crash can stop a leftover one.
+  private get pidFile(): string {
+    return join(this.o.mediaDir, 'ffmpeg.pid')
   }
 
   private async makeFilm(run: Run): Promise<void> {
@@ -487,7 +505,7 @@ export class FilmDirector {
       if (!film) return
       this.checkDisk()
       const outId = randomBytes(16).toString('hex')
-      const { bytes } = await this.o.ffmpeg.join(tools, this.o.mediaDir, joinPlan(film), outId, { timeoutMs: JOIN_TIMEOUT_MS, signal: run.abort.signal })
+      const { bytes } = await this.o.ffmpeg.join(tools, this.o.mediaDir, joinPlan(film), outId, { timeoutMs: JOIN_TIMEOUT_MS, signal: run.abort.signal, pidFile: this.pidFile })
       if (run.stopped) return
       this.o.queue.addJoinedFilm(outId, bytes)
       const replaced = this.o.films.setJoined(film.id, outId)
@@ -518,8 +536,8 @@ export class FilmDirector {
       const basis = JSON.stringify([pictures.place, member.castId, pictures.turnaround, pictures.face, pictures.placeWithCast])
       if (place.sheetId && place.sheetBasis === basis) continue
       this.checkDisk()
-      const sheet = await this.o.ffmpeg.sheet(tools, join(this.o.mediaDir, 'inputs'), pictures, { timeoutMs: SHEET_TIMEOUT_MS, signal: run.abort.signal })
-      this.o.films.setSheet(film.id, place.id, this.o.queue.savePicture(sheet), basis)
+      const sheet = await this.o.ffmpeg.sheet(tools, join(this.o.mediaDir, 'inputs'), pictures, { timeoutMs: SHEET_TIMEOUT_MS, signal: run.abort.signal, pidFile: this.pidFile })
+      this.o.films.setSheet(film.id, place.id, this.o.queue.savePicture(sheet, SHEET_SIZE), basis)
     }
   }
 }

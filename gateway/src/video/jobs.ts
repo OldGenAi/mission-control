@@ -4,7 +4,7 @@
 // Security-sensitive. Do not modify without Claude review.
 
 import { randomBytes, randomInt } from 'crypto'
-import { mkdirSync, writeFileSync, existsSync, statSync, readdirSync, readFileSync, rmSync } from 'fs'
+import { mkdirSync, writeFileSync, existsSync, statSync, readdirSync, readFileSync, rmSync, statfsSync } from 'fs'
 import { join } from 'path'
 import type Database from 'better-sqlite3'
 import type WebSocket from 'ws'
@@ -18,6 +18,8 @@ import type { ParamValues } from './recipe-types.js'
 const JOB_TIMEOUT_MS = 30 * 60 * 1000
 const MAX_VIDEO_BYTES = 512 * 1024 * 1024
 const MAX_PICTURE_BYTES = 16 * 1024 * 1024
+// The picture edits keep picture 1's size, about a megapixel (FluxKontextImageScale); anything far off is not theirs.
+const PICTURE_SIDE = { min: 256, max: 2048 }
 const ID = /^[0-9a-f]{32}$/
 const TEMP_FILE = /^tmp-[0-9a-f]{32}\.(mp4|png|filter)$/
 const MAX_QUEUED = 10
@@ -233,11 +235,21 @@ export class VideoJobs {
     return (this.db.prepare(`SELECT status, error FROM videos WHERE id = ?`).get(id) as { status: VideoStatus; error: string | null } | undefined) ?? null
   }
 
-  /** Keeps a picture Mission Control made itself (a reference sheet), stripped, under a new id. */
-  savePicture(buf: Buffer): string {
+  /** Keeps a picture Mission Control made itself (a reference sheet) of exactly this size, stripped, under a new id. */
+  savePicture(buf: Buffer, size: { width: number; height: number }): string {
     const saved = this.images.saveBuffer(buf)
     if (typeof saved === 'string') throw new VideoRequestError(`Mission Control made a picture it can't keep (${saved}).`)
+    if (saved.width !== size.width || saved.height !== size.height) {
+      this.images.remove(saved.id)
+      throw new VideoRequestError(`Mission Control made a picture of the wrong size (${saved.width}x${saved.height}).`)
+    }
     return saved.id
+  }
+
+  /** Free space on the drive the media folder is on (the 50 GB cap is Mission Control's own limit on top). */
+  freeBytes(): number {
+    const stats = statfsSync(this.mediaDir)
+    return stats.bavail * stats.bsize
   }
 
   /** A joined film, already in place as <id>.mp4, as a normal Video page video (no story words in its params). */
@@ -454,7 +466,8 @@ export class VideoJobs {
     const values = await this.placeImages(client, recipe, JSON.parse(row.params) as ParamValues)
     if (stopped()) return this.finish(id, 'cancelled', null)
     if (typeof values === 'string') return this.finish(id, 'failed', values)
-    const graph = recipe.build(values, `mission-control/${id}`)
+    // A film's outputs go in a folder of their own, so they can be tidied by hand.
+    const graph = recipe.build(values, row.filmId ? `mission-control/film-${row.filmId}/${id}` : `mission-control/${id}`)
     const missing = await client.missing(nodeClasses(graph), recipe.models)
     if (stopped()) return this.finish(id, 'cancelled', null)
     if (missing.length > 0) {
@@ -634,6 +647,11 @@ export class VideoJobs {
     }
     const saved = this.images.saveBuffer(raw)
     if (typeof saved === 'string') return this.finish(job.id, 'failed', `ComfyUI sent back something that is not a PNG picture (${saved}).`)
+    const sides = [saved.width, saved.height]
+    if (sides.some((side) => side < PICTURE_SIDE.min || side > PICTURE_SIDE.max)) {
+      this.images.remove(saved.id)
+      return this.finish(job.id, 'failed', `ComfyUI sent back a picture of a size the picture edits never make (${saved.width}x${saved.height}).`)
+    }
     this.db.prepare(`UPDATE videos SET image_id = ? WHERE id = ?`).run(saved.id, job.id)
     this.finish(job.id, 'done', null)
   }

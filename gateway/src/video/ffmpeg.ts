@@ -8,9 +8,11 @@
 // - Only gateway ids (32 hex digits, made into paths here) and checked whole numbers go into a command. Every input is
 //   pinned to the file protocol, a format and its decoders, because those options apply only to the next input; there
 //   are no generated (lavfi) inputs. Inputs must be regular files Mission Control made, never links.
-// - The filter graph goes in a file the gateway writes, and may hold only allowed filters with no file options.
+// - The filter graph goes in a file the gateway writes (inline for an ffmpeg older than 7.0, which can't read option
+//   files; it holds only numbers and labels), and may hold only allowed filters with no file options.
 // - Outputs go to a temp name and are renamed into place only after ffprobe confirms them. Time and size limits, a
-//   thread cap and a lower priority; Stop kills the process.
+//   thread cap and a lower priority; Stop kills the process. A pid file names the running ffmpeg, so after a crash
+//   the gateway can stop a leftover one (once it has checked the process is that very program).
 
 import { execFile, execFileSync, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
@@ -29,6 +31,8 @@ const MAX_CLIPS = 30
 const MAX_CLIP_FRAMES = 10 * FPS + 1
 const TRANSITION_FRAMES = new Set([0, 12, 24])
 const MAX_FILM_BYTES = 1024 ** 3
+const MAX_SHEET_BYTES = 32 * 1024 ** 2
+const SHEET_TIME_LIMIT_S = 60
 const MAX_STDERR = 64 * 1024
 const MAX_PROBE_OUTPUT = 256 * 1024
 const THREADS = 4
@@ -51,7 +55,23 @@ export interface JoinClip {
 /** A film's join, in whole frames at 24 fps: the shape the Editor will open too. */
 export interface JoinPlan { clips: JoinClip[]; sound: boolean; fadeOutFrames: 0 | 12 | 24 }
 
-export interface RunOptions { timeoutMs: number; signal?: AbortSignal; cwd?: string }
+export interface RunOptions { timeoutMs: number; signal?: AbortSignal; cwd?: string; pidFile?: string }
+
+/** The major version of an ffmpeg release ("6.1.1-3ubuntu5" is 6, "n7.0.2" is 7), or null for a git build. */
+export function ffmpegMajor(version: string): number | null {
+  const major = /^n?(\d+)\./i.exec(version)?.[1]
+  return major === undefined ? null : Number(major)
+}
+
+/**
+ * True when this ffmpeg reads an option's value from a file (`-/filter_complex <file>`, ffmpeg 7.0 and newer). A git
+ * build ("N-118000-g...", or a dated one) is newer than any release; anything not understood is treated as old.
+ */
+export function supportsOptionFiles(version: string): boolean {
+  if (/^N-\d+/.test(version) || /^\d{4}-\d{2}-\d{2}/.test(version)) return true
+  const major = ffmpegMajor(version)
+  return major !== null && major >= 7
+}
 
 /** ffmpeg and ffprobe from the first absolute PATH folder that has both as real programs, or null. */
 export function findFfmpeg(pathEnv = process.env['PATH'] ?? '', platform = process.platform): FfmpegTools | null {
@@ -131,7 +151,7 @@ function checkPlan(plan: JoinPlan, hasAudio: readonly boolean[]): void {
  * The ffmpeg arguments and filter graph for a join. Clips are found in mediaDir by id; hasAudio says, per clip,
  * whether ffprobe found sound (a clip without gets silence of the right length, or the join breaks).
  */
-export function joinCommand(mediaDir: string, plan: JoinPlan, hasAudio: readonly boolean[], files = { filter: 'FILTER', output: 'OUTPUT' }): { args: string[]; filter: string; frames: number } {
+export function joinCommand(mediaDir: string, plan: JoinPlan, hasAudio: readonly boolean[], files = { filter: 'FILTER', output: 'OUTPUT' }, inline = false): { args: string[]; filter: string; frames: number } {
   checkPlan(plan, hasAudio)
   const inputs: string[] = []
   const chains: string[] = []
@@ -181,7 +201,7 @@ export function joinCommand(mediaDir: string, plan: JoinPlan, hasAudio: readonly
   const args = [
     '-nostdin', '-hide_banner', '-v', 'error', '-timelimit', '900',
     ...inputs,
-    '-/filter_complex', files.filter,
+    ...(inline ? ['-filter_complex', filter] : ['-/filter_complex', files.filter]),
     '-map', '[vout]', ...(plan.sound ? ['-map', '[aout]', '-c:a', 'aac', '-b:a', '192k'] : ['-an']),
     '-c:v', 'libx264', '-crf', '18', '-preset', 'medium', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
     '-map_metadata', '-1', '-map_chapters', '-1', '-fflags', '+bitexact', '-threads', String(THREADS), '-fs', String(MAX_FILM_BYTES),
@@ -196,6 +216,7 @@ export function runFfmpeg(tools: FfmpegTools, args: string[], options: RunOption
     if (options.signal?.aborted) return reject(new FfmpegError('ffmpeg was stopped.'))
     const child = spawn(tools.ffmpeg, args, { shell: false, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true, cwd: options.cwd })
     try { if (child.pid) setPriority(child.pid, osConstants.priority.PRIORITY_BELOW_NORMAL) } catch { /* best effort */ }
+    if (options.pidFile && child.pid) writeFileSync(options.pidFile, `${child.pid}\n${tools.ffmpeg}`, { mode: 0o600 })
     let stderr = ''
     let outcome: FfmpegError | null = null
     const stop = (why: FfmpegError) => { outcome ??= why; child.kill('SIGKILL') }
@@ -207,6 +228,7 @@ export function runFfmpeg(tools: FfmpegTools, args: string[], options: RunOption
     child.on('close', (code) => {
       clearTimeout(timer)
       options.signal?.removeEventListener('abort', onAbort)
+      if (options.pidFile) rmSync(options.pidFile, { force: true })
       if (outcome) return reject(outcome)
       if (code !== 0) {
         // The detail stays in the gateway's log: it can hold file paths.
@@ -216,6 +238,34 @@ export function runFfmpeg(tools: FfmpegTools, args: string[], options: RunOption
       resolve()
     })
   })
+}
+
+/**
+ * After a crash: stops the ffmpeg a pid file names, if that process is still running that very program (a pid may
+ * have been reused by something else), and removes the pid file.
+ */
+export function stopLeftoverFfmpeg(pidFile: string, tools: FfmpegTools | null): void {
+  let text: string
+  try { text = readFileSync(pidFile, 'utf8') } catch { return }
+  rmSync(pidFile, { force: true })
+  const [pidText, program] = text.split('\n')
+  const pid = Number(pidText)
+  if (!tools || !Number.isSafeInteger(pid) || pid <= 1 || program !== tools.ffmpeg || programOf(pid) !== tools.ffmpeg) return
+  try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
+}
+
+// The program a process runs, by its pid; null when it isn't running or can't be told.
+function programOf(pid: number): string | null {
+  try {
+    if (process.platform === 'linux') return realpathSync(`/proc/${pid}/exe`)
+    if (process.platform === 'win32') {
+      return execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid}).Path`],
+        { encoding: 'utf8', timeout: 10_000, windowsHide: true }).trim() || null
+    }
+    return execFileSync('ps', ['-p', String(pid), '-o', 'comm='], { encoding: 'utf8', timeout: 5000 }).trim() || null
+  } catch {
+    return null
+  }
 }
 
 interface Probe { video: string | null; audio: string | null; frames: number; width: number; height: number }
@@ -264,11 +314,12 @@ export async function joinFilm(tools: FfmpegTools, mediaDir: string, plan: JoinP
   }
   const filterPath = tempName(mediaDir, 'filter')
   const outPath = tempName(mediaDir, 'mp4')
-  const { args, filter, frames } = joinCommand(mediaDir, plan, hasAudio, { filter: filterPath, output: outPath })
+  const inline = !supportsOptionFiles(tools.version)
+  const { args, filter, frames } = joinCommand(mediaDir, plan, hasAudio, { filter: filterPath, output: outPath }, inline)
   const problem = checkFilterGraph(filter)
   if (problem) throw new FfmpegError(`Mission Control made a join it doesn't allow (${problem}).`)
   try {
-    writeFileSync(filterPath, filter, { flag: 'wx', mode: 0o600 })
+    if (!inline) writeFileSync(filterPath, filter, { flag: 'wx', mode: 0o600 })
     await runFfmpeg(tools, args, options)
     const made = await probe(tools, outPath, 'mov', options.signal)
     if (made.video !== 'h264' || made.width !== WIDTH || made.height !== HEIGHT || Math.abs(made.frames - frames) > 1) {
@@ -321,11 +372,13 @@ export async function makeSheet(tools: FfmpegTools, inputsDir: string, pictures:
   if (problem) throw new FfmpegError(`Mission Control made a sheet it doesn't allow (${problem}).`)
   const filterPath = tempName(inputsDir, 'filter')
   const outPath = tempName(inputsDir, 'png')
+  const inline = !supportsOptionFiles(tools.version)
   try {
-    writeFileSync(filterPath, filter, { flag: 'wx', mode: 0o600 })
-    await runFfmpeg(tools, ['-nostdin', '-hide_banner', '-v', 'error', ...inputs, '-/filter_complex', filterPath,
+    if (!inline) writeFileSync(filterPath, filter, { flag: 'wx', mode: 0o600 })
+    await runFfmpeg(tools, ['-nostdin', '-hide_banner', '-v', 'error', '-timelimit', String(SHEET_TIME_LIMIT_S), ...inputs,
+      ...(inline ? ['-filter_complex', filter] : ['-/filter_complex', filterPath]),
       '-map', `[bg${panels.length}]`, '-frames:v', '1', '-map_metadata', '-1', '-fflags', '+bitexact', '-threads', String(THREADS),
-      '-f', 'image2', '-c:v', 'png', '-y', outPath], options)
+      '-fs', String(MAX_SHEET_BYTES), '-f', 'image2', '-c:v', 'png', '-y', outPath], options)
     return readFileSync(outPath)
   } finally {
     rmSync(filterPath, { force: true })
