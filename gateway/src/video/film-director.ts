@@ -18,7 +18,7 @@ import { FfmpegError, type FfmpegTools, type JoinClip, type JoinPlan, type joinF
 import {
   closeUpPrompt, facePrompt, firstMasterPrompt, laterMasterPrompt, posePrompts, shotPrompt, turnaroundPrompt, type FilmLook,
 } from './film-wording.js'
-import { STOP_FIRST, type Film, type FilmCastMember, type FilmShot, type FilmStage, type FilmStore, type OwnerKind } from './films.js'
+import { STOP_FIRST, followsOn, type Film, type FilmCastMember, type FilmShot, type FilmStage, type FilmStore, type OwnerKind } from './films.js'
 import { VideoRequestError, type VideoEvent, type VideoStatus } from './jobs.js'
 import type { Recipe } from './recipes.js'
 
@@ -314,8 +314,7 @@ export class FilmDirector {
     const tasks: PictureTask[] = []
     ready.shots.forEach((shot, i) => {
       const before = ready.shots[i - 1]
-      const followsOn = !shot.closeUp && shot.joins === 'follows' && before?.placeId === shot.placeId
-      if (!shot.startId && !followsOn && !has(shot.id, 'start')) tasks.push(...this.pose(ready, shot, 'start'))
+      if (!shot.startId && !followsOn(before, shot) && !has(shot.id, 'start')) tasks.push(...this.pose(ready, shot, 'start'))
       if (!shot.closeUp && !shot.endId && !has(shot.id, 'end')) tasks.push(...this.pose(ready, shot, 'end'))
     })
     return tasks
