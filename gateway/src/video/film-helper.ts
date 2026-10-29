@@ -34,7 +34,7 @@ const RULES = `You plan short films for Mission Control's Storyboard page. You t
 
 What the video model can and can't do (the rules come from real tests):
 1. Every shot happens in exactly one place, with the camera still. A shot never moves between places. Going through a door is always two shots: the first ends outside as the character steps through, the second starts inside with the character in the doorway.
-2. Each shot shows one, two or three characters from the cast list, together in that place. List every character on screen in the shot's "characters". Every one of them is on screen from the first moment of the shot to the last.
+2. Each shot shows one, two or three characters from the cast list, together in that place. List every character on screen in the shot's "characters". Every one of them is on screen from the first moment of the shot to the last. A character who is in a place stays in every shot of that place, with a start and end pose, until the story says they leave; only a close-up shows one character on its own.
 3. Movement is calm and natural: walking, trotting, sitting, lying down, looking, sniffing, picking something up. No running, chasing, fighting, jumping, shaking or fast action. Ask for slow turns ("slowly turns round").
 4. Shot length matches the distance moved: 4 seconds for a few steps, 5 or 6 seconds for a short walk, 7 or 8 seconds to cross a room. Shots are 4 to 8 seconds long.
 5. Each character in a shot has its own start pose and end pose: where it is in the picture and what it is doing at the first and last moment, for example "standing on the path on the left of the picture, facing right" or "lying on the grass just to the right of Spot". Say where each one is, so they stand apart, and keep each one on the same side of the picture from start to end. The end pose must show the character, never an empty place. A character that leaves ends at the edge of the picture, walking away.
@@ -136,6 +136,8 @@ export function checkPlan(answer: unknown, film: HelperFilm): { problems: string
   })
 
   const names = new Set(film.cast.map((c) => c.name))
+  // Who is in each shot, for the scene check below.
+  const cast: Array<Set<string>> = []
   let total = 0
   shots.forEach((shot, i) => {
     const where = `shot ${i + 1}`
@@ -150,6 +152,7 @@ export function checkPlan(answer: unknown, film: HelperFilm): { problems: string
     if (characters.length > MAX_SHOT_CAST) problems.push(`${where}: more than ${MAX_SHOT_CAST} characters`)
     if (closeUp === true && characters.length > 1) problems.push(`${where}: a close-up shows one character`)
     const inShot = new Set<string>()
+    cast[i] = inShot
     const poses: string[] = []
     for (const character of characters) {
       if (!isObject(character)) {
@@ -188,6 +191,19 @@ export function checkPlan(answer: unknown, film: HelperFilm): { problems: string
     const elsewhere = places.filter((p, j): p is Record<string, unknown> => j !== place && isObject(p) && typeof p['name'] === 'string' && p['name'] !== '' &&
       new RegExp(`\\b${escapeRegExp(p['name'])}\\b`, 'i').test(String(shot['action'])))
     if (elsewhere.length > 0) warnings.push(`Shot ${i + 1} names another place (${elsewhere.map((p) => p['name']).join(', ')}). A shot stays in one place.`)
+
+    // Still the same scene (no shot elsewhere since): someone in the last wide shot here who isn't in this one has vanished.
+    if (closeUp !== true) {
+      for (let j = i - 1; j >= 0; j--) {
+        const earlier = shots[j]
+        if (!isObject(earlier) || earlier['place'] !== place) break
+        if (earlier['closeUp'] === true) continue
+        for (const name of cast[j] ?? []) {
+          if (!inShot.has(name)) warnings.push(`Shot ${i + 1} leaves out ${name}, who is in shot ${j + 1} in the same place. If ${name} is still there, add ${name} to shot ${i + 1}.`)
+        }
+        break
+      }
+    }
   })
   if (shots.length > 0 && Math.abs(total - film.seconds) > film.seconds * 0.15) problems.push(`total ${total} s is not within 15% of ${film.seconds} s`)
 
