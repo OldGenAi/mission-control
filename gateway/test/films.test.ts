@@ -797,6 +797,16 @@ test('a deleted film takes its characters\' cut-out pictures with it, even one n
   assert.equal(s.jobs.findImage(cut), null)
 })
 
+test('a character taken out of a film takes their cut-out picture with them (review 5 nit)', () => {
+  const s = setup()
+  const film = s.films.create({ ...FILM, castIds: [s.rex.id, s.tom.id] })
+  const tomPicture = s.films.get(film.id)!.cast.find((c) => c.castId === s.tom.id)!.pictureId!
+  const cut = referenceIdFor(tomPicture)
+  new ImageInputs(join(s.mediaDir, 'inputs')).saveBuffer(rgbPng(64, 64, Buffer.alloc(64 * 64 * 3, 200)), cut)
+  s.films.update(film.id, { ...FILM, castIds: [s.rex.id] })
+  assert.equal(s.jobs.findImage(cut), null)
+})
+
 test('a sheet replaced or dropped takes its file with it, unless something else still uses it (second review nit 1)', () => {
   const s = setup()
   const { film, garden } = filmWithPlan(s)

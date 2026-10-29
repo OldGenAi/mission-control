@@ -4,12 +4,12 @@
 // in the pose: two Toms and three dogs in the live test's end pictures.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, statSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { crc32 } from 'node:zlib'
+import { dirname, join } from 'node:path'
+import { crc32, deflateSync } from 'node:zlib'
 import { cutReference, findCharacter, referenceIdFor } from '../src/video/reference-cut.js'
-import { readRgbPng, rgbPng, stripPng } from '../src/video/png-strip.js'
+import { SEE_THROUGH, readRgbPng, rgbPng, stripPng } from '../src/video/png-strip.js'
 import { findFfmpeg } from '../src/video/ffmpeg.js'
 import { ImageInputs } from '../src/video/image-input.js'
 
@@ -70,10 +70,37 @@ test('readRgbPng refuses what it wasn\'t made for: another colour type, an inter
     copy.writeUInt32BE(crc32(copy.subarray(12, 29)), 29)
     return copy
   }
-  assert.equal(readRgbPng(changed(25, 6)), null, 'RGBA')
+  assert.equal(readRgbPng(changed(25, 4)), null, 'grey with alpha')
+  assert.equal(readRgbPng(changed(24, 16)), null, '16 bits')
   assert.equal(readRgbPng(changed(28, 1)), null, 'interlaced')
   assert.equal(readRgbPng(changed(19, 5)), null, 'wider than its data')
   assert.equal(readRgbPng(Buffer.from('not a picture')), null)
+})
+
+// An 8-bit RGBA PNG (colour type 6) of these pixels, for see-through pictures.
+function rgbaPng(width: number, height: number, rgba: Buffer): Buffer {
+  const header = Buffer.alloc(13)
+  header.writeUInt32BE(width, 0); header.writeUInt32BE(height, 4); header[8] = 8; header[9] = 6
+  const rows = Buffer.alloc(height * (1 + width * 4))
+  for (let y = 0; y < height; y++) rgba.copy(rows, y * (1 + width * 4) + 1, y * width * 4, (y + 1) * width * 4)
+  const chunk = (type: string, data: Buffer) => {
+    const out = Buffer.alloc(12 + data.length)
+    out.writeUInt32BE(data.length, 0); out.write(type, 4, 'latin1'); data.copy(out, 8)
+    out.writeUInt32BE(crc32(out.subarray(4, 8 + data.length)), 8 + data.length)
+    return out
+  }
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', header), chunk('IDAT', deflateSync(rows)), chunk('IEND', Buffer.alloc(0))])
+}
+
+test('a see-through picture reads as the character on light grey, whatever colours hide in the see-through part (review 5 S2)', () => {
+  const rgba = Buffer.alloc(400 * 200 * 4)
+  for (let y = 0; y < 200; y++) for (let x = 0; x < 400; x++) {
+    // Leftover colours under the see-through part, as some editors keep them.
+    rgba.set(figure(x, y) ? [90, 60, 30, 255] : [(x * 5) % 256, (y * 9) % 256, 40, 0], (y * 400 + x) * 4)
+  }
+  const read = readRgbPng(rgbaPng(400, 200, rgba))!
+  assert.deepEqual([...read.rgb.subarray(0, 3)], [...SEE_THROUGH])
+  assert.deepEqual(findCharacter(read.rgb, 400, 200), { x: 234, y: 24, width: 62, height: 162 })
 })
 
 test('the cut picture\'s id comes from the picture\'s own, so each picture is cut once', () => {
@@ -93,6 +120,21 @@ test('a picture kept under a given id: only a proper id, and a second save of th
   assert.ok(typeof first !== 'string' && first.id === id)
   assert.ok(typeof images.saveBuffer(rgbPng(400, 200, pixels(400, 200, () => GREY)), id) !== 'string')
   assert.deepEqual(readFileSync(images.find(id)!.path), png, 'the first stays')
+  // Kept whole or not at all: written under a temp name first, so a crash mid-write never leaves half a picture
+  // under the id (review 5 S4); no temp file is left behind.
+  assert.deepEqual(readdirSync(dirname(images.find(id)!.path)).filter((n) => n.startsWith('tmp-')), [])
+})
+
+test('a big picture is made smaller before it is cut, so the cut-out stays a size Mission Control keeps (review 5 S1)', { skip: findFfmpeg() ? false : 'no ffmpeg on this computer' }, async () => {
+  const images = new ImageInputs(mkdtempSync(join(tmpdir(), 'mc-cut-big-')))
+  // 4000x2000 with a figure 300 wide and 1300 tall: cut at full size it would be about 3.4 MB of pixels each way up.
+  const big = images.saveBuffer(rgbPng(4000, 2000, pixels(4000, 2000, (x, y) => x >= 2500 && x < 2800 && y >= 400 && y < 1700 ? [90, 60, 30] : GREY)))
+  assert.ok(typeof big !== 'string')
+  const cut = await cutReference(findFfmpeg()!, images, big.id, { timeoutMs: 30_000 })
+  assert.ok(typeof cut !== 'string')
+  const read = readRgbPng(readFileSync(images.find(cut.id)!.path))!
+  // Made to fit 1536 each way first (1536x768, a scale of 0.384): the figure is then about 115x499 plus the margin.
+  assert.ok(read.height <= 1536 && read.height > 499 && read.height < 640, `height ${read.height}`)
 })
 
 const tools = findFfmpeg()

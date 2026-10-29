@@ -574,6 +574,21 @@ test('a character whose picture has a busy background is refused with plain word
   assert.ok((await s.finishAll()).length > 0)
 })
 
+test('the quick refusals come before any character is cut out, and only the pictures still to make need one (review 5 S3)', async () => {
+  const s = setup()
+  const { film, green, closeUp } = together(s)
+  const nipper = s.films.get(film.id)!.cast.find((c) => c.castId === s.nip.id)!.pictureId!
+  s.cutFor.set(nipper, 'busy')
+  await assert.rejects(s.director.makePictures(film.id, { round: 'shots' }), /Choose a master picture for The green first/)
+  assert.deepEqual(s.calls.cuts, [], 'nothing cut for a press that is refused anyway')
+  await placesChosen(s, film.id, [s.rex.id, s.nip.id, s.tom.id], green.id)
+  // Make more for the close-up of Rex needs only Rex cut out, so Nipper's busy picture doesn't stop it.
+  await s.director.makePictures(film.id, { ownerId: closeUp.id, role: 'start' })
+  assert.equal((await s.finishAll()).length, 2)
+  const rex = s.films.get(film.id)!.cast.find((c) => c.castId === s.rex.id)!.pictureId!
+  assert.deepEqual(s.calls.cuts, [rex])
+})
+
 test('Make film with three characters: the sheet holds the first one, the shot words name everyone', async () => {
   const s = setup()
   const { film, green, three, closeUp } = together(s)
