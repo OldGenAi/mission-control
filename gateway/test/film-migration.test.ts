@@ -18,9 +18,12 @@ test('a new database has the Storyboard tables', () => {
   for (const table of ['films', 'film_cast', 'film_places', 'film_shots', 'film_pictures']) {
     assert.ok(columns(db, table).length > 0, `${table} exists`)
   }
-  assert.deepEqual(columns(db, 'film_cast'), ['film_id', 'cast_id', 'name', 'wording', 'picture_id', 'turnaround_id', 'face_id'])
+  assert.deepEqual(columns(db, 'film_cast'), ['film_id', 'cast_id', 'name', 'wording', 'kind', 'picture_id', 'turnaround_id', 'face_id'])
+  // A shot's characters, each with its own start and end, are one list (hand test T6: one character added per edit).
+  assert.ok(columns(db, 'film_shots').includes('characters'))
+  for (const gone of ['cast_id', 'start_pose', 'end_pose']) assert.ok(!columns(db, 'film_shots').includes(gone), `film_shots.${gone}`)
   assert.ok(columns(db, 'film_shots').includes('revision'))
-  assert.ok(columns(db, 'film_pictures').includes('owner_kind'))
+  for (const column of ['owner_kind', 'steps', 'step']) assert.ok(columns(db, 'film_pictures').includes(column), `film_pictures.${column}`)
   for (const column of ['kind', 'image_id', 'film_id']) assert.ok(columns(db, 'videos').includes(column), `videos.${column}`)
   db.close()
 })
