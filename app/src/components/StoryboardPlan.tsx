@@ -3,18 +3,19 @@
 import React, { useState } from 'react'
 import { gateway } from '../lib/gateway-client'
 import { button, card, input, linkButton } from './video-ui'
-import { JOINS, type Film, type FilmPlace, type FilmShot } from './storyboard-types'
+import { JOINS, type Film, type FilmCast, type FilmPlace, type FilmShot } from './storyboard-types'
+
+// The most characters in one shot (the gateway's MAX_SHOT_CAST): a man and his two dogs were proven together.
+const MAX_SHOT_CAST = 3
 
 interface PlaceDraft { id?: string; name: string; description: string; keep: string; prop: string }
-interface ShotDraft {
-  id?: string; placeId: string; castId: string; action: string; startPose: string; endPose: string
-  seconds: number; joins: string; closeUp: boolean
-}
+interface CharacterDraft { castId: string; startPose: string; endPose: string }
+interface ShotDraft { id?: string; placeId: string; characters: CharacterDraft[]; action: string; seconds: number; joins: string; closeUp: boolean }
 
 const placeDraft = (p: FilmPlace): PlaceDraft => ({ id: p.id, name: p.name, description: p.description, keep: p.keep, prop: p.prop ?? '' })
 const shotDraft = (s: FilmShot): ShotDraft => ({
-  id: s.id, placeId: s.placeId, castId: s.castId, action: s.action, startPose: s.startPose, endPose: s.endPose ?? '',
-  seconds: s.seconds, joins: s.joins, closeUp: s.closeUp,
+  id: s.id, placeId: s.placeId, action: s.action, seconds: s.seconds, joins: s.joins, closeUp: s.closeUp,
+  characters: s.characters.map((c) => ({ castId: c.castId, startPose: c.startPose, endPose: c.endPose ?? '' })),
 })
 
 const errorText = (err: unknown, fallback: string) => (err instanceof Error ? err.message : fallback)
@@ -80,7 +81,8 @@ const ShotEditor: React.FC<{
   film: Film; shot: FilmShot | null; index: number; editable: boolean; onSaved: () => void; onCancel?: () => void; onError: (m: string) => void
 }> = ({ film, shot, index, editable, onSaved, onCancel, onError }) => {
   const empty: ShotDraft = {
-    placeId: film.places.at(-1)?.id ?? '', castId: film.cast[0]?.castId ?? '', action: '', startPose: '', endPose: '', seconds: 6, joins: 'follows', closeUp: false,
+    placeId: film.places.at(-1)?.id ?? '', characters: film.cast[0] ? [{ castId: film.cast[0].castId, startPose: '', endPose: '' }] : [],
+    action: '', seconds: 6, joins: 'follows', closeUp: false,
   }
   const [draft, setDraft] = useState<ShotDraft>(shot ? shotDraft(shot) : empty)
   const saved = JSON.stringify(shot ? shotDraft(shot) : empty)
@@ -89,8 +91,8 @@ const ShotEditor: React.FC<{
 
   const save = async () => {
     try {
-      const { endPose, ...rest } = draft
-      await gateway.request('video.film.shot.save', { filmId: film.id, shot: { ...rest, ...(draft.closeUp ? {} : { endPose }) } })
+      const characters = draft.characters.map(({ endPose, ...c }) => (draft.closeUp ? c : { ...c, endPose }))
+      await gateway.request('video.film.shot.save', { filmId: film.id, shot: { ...draft, characters } })
       onSaved()
     } catch (err) { onError(errorText(err, 'Could not save the shot.')) }
   }
@@ -102,6 +104,13 @@ const ShotEditor: React.FC<{
     try { await gateway.request('video.film.shot.delete', { filmId: film.id, id: shot!.id }); onSaved() } catch (err) { onError(errorText(err, 'Could not delete the shot.')) }
   }
   const seconds = draft.closeUp ? [4, 5] : [4, 5, 6, 7, 8]
+  const most = draft.closeUp ? 1 : MAX_SHOT_CAST
+  const nameOf = (castId: string) => film.cast.find((c) => c.castId === castId)?.name ?? 'This character'
+  // Ticking adds a character at the end: the pictures add them in this order.
+  const toggle = (castId: string, on: boolean) => set({
+    characters: on ? [...draft.characters, { castId, startPose: '', endPose: '' }] : draft.characters.filter((c) => c.castId !== castId),
+  })
+  const setCharacter = (i: number, patch: Partial<CharacterDraft>) => set({ characters: draft.characters.map((c, j) => (j === i ? { ...c, ...patch } : c)) })
 
   return (
     <div className="flex flex-col gap-1 rounded p-3" style={{ border: '1px solid rgba(255,255,255,0.07)' }}>
@@ -109,9 +118,6 @@ const ShotEditor: React.FC<{
         <span className="text-xs text-gray-500">Shot {index + 1}</span>
         <select aria-label="Place" value={draft.placeId} disabled={!editable} onChange={(e) => set({ placeId: e.target.value })} className="px-2 py-1 rounded text-xs" style={input}>
           {film.places.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
-        <select aria-label="Character" value={draft.castId} disabled={!editable} onChange={(e) => set({ castId: e.target.value })} className="px-2 py-1 rounded text-xs" style={input}>
-          {film.cast.map((c) => <option key={c.castId} value={c.castId}>{c.name}</option>)}
         </select>
         <select aria-label="Length" value={draft.seconds} disabled={!editable} onChange={(e) => set({ seconds: Number(e.target.value) })} className="px-2 py-1 rounded text-xs" style={input}>
           {seconds.map((s) => <option key={s} value={s}>{s} seconds</option>)}
@@ -121,19 +127,41 @@ const ShotEditor: React.FC<{
         </select>
         <label className="text-xs text-gray-400 flex items-center gap-1">
           <input type="checkbox" checked={draft.closeUp} disabled={!editable}
-            onChange={(e) => set({ closeUp: e.target.checked, seconds: e.target.checked ? Math.min(draft.seconds, 5) : draft.seconds })} />
+            onChange={(e) => set({
+              closeUp: e.target.checked, seconds: e.target.checked ? Math.min(draft.seconds, 5) : draft.seconds,
+              characters: e.target.checked ? draft.characters.slice(0, 1) : draft.characters,
+            })} />
           Close-up
         </label>
         {shot && <span className="ml-auto"><RowTools first={index === 0} last={index === film.shots.length - 1} disabled={!editable} onMove={(by) => void move(by)} onDelete={() => void remove()} /></span>}
       </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="text-xs text-gray-500">{draft.closeUp ? 'Who (a close-up shows one):' : `Who is in it (up to ${MAX_SHOT_CAST}):`}</span>
+        {film.cast.map((c) => {
+          const at = draft.characters.findIndex((d) => d.castId === c.castId)
+          const full = at < 0 && draft.characters.length >= most
+          return (
+            <label key={c.castId} className="text-xs text-gray-300 flex items-center gap-1">
+              <input type="checkbox" checked={at >= 0} disabled={!editable || full} onChange={(e) => toggle(c.castId, e.target.checked)} />
+              {c.name}
+            </label>
+          )
+        })}
+      </div>
       <textarea aria-label="What happens" rows={2} maxLength={600} value={draft.action} disabled={!editable} onChange={(e) => set({ action: e.target.value })}
         placeholder="What happens, calmly: walks to the door and sniffs it" className="px-2 py-1 rounded text-xs" style={input} />
-      <input aria-label="How it starts" value={draft.startPose} maxLength={300} disabled={!editable} onChange={(e) => set({ startPose: e.target.value })}
-        placeholder="How it starts: standing by the wall" className="px-2 py-1 rounded text-xs" style={input} />
-      {!draft.closeUp && (
-        <input aria-label="How it ends" value={draft.endPose} maxLength={300} disabled={!editable} onChange={(e) => set({ endPose: e.target.value })}
-          placeholder="How it ends: standing at the door" className="px-2 py-1 rounded text-xs" style={input} />
-      )}
+      {draft.characters.length > 1 && <span className="text-xs text-gray-500">Say where each one is, so they stand apart. The pictures add them in this order.</span>}
+      {draft.characters.map((c, i) => (
+        <div key={c.castId} className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-gray-400 w-24 truncate">{i + 1}. {nameOf(c.castId)}</span>
+          <input aria-label={`How ${nameOf(c.castId)} starts`} value={c.startPose} maxLength={300} disabled={!editable} onChange={(e) => setCharacter(i, { startPose: e.target.value })}
+            placeholder="How it starts: standing on the path on the left" className="px-2 py-1 rounded text-xs flex-1 min-w-48" style={input} />
+          {!draft.closeUp && (
+            <input aria-label={`How ${nameOf(c.castId)} ends`} value={c.endPose} maxLength={300} disabled={!editable} onChange={(e) => setCharacter(i, { endPose: e.target.value })}
+              placeholder="How it ends: lying on the grass on the left" className="px-2 py-1 rounded text-xs flex-1 min-w-48" style={input} />
+          )}
+        </div>
+      ))}
       {editable && (changed || !shot) && (
         <div className="flex gap-2">
           <button onClick={() => void save()} className="px-3 py-1 rounded text-xs" style={button(true)}>{shot ? 'Save' : 'Add shot'}</button>
@@ -141,6 +169,25 @@ const ShotEditor: React.FC<{
         </div>
       )}
     </div>
+  )
+}
+
+/** One word for what a character is, for the pictures' "exactly two dogs and one man". Saved when the box is left. */
+const KindBox: React.FC<{ film: Film; member: FilmCast; editable: boolean; onSaved: () => void; onError: (m: string) => void }> = ({ film, member, editable, onSaved, onError }) => {
+  const [kind, setKind] = useState(member.kind ?? '')
+  const save = async () => {
+    if (kind.trim().toLowerCase() === (member.kind ?? '')) return
+    try {
+      await gateway.request('video.film.cast.kind', { filmId: film.id, castId: member.castId, kind })
+      onSaved()
+    } catch (err) { onError(errorText(err, 'Could not save what the character is.')) }
+  }
+  return (
+    <label className="text-xs text-gray-300 flex items-center gap-2">
+      {member.name} is a
+      <input aria-label={`What ${member.name} is`} value={kind} maxLength={20} disabled={!editable} onChange={(e) => setKind(e.target.value)} onBlur={() => void save()}
+        placeholder="dog" className="px-2 py-1 rounded text-xs w-24" style={{ ...input, borderColor: member.kind ? undefined : '#fcd34d' }} />
+    </label>
   )
 }
 
@@ -181,7 +228,7 @@ export const StoryboardPlan: React.FC<{ film: Film; onChanged: () => void; onErr
     <div className="rounded-xl p-4 flex flex-col gap-3" style={card}>
       <div className="flex items-center gap-3">
         <h3 className="text-xs font-medium text-gray-300">2. Plan</h3>
-        <span className="text-xs text-gray-500">Places, then the shots in each. One character on screen per shot; a shot never moves between places.</span>
+        <span className="text-xs text-gray-500">Places, then the shots in each. Up to {MAX_SHOT_CAST} characters on screen per shot; a shot never moves between places.</span>
         {canPlan && (
           <button onClick={() => void plan()} disabled={planning || film.cast.length === 0} className="px-3 py-1 rounded text-xs ml-auto" style={{ ...button(true), opacity: planning ? 0.6 : 1 }}>
             {planning ? 'The helper is planning...' : film.shots.length > 0 ? 'Plan again with the helper' : 'Plan with the helper'}
@@ -189,6 +236,13 @@ export const StoryboardPlan: React.FC<{ film: Film; onChanged: () => void; onErr
         )}
       </div>
       {warnings.map((w) => <p key={w} className="text-xs" style={{ color: '#fcd34d' }}>{w}</p>)}
+
+      <p className="text-xs text-gray-400">Who is who <span className="text-gray-500">(one word each; the helper fills any you leave empty)</span></p>
+      <div className="flex flex-wrap gap-4">
+        {film.cast.map((member) => (
+          <KindBox key={`${member.castId}:${member.kind ?? ''}`} film={film} member={member} editable={editable} onSaved={onChanged} onError={onError} />
+        ))}
+      </div>
 
       <p className="text-xs text-gray-400">Places</p>
       {film.places.map((place, i) => (

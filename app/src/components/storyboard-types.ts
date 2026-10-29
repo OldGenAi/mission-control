@@ -2,7 +2,12 @@
 
 export type Stage = 'story' | 'plan' | 'places' | 'shots' | 'making' | 'done' | 'stopped'
 
-export interface FilmCast { castId: string; name: string; wording: string; pictureId: string | null; turnaroundId: string | null; faceId: string | null }
+export interface FilmCast {
+  castId: string; name: string; wording: string; kind: string | null; pictureId: string | null; turnaroundId: string | null; faceId: string | null
+}
+
+/** One character in a shot, in the order the pictures add them. */
+export interface ShotCharacter { castId: string; startPose: string; endPose: string | null }
 
 export interface FilmPlace {
   id: string; position: number; name: string; description: string; keep: string; prop: string | null
@@ -10,14 +15,14 @@ export interface FilmPlace {
 }
 
 export interface FilmShot {
-  id: string; position: number; placeId: string; castId: string; action: string; startPose: string; endPose: string | null
+  id: string; position: number; placeId: string; characters: ShotCharacter[]; action: string
   seconds: number; joins: string; closeUp: boolean; seed: number; startId: string | null; endId: string | null
   clipId: string | null; clipSeed: number | null; revision: number; clipRev: number | null
 }
 
 export interface FilmPicture {
   id: string; ownerKind: 'place' | 'shot' | 'cast'; ownerId: string; role: string; jobId: string; status: string | null
-  imageId: string | null; seed: number; checkState: string; checkNotes: string | null; createdAt: number
+  imageId: string | null; steps: number; step: number; seed: number; checkState: string; checkNotes: string | null; createdAt: number
 }
 
 export interface Film {

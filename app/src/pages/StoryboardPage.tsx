@@ -35,7 +35,10 @@ const Slot: React.FC<{
         }
         if (!p.imageId || !links[p.imageId]) {
           const waiting = p.status === 'queued' || p.status === 'running'
-          return <div key={p.id} style={box} className="text-xs text-gray-500 flex items-center justify-center">{waiting ? 'Making...' : 'This one failed'}</div>
+          // A pose of several characters adds them one edit at a time.
+          const making = p.steps > 1 ? `Adding character ${p.step} of ${p.steps}...` : 'Making...'
+          const text = waiting ? making : p.status === 'cancelled' ? 'Stopped before it was finished' : 'This one failed'
+          return <div key={p.id} style={box} className="text-xs text-gray-500 flex items-center justify-center">{text}</div>
         }
         return (
           <button key={p.id} onClick={() => onChoose(p.id)} disabled={disabled || isChosen} style={box} aria-pressed={isChosen} title={isChosen ? 'Chosen' : 'Choose this one'}>
