@@ -18,7 +18,7 @@ import { FfmpegError, type FfmpegTools, type JoinClip, type JoinPlan, type joinF
 import {
   closeUpPrompt, facePrompt, firstMasterPrompt, laterMasterPrompt, posePrompts, shotPrompt, turnaroundPrompt, type FilmLook,
 } from './film-wording.js'
-import { STOP_FIRST, followsOn, slotBasis, type Film, type FilmCastMember, type FilmShot, type FilmStage, type FilmStore, type OwnerKind } from './films.js'
+import { PICTURE_STAGES, STOP_FIRST, followsOn, slotBasis, type Film, type FilmCastMember, type FilmShot, type FilmStage, type FilmStore, type OwnerKind } from './films.js'
 import { VideoRequestError, type VideoEvent, type VideoStatus } from './jobs.js'
 import type { Recipe } from './recipes.js'
 
@@ -35,7 +35,6 @@ const RESTARTED = 'Mission Control restarted while this was being made. Press Ma
 // One install line per system; ffmpeg.org publishes only source code, so the Windows build is a third party's.
 const NO_FFMPEG = 'Making a film needs ffmpeg, which isn\'t installed. Install it (Ubuntu: sudo apt install ffmpeg; Mac: brew install ffmpeg; ' +
   'Windows: winget install Gyan.FFmpeg, a third-party build), then restart Mission Control.'
-const PICTURE_STAGES: ReadonlySet<string> = new Set(['places', 'shots', 'stopped', 'done'])
 
 /** What the page hears about a film as it is made, built on the queue's own events. */
 export interface FilmEvent {

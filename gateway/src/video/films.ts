@@ -52,7 +52,8 @@ export type OwnerKind = 'place' | 'shot' | 'cast'
 
 // Before any picture is made the look and the cast can still change; after, pictures can be chosen.
 const EARLY_STAGES: ReadonlySet<string> = new Set(['story', 'plan'])
-const PICTURE_STAGES: ReadonlySet<string> = new Set(['places', 'shots', 'stopped', 'done'])
+/** The stages in which pictures are made and chosen. */
+export const PICTURE_STAGES: ReadonlySet<string> = new Set(['places', 'shots', 'stopped', 'done'])
 const MAKE_FROM: ReadonlySet<string> = new Set(['shots', 'stopped', 'done'])
 export const ROLE_OWNER: Readonly<Record<string, OwnerKind>> = { master: 'place', empty: 'place', start: 'shot', end: 'shot', turnaround: 'cast', face: 'cast' }
 
@@ -209,7 +210,8 @@ export function slotBasis(film: Pick<Film, 'cast' | 'places' | 'shots' | 'look'>
   const place = shot && film.places.find((p) => p.id === shot.placeId)
   if (!shot || !place) return null
   const poses = shot.characters.map((c) => [c.castId, role === 'start' ? c.startPose : c.endPose])
-  return JSON.stringify([role, place.emptyId, shot.closeUp, poses])
+  // The place's keep words go into every pose edit (film-wording.ts keepLine).
+  return JSON.stringify([role, place.emptyId, place.keep, shot.closeUp, poses])
 }
 
 // The characters column is written only by saveShot, as checked JSON.
@@ -493,7 +495,9 @@ export class FilmStore {
     const film = this.film(filmId)
     if (ROLE_OWNER[role] === undefined || ROLE_OWNER[role] !== ownerKind) throw new VideoRequestError('That role doesn\'t fit what the picture is for.')
     const owner = this.ownerOf(film.id, ownerKind as OwnerKind, ownerId)
-    const count = (this.db.prepare(`SELECT COUNT(*) AS n FROM film_pictures WHERE film_id = ? AND owner_id = ? AND role = ?`).get(film.id, owner, role) as { n: number }).n
+    // Only the pictures there to choose from count: not failed or stopped ones, nor ones out of date.
+    const count = this.get(film.id)!.pictures.filter((p) => p.ownerId === owner && p.role === role && !p.stale &&
+      p.status !== 'failed' && p.status !== 'cancelled').length
     if (count + adding > MAX_CANDIDATES) throw new VideoRequestError(`There can be at most ${MAX_CANDIDATES} pictures to choose from here. Choose one of them.`)
     // A picture planned before an edit would be made from the old words or picture.
     if (basis !== undefined && basis !== slotBasis(this.get(film.id)!, ownerKind, owner, role)) {
@@ -512,13 +516,17 @@ export class FilmStore {
     this.db.prepare(`UPDATE film_places SET empty_id = master_id WHERE film_id = ? AND empty_id IS NULL AND master_id IS NOT NULL AND deleted_at IS NULL`).run(filmId)
   }
 
-  /** A place's reference sheet and what it was made from. A new sheet in place of an old one remakes the shots there. */
+  /**
+   * A place's reference sheet and what it was made from. A new sheet in place of an old one remakes the shots there,
+   * and the old sheet's file goes once nothing uses it.
+   */
   setSheet(filmId: string, placeId: string, imageId: string, basis: string): void {
+    const replaced = this.db.prepare(`SELECT sheet_id AS sheetId FROM film_places WHERE id = ? AND film_id = ?`).get(placeId, filmId) as { sheetId: string | null } | undefined
     this.db.transaction(() => {
-      const replaced = this.db.prepare(`SELECT sheet_id AS sheetId FROM film_places WHERE id = ? AND film_id = ?`).get(placeId, filmId) as { sheetId: string | null } | undefined
       this.db.prepare(`UPDATE film_places SET sheet_id = ?, sheet_basis = ? WHERE id = ? AND film_id = ? AND deleted_at IS NULL`).run(imageId, basis, placeId, filmId)
       if (replaced?.sheetId) this.db.prepare(`UPDATE film_shots SET revision = revision + 1 WHERE place_id = ? AND film_id = ? AND deleted_at IS NULL`).run(placeId, filmId)
     })()
+    if (replaced?.sheetId && replaced.sheetId !== imageId && !this.pictureInUse(replaced.sheetId)) this.media.removeImage(replaced.sheetId)
   }
 
   /** Records a finished clip, only if the shot hasn't changed since it was queued. False: throw the clip away. */
@@ -813,13 +821,19 @@ export class FilmStore {
     return jobId
   }
 
-  // Every shot that follows on starts on the end picture of the shot before it, whatever was edited, moved or chosen.
+  // Every shot that follows on starts on the end picture of the shot before it, whatever was edited, moved or chosen;
+  // a shot that no longer follows on gives back a start it borrowed (one that isn't among its own start pictures).
   private syncFollowsOn(filmId: string): void {
     const shots = this.liveShots(filmId)
     const set = this.db.prepare(`UPDATE film_shots SET start_id = ?, revision = revision + 1 WHERE id = ?`)
+    const own = this.db.prepare(`SELECT 1 FROM film_pictures WHERE film_id = ? AND owner_id = ? AND role = 'start' AND image_id = ?`)
     shots.forEach((shot, i) => {
       const before = shots[i - 1]
-      if (followsOn(before, shot) && shot.startId !== before!.endId) set.run(before!.endId, shot.id)
+      if (followsOn(before, shot)) {
+        if (shot.startId !== before!.endId) set.run(before!.endId, shot.id)
+      } else if (shot.startId && !own.get(filmId, shot.id, shot.startId)) {
+        set.run(null, shot.id)
+      }
     })
   }
 
@@ -827,11 +841,14 @@ export class FilmStore {
     throw new VideoRequestError(message)
   }
 
-  // A place's sheet shows the characters and the place, so it is made again, and every shot it guided with it.
+  // A place's sheet shows the characters and the place, so it is made again, and every shot it guided with it. The old
+  // sheet's file goes once nothing uses it.
   private dropSheets(filmId: string, placeIds: string[]): void {
     for (const placeId of placeIds) {
+      const old = (this.db.prepare(`SELECT sheet_id AS sheetId FROM film_places WHERE id = ? AND film_id = ?`).get(placeId, filmId) as { sheetId: string | null } | undefined)?.sheetId
       this.db.prepare(`UPDATE film_places SET sheet_id = NULL WHERE id = ? AND film_id = ?`).run(placeId, filmId)
       this.db.prepare(`UPDATE film_shots SET revision = revision + 1 WHERE place_id = ? AND film_id = ? AND deleted_at IS NULL`).run(placeId, filmId)
+      if (old && !this.pictureInUse(old)) this.media.removeImage(old)
     }
   }
 

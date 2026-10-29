@@ -706,7 +706,7 @@ test('moving shots keeps every follows-on shot on the end picture of the shot no
   s.films.moveShot(film.id, r.id, 0)
   const moved = s.films.get(film.id)!.shots
   assert.deepEqual(moved.map((x) => x.id), [r.id, p.id, q.id])
-  assert.deepEqual(moved.map((x) => x.startId), [ends[1], ends[2], ends[0]], 'R keeps the start it had; P now starts on the end of R, Q on the end of P')
+  assert.deepEqual(moved.map((x) => x.startId), [null, ends[2], ends[0]], 'R gives back the start it borrowed from Q; P now starts on the end of R, Q on the end of P')
   s.films.deleteShot(film.id, p.id)
   assert.equal(s.films.get(film.id)!.shots[1]!.startId, ends[2], 'Q now follows R')
 })

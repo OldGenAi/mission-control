@@ -68,7 +68,10 @@ export function ffmpegMajor(version: string): number | null {
  * build ("N-118000-g...", or a dated one) is newer than any release; anything not understood is treated as old.
  */
 export function supportsOptionFiles(version: string): boolean {
-  if (/^N-\d+/.test(version) || /^\d{4}-\d{2}-\d{2}/.test(version)) return true
+  if (/^N-\d+/.test(version)) return true
+  // A dated git build is as new as its date: 7.0 came out on 2024-04-05.
+  const dated = /^(\d{4}-\d{2}-\d{2})/.exec(version)?.[1]
+  if (dated) return dated >= '2024-04-05'
   const major = ffmpegMajor(version)
   return major !== null && major >= 7
 }
@@ -216,7 +219,6 @@ export function runFfmpeg(tools: FfmpegTools, args: string[], options: RunOption
     if (options.signal?.aborted) return reject(new FfmpegError('ffmpeg was stopped.'))
     const child = spawn(tools.ffmpeg, args, { shell: false, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true, cwd: options.cwd })
     try { if (child.pid) setPriority(child.pid, osConstants.priority.PRIORITY_BELOW_NORMAL) } catch { /* best effort */ }
-    if (options.pidFile && child.pid) writeFileSync(options.pidFile, `${child.pid}\n${tools.ffmpeg}`, { mode: 0o600 })
     let stderr = ''
     let outcome: FfmpegError | null = null
     const stop = (why: FfmpegError) => { outcome ??= why; child.kill('SIGKILL') }
@@ -225,6 +227,10 @@ export function runFfmpeg(tools: FfmpegTools, args: string[], options: RunOption
     options.signal?.addEventListener('abort', onAbort, { once: true })
     child.stderr.on('data', (chunk: Buffer) => { if (stderr.length < MAX_STDERR) stderr += chunk.toString('utf8').slice(0, MAX_STDERR - stderr.length) })
     child.on('error', () => { outcome ??= new FfmpegError('ffmpeg could not be started.') })
+    // Written once every handler is in place, so a failed write still stops the run.
+    if (options.pidFile && child.pid) {
+      try { writeFileSync(options.pidFile, `${child.pid}\n${tools.ffmpeg}`, { mode: 0o600 }) } catch { stop(new FfmpegError('Mission Control could not note the ffmpeg run, so it was stopped.')) }
+    }
     child.on('close', (code) => {
       clearTimeout(timer)
       options.signal?.removeEventListener('abort', onAbort)
@@ -241,17 +247,51 @@ export function runFfmpeg(tools: FfmpegTools, args: string[], options: RunOption
 }
 
 /**
- * After a crash: stops the ffmpeg a pid file names, if that process is still running that very program (a pid may
- * have been reused by something else), and removes the pid file.
+ * After a crash: stops the ffmpeg a pid file names, only if that very process is still running: the same program,
+ * started just before the pid file was written (a pid number may since have gone to another ffmpeg, or the computer
+ * restarted). The pid file is removed either way.
  */
 export function stopLeftoverFfmpeg(pidFile: string, tools: FfmpegTools | null): void {
   let text: string
-  try { text = readFileSync(pidFile, 'utf8') } catch { return }
+  let writtenAt: number
+  try {
+    const info = lstatSync(pidFile)
+    // A small regular file, as runFfmpeg writes; anything else (a link, a folder, a pipe) is left alone.
+    if (!info.isFile() || info.size > 256) return
+    writtenAt = info.mtimeMs
+    text = readFileSync(pidFile, 'utf8')
+  } catch {
+    return
+  }
   rmSync(pidFile, { force: true })
   const [pidText, program] = text.split('\n')
   const pid = Number(pidText)
   if (!tools || !Number.isSafeInteger(pid) || pid <= 1 || program !== tools.ffmpeg || programOf(pid) !== tools.ffmpeg) return
+  const started = startedAt(pid)
+  if (started === null || started > writtenAt + 2000 || started < writtenAt - 30_000) return
   try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
+}
+
+// When a process started, in milliseconds since 1970; null when it isn't running or can't be told.
+function startedAt(pid: number): number | null {
+  try {
+    if (process.platform === 'linux') {
+      // Field 22 of /proc/<pid>/stat is the start in clock ticks after boot; the fields after the name are plain.
+      const stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
+      const ticks = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19])
+      const bootSeconds = Number(/^btime (\d+)$/m.exec(readFileSync('/proc/stat', 'utf8'))?.[1])
+      const hz = Number(execFileSync('getconf', ['CLK_TCK'], { encoding: 'utf8', timeout: 5000 }).trim()) || 100
+      return Number.isFinite(ticks) && Number.isFinite(bootSeconds) ? (bootSeconds + ticks / hz) * 1000 : null
+    }
+    if (process.platform === 'win32') {
+      const iso = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid}).StartTime.ToUniversalTime().ToString('o')`],
+        { encoding: 'utf8', timeout: 10_000, windowsHide: true }).trim()
+      return Date.parse(iso) || null
+    }
+    return Date.parse(execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8', timeout: 5000 }).trim()) || null
+  } catch {
+    return null
+  }
 }
 
 // The program a process runs, by its pid; null when it isn't running or can't be told.
