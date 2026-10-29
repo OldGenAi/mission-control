@@ -80,8 +80,13 @@ test('masters, the empty master and the close-up follow the recipe', () => {
     `Show a new place in the same world, with the same light and style: ${GREEN.description}, wide shot at eye level. No people or animals.`)
   assert.equal(emptyMasterPrompt(GREEN),
     `Remove every person and animal from picture 1. Keep everything else exactly the same: same camera, same light, ${GREEN.keep}.`)
-  assert.equal(closeUpPrompt(BESS, 'lying on the grass chewing the twig'),
-    `A close-up at Bess's eye level of ${BESS.wording}, lying on the grass chewing the twig, the place softly out of focus behind.`)
+  // The place in picture 1 and the look named (live test: without them the close-up was a photo of a dog on a road).
+  assert.equal(closeUpPrompt(BESS, 'lying on the grass chewing the twig', 'realistic'),
+    `A close-up at Bess's eye level of ${BESS.wording}, lying on the grass chewing the twig, in the place in picture 1, softly out of focus behind. ` +
+    'Picture 2 only shows what Bess looks like.')
+  assert.equal(closeUpPrompt(BESS, 'lying on the grass chewing the twig', 'cartoon'),
+    `A close-up at Bess's eye level of ${BESS.wording}, lying on the grass chewing the twig, in the place in picture 1, softly out of focus behind. ` +
+    'Picture 2 only shows what Bess looks like. Draw Bess and the place in the same hand-drawn cartoon style as picture 1.')
 })
 
 test('characters are added after anyone their pose names, so nobody is drawn in to stand for someone not there yet (live test)', () => {
