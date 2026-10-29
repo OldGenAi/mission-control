@@ -200,3 +200,45 @@ test('a picture download over 16 MB is refused', async () => {
     assert.equal((await finished(jobs.submitFilm(PICTURE, { prompt: 'x' }, FILM))).status, 'failed')
   } finally { await comfy.close() }
 })
+
+test('a film\'s outputs go to its own folder in ComfyUI\'s output, so they can be tidied by hand (spec 15.5)', async () => {
+  const comfy = await fakeComfy({ outputs: [{ filename: 'clip_00001_.mp4', subfolder: `mission-control/film-${FILM}`, type: 'output' }], body: MP4 })
+  const { jobs, finished } = setup(comfy.url)
+  try {
+    const named: Recipe = { ...CLIP, id: 'test-named', build: (_values, prefix) => ({ '9': { class_type: 'SaveVideo', inputs: { filename_prefix: prefix } } }) }
+    const id = jobs.submitFilm(named, { prompt: 'x' }, FILM)
+    assert.equal((await finished(id)).status, 'done')
+    const graph = comfy.prompts[0] as Record<string, { inputs: Record<string, unknown> }>
+    assert.equal(graph['9']!.inputs['filename_prefix'], `mission-control/film-${FILM}/${id}`)
+  } finally { await comfy.close() }
+})
+
+test('a picture of a size no picture recipe makes is refused (spec 15.8)', async () => {
+  const tiny = (() => {
+    const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(120, 0); ihdr.writeUInt32BE(80, 4); ihdr[8] = 8; ihdr[9] = 2
+    return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), pngChunk('IHDR', ihdr), pngChunk('IDAT', Buffer.from('pixels')), pngChunk('IEND', Buffer.alloc(0))])
+  })()
+  const comfy = await fakeComfy({ body: tiny })
+  const { dir, jobs, finished } = setup(comfy.url)
+  try {
+    const id = jobs.submitFilm(PICTURE, { prompt: 'x' }, FILM)
+    const end = await finished(id)
+    assert.equal(end.status, 'failed')
+    assert.match(end.error ?? '', /120x80/)
+    assert.equal(jobs.pictureOf(id), null)
+    assert.deepEqual(readdirSync(join(dir, 'media', 'inputs')), [], 'nothing kept')
+  } finally { await comfy.close() }
+  // A sheet must be exactly the size it was laid out at.
+  const sheet = (w: number, h: number) => {
+    const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2
+    return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), pngChunk('IHDR', ihdr), pngChunk('IDAT', Buffer.from('pixels')), pngChunk('IEND', Buffer.alloc(0))])
+  }
+  const { jobs: plain } = setup('http://127.0.0.1:1')
+  assert.match(plain.savePicture(sheet(1280, 704), { width: 1280, height: 704 }), /^[0-9a-f]{32}$/)
+  assert.throws(() => plain.savePicture(sheet(1280, 720), { width: 1280, height: 704 }), /1280x720/)
+})
+
+test('the free space on the drive itself is known, not only the media cap (spec 15.7)', () => {
+  const { jobs } = setup('http://127.0.0.1:1')
+  assert.ok(jobs.freeBytes() > 0)
+})
