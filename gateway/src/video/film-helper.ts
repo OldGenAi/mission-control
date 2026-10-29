@@ -112,10 +112,12 @@ function checkText(value: unknown, what: string, max: number, where: string, pro
  * Checks a helper's answer field by field with the limits the person's own edits have. Problems are hard (the plan is
  * refused); warnings are for the page to point out. `plan` is set only when there are no problems.
  */
-export function checkPlan(answer: unknown, film: HelperFilm): { problems: string[]; warnings: string[]; total: number; plan?: CheckedPlan } {
+export function checkPlan(answer: unknown, film: HelperFilm): { problems: string[]; warnings: string[]; dropped: string[]; total: number; plan?: CheckedPlan } {
   const problems: string[] = []
   const warnings: string[] = []
-  if (!isObject(answer)) return { problems: ['the answer is not a JSON object'], warnings, total: 0 }
+  // Warnings for a character who drops out of a scene: the helper is asked once more about these.
+  const dropped: string[] = []
+  if (!isObject(answer)) return { problems: ['the answer is not a JSON object'], warnings, dropped, total: 0 }
   for (const key of Object.keys(answer)) if (!PLAN_FIELDS.has(key)) problems.push(`unknown field ${key}`)
   const places = Array.isArray(answer['places']) ? answer['places'] as unknown[] : []
   const shots = Array.isArray(answer['shots']) ? answer['shots'] as unknown[] : []
@@ -199,7 +201,7 @@ export function checkPlan(answer: unknown, film: HelperFilm): { problems: string
         if (!isObject(earlier) || earlier['place'] !== place) break
         if (earlier['closeUp'] === true) continue
         for (const name of cast[j] ?? []) {
-          if (!inShot.has(name)) warnings.push(`Shot ${i + 1} leaves out ${name}, who is in shot ${j + 1} in the same place. If ${name} is still there, add ${name} to shot ${i + 1}.`)
+          if (!inShot.has(name)) dropped.push(`Shot ${i + 1} leaves out ${name}, who is in shot ${j + 1} in the same place. If ${name} is still there, add ${name} to shot ${i + 1}.`)
         }
         break
       }
@@ -226,7 +228,8 @@ export function checkPlan(answer: unknown, film: HelperFilm): { problems: string
     if (kind === null) problems.push(`cast: ${name}'s kind must be one lower-case word, like dog or man`)
     else kinds.push({ name, kind })
   }
-  if (problems.length > 0) return { problems, warnings, total }
+  warnings.push(...dropped)
+  if (problems.length > 0) return { problems, warnings, dropped, total }
 
   const plan: CheckedPlan = {
     places: (places as Array<Record<string, string>>).map((p) => ({ name: p['name']!, description: p['description']!, keep: p['keep']!, ...(p['prop'] ? { prop: p['prop'] } : {}) })),
@@ -236,7 +239,7 @@ export function checkPlan(answer: unknown, film: HelperFilm): { problems: string
     })),
     kinds,
   }
-  return { problems, warnings, total, plan }
+  return { problems, warnings, dropped, total, plan }
 }
 
 function userMessage(film: HelperFilm): string {
@@ -270,18 +273,36 @@ export class FilmHelper {
     }
 
     const messages: Array<{ role: string; content: string }> = [{ role: 'system', content: RULES }, { role: 'user', content: userMessage(film) }]
+    // A plan that passes but drops someone from a scene (JB's live test) is kept, and the helper asked once more.
+    let kept: { plan: CheckedPlan; warnings: string[]; dropped: number } | null = null
     for (let attempt = 1; attempt <= 2; attempt++) {
       const content = await this.ask(server, host, messages, opts.signal)
       let parsed: unknown = null
       try { parsed = JSON.parse(content) } catch { /* checked below as "not a JSON object" */ }
       const checked = checkPlan(parsed, film)
-      if (checked.plan) return { plan: checked.plan, warnings: checked.warnings }
+      if (checked.plan) {
+        const answer = { plan: checked.plan, warnings: checked.warnings, dropped: checked.dropped.length }
+        if (answer.dropped === 0 || attempt === 2) {
+          const best = kept && kept.dropped < answer.dropped ? kept : answer
+          return { plan: best.plan, warnings: best.warnings }
+        }
+        kept = answer
+        messages.push({ role: 'assistant', content }, {
+          role: 'user',
+          content: `Some shots leave out a character who is still in that place:\n- ${checked.dropped.join('\n- ')}\n` +
+            'Where they are still there, add them to the shot with their own start and end poses; if the story says they left, keep that shot as it is. Send the whole plan again.',
+        })
+        continue
+      }
+      // A second answer that breaks what the first got right: the first is better.
+      if (kept) return { plan: kept.plan, warnings: kept.warnings }
       // Retrying doesn't fix a short plan by itself (trial T5): say how many more shots it needs.
       const short = checked.total > 0 && checked.total < film.seconds * 0.85
         ? `\nThe shots add up to ${checked.total} seconds but the film is ${film.seconds} seconds: add about ${Math.round((film.seconds - checked.total) / 6)} more shots that carry the story on.`
         : ''
       messages.push({ role: 'assistant', content }, { role: 'user', content: `That plan has these problems. Send the whole plan again with them fixed:\n- ${checked.problems.join('\n- ')}${short}` })
     }
+    if (kept) return { plan: kept.plan, warnings: kept.warnings }
     throw new VideoRequestError(GAVE_UP)
   }
 
