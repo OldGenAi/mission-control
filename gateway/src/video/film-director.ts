@@ -16,9 +16,9 @@ import { randomBytes, randomInt } from 'node:crypto'
 import { join } from 'node:path'
 import { FfmpegError, type FfmpegTools, type JoinClip, type JoinPlan, type joinFilm, type makeSheet } from './ffmpeg.js'
 import {
-  closeUpPrompt, facePrompt, firstMasterPrompt, laterMasterPrompt, posePrompt, shotPrompt, turnaroundPrompt, type FilmLook,
+  closeUpPrompt, facePrompt, firstMasterPrompt, laterMasterPrompt, posePrompts, shotPrompt, turnaroundPrompt, type FilmLook,
 } from './film-wording.js'
-import { STOP_FIRST, type Film, type FilmShot, type FilmStage, type FilmStore, type OwnerKind } from './films.js'
+import { STOP_FIRST, type Film, type FilmCastMember, type FilmShot, type FilmStage, type FilmStore, type OwnerKind } from './films.js'
 import { VideoRequestError, type VideoEvent, type VideoStatus } from './jobs.js'
 import type { Recipe } from './recipes.js'
 
@@ -46,6 +46,8 @@ export interface DirectorQueue {
   submitFilm(recipe: Recipe, params: unknown, filmId: string): string
   cancelFilmJob(id: string, filmId: string): boolean
   statusOf(id: string): { status: VideoStatus; error: string | null } | null
+  /** A finished picture job's stored picture, for the next edit of a chain. */
+  pictureOf(jobId: string): string | null
   savePicture(buf: Buffer): string
   addJoinedFilm(id: string, bytes: number): void
   removeFilmClip(id: string, filmId: string): void
@@ -67,12 +69,12 @@ export interface DirectorOptions {
 
 export type PictureRequest = { round: 'places' | 'shots' } | { ownerId: unknown; role: string }
 
-// One picture to make: its recipe and prompt, the pictures it edits, and the slot it is a candidate for.
+// One picture to make: its recipe, the picture it starts from, and the slot it is a candidate for. A pose of several
+// characters is several steps, each an edit of the picture the step before made, adding one character (picture 2).
 interface PictureTask {
   recipe: Recipe
-  prompt: string
   image1: string
-  image2?: string
+  steps: Array<{ prompt: string; image2?: string }>
   slot: { ownerKind: OwnerKind; ownerId: string; role: string }
 }
 
@@ -179,8 +181,9 @@ export class FilmDirector {
     if (!this.o.ffmpeg.tools()) throw new VideoRequestError('Making a film needs ffmpeg, which isn\'t installed. Install it (see Making videos in the README), then restart Mission Control.')
     if (this.runs.has(film.id)) throw new VideoRequestError('Pictures for this film are still being made. Wait for them, or stop them first.')
     for (const shot of film.shots) {
-      const member = film.cast.find((c) => c.castId === shot.castId)!
-      if (!member.pictureId || !member.turnaroundId || !member.faceId) throw new VideoRequestError(`Choose ${member.name}'s turnaround and face pictures first.`)
+      for (const member of castOf(film, shot)) {
+        if (!member.pictureId || !member.turnaroundId || !member.faceId) throw new VideoRequestError(`Choose ${member.name}'s turnaround and face pictures first.`)
+      }
       const place = film.places.find((p) => p.id === shot.placeId)!
       if (!place.masterId) throw new VideoRequestError(`Choose a master picture for ${place.name} first.`)
     }
@@ -246,23 +249,38 @@ export class FilmDirector {
     while (!run.stopped) {
       const task = run.tasks.shift()
       if (!task || !this.o.films.get(run.filmId)) return
+      // One seed for every step of a chain, as in hand test T6.
       const seed = randomInt(1, MAX_SEED)
-      const params = { prompt: task.prompt, image1: task.image1, ...(task.image2 ? { image2: task.image2 } : {}), seed }
-      let outcome: Outcome
-      try {
-        // No picture check until a local model can see pictures (spec 7.2): the candidate says "off".
-        ({ outcome } = await this.runJob(run, task.recipe, params, {
-          submitted: (jobId) => this.o.films.addCandidate(run.filmId, { ...task.slot, jobId, seed, checkState: 'off' }),
-        }))
-      } catch (err) {
-        // The queue refused (full, or the disk cap): the round stops with its words on the page.
-        if (!(err instanceof VideoRequestError)) throw err
-        const film = this.o.films.get(run.filmId)
-        if (film) this.stage(film.id, film.stage, err.message)
-        return
+      let image1 = task.image1
+      let candidate: string | null = null
+      for (const step of task.steps) {
+        const params = { prompt: step.prompt, image1, ...(step.image2 ? { image2: step.image2 } : {}), seed }
+        let outcome: Outcome
+        let jobId: string
+        try {
+          // The first step's job makes the candidate (no picture check until a local model can see pictures, spec
+          // 7.2: it says "off"); each later step's job becomes the candidate's, so it is finished only at the last.
+          ({ jobId, outcome } = await this.runJob(run, task.recipe, params, {
+            submitted: (id) => {
+              if (candidate) this.o.films.advanceCandidate(run.filmId, candidate, id)
+              else candidate = this.o.films.addCandidate(run.filmId, { ...task.slot, jobId: id, seed, steps: task.steps.length, checkState: 'off' })
+            },
+          }))
+        } catch (err) {
+          // The queue refused (full, or the disk cap): the round stops with its words on the page.
+          if (!(err instanceof VideoRequestError)) throw err
+          const film = this.o.films.get(run.filmId)
+          if (film) this.stage(film.id, film.stage, err.message)
+          return
+        }
+        // A cancelled step stops the round; a failed one shows as failed among its slot's candidates, and the round
+        // goes on to the next picture.
+        if (outcome.status === 'cancelled' || run.stopped) return
+        if (outcome.status !== 'done') break
+        const made = this.o.queue.pictureOf(jobId)
+        if (!made) break
+        image1 = made
       }
-      // A failed picture shows as failed among its slot's candidates; a cancelled one stops the round.
-      if (outcome.status === 'cancelled') return
     }
   }
 
@@ -273,8 +291,8 @@ export class FilmDirector {
     for (const member of film.cast) {
       if (!member.pictureId) throw new VideoRequestError(`${member.name} needs a picture first. Add one in the cast.`)
       const wording = { name: member.name, wording: member.wording }
-      if (!member.turnaroundId && !has(member.castId, 'turnaround')) tasks.push(...this.twice(this.o.recipes.fine, turnaroundPrompt(wording), member.pictureId, undefined, { ownerKind: 'cast', ownerId: member.castId, role: 'turnaround' }))
-      if (!member.faceId && !has(member.castId, 'face')) tasks.push(...this.twice(this.o.recipes.fine, facePrompt(wording), member.pictureId, undefined, { ownerKind: 'cast', ownerId: member.castId, role: 'face' }))
+      if (!member.turnaroundId && !has(member.castId, 'turnaround')) tasks.push(...this.twice(this.o.recipes.fine, member.pictureId, [{ prompt: turnaroundPrompt(wording) }], { ownerKind: 'cast', ownerId: member.castId, role: 'turnaround' }))
+      if (!member.faceId && !has(member.castId, 'face')) tasks.push(...this.twice(this.o.recipes.fine, member.pictureId, [{ prompt: facePrompt(wording) }], { ownerKind: 'cast', ownerId: member.castId, role: 'face' }))
     }
     const [first, ...later] = film.places
     if (!first!.masterId && !has(first!.id, 'master')) tasks.push(...this.masters(film, first!))
@@ -314,7 +332,7 @@ export class FilmDirector {
       const member = film.cast.find((c) => c.castId === owner)!
       if (!member.pictureId) throw new VideoRequestError(`${member.name} needs a picture first. Add one in the cast.`)
       const wording = { name: member.name, wording: member.wording }
-      return this.twice(this.o.recipes.fine, role === 'face' ? facePrompt(wording) : turnaroundPrompt(wording), member.pictureId, undefined, { ownerKind: 'cast', ownerId: owner, role })
+      return this.twice(this.o.recipes.fine, member.pictureId, [{ prompt: role === 'face' ? facePrompt(wording) : turnaroundPrompt(wording) }], { ownerKind: 'cast', ownerId: owner, role })
     }
     if (kind === 'place') {
       const place = film.places.find((p) => p.id === owner)!
@@ -339,23 +357,31 @@ export class FilmDirector {
   private masters(film: Film, place: Film['places'][number]): PictureTask[] {
     const first = film.places[0]!
     const slot = { ownerKind: 'place' as const, ownerId: place.id, role: 'master' }
-    if (place.id === first.id) return this.twice(this.o.recipes.fast, firstMasterPrompt(place, film.look as FilmLook), film.cast[0]!.pictureId!, undefined, slot)
-    return this.twice(this.o.recipes.fast, laterMasterPrompt(place), first.masterId!, undefined, slot)
+    if (place.id === first.id) return this.twice(this.o.recipes.fast, film.cast[0]!.pictureId!, [{ prompt: firstMasterPrompt(place, film.look as FilmLook) }], slot)
+    return this.twice(this.o.recipes.fast, first.masterId!, [{ prompt: laterMasterPrompt(place) }], slot)
   }
 
-  // A start or end pose: one character added into the place on its own, or a close-up's start (the fine editor).
+  // A start or end pose: the characters added into the place on its own one at a time, in the shot's order, each
+  // with its own pose words and picture (hand test T6); or a close-up's start (the fine editor, one character).
   private pose(film: Film, shot: FilmShot, role: 'start' | 'end'): PictureTask[] {
     const place = film.places.find((p) => p.id === shot.placeId)!
-    const member = film.cast.find((c) => c.castId === shot.castId)!
-    const wording = { name: member.name, wording: member.wording }
+    const members = castOf(film, shot)
     const slot = { ownerKind: 'shot' as const, ownerId: shot.id, role }
-    if (shot.closeUp) return this.twice(this.o.recipes.fine, closeUpPrompt(wording, shot.startPose), place.emptyId!, member.pictureId!, slot)
-    const words = role === 'start' ? shot.startPose : shot.endPose!
-    return this.twice(this.o.recipes.fast, posePrompt(wording, words, place), place.emptyId!, member.pictureId!, slot)
+    if (shot.closeUp) {
+      const [member] = members as [FilmCastMember]
+      return this.twice(this.o.recipes.fine, place.emptyId!, [{ prompt: closeUpPrompt(member, shot.characters[0]!.startPose), image2: member.pictureId! }], slot)
+    }
+    const characters = members.map((member, i) => {
+      if (!member.kind) throw new VideoRequestError(`Say what ${member.name} is in one word (like dog or man) in the film's cast first.`)
+      const character = shot.characters[i]!
+      return { cast: { name: member.name, wording: member.wording, kind: member.kind }, pose: role === 'start' ? character.startPose : character.endPose! }
+    })
+    const prompts = posePrompts(characters, place, film.look as FilmLook)
+    return this.twice(this.o.recipes.fast, place.emptyId!, prompts.map((prompt, i) => ({ prompt, image2: members[i]!.pictureId! })), slot)
   }
 
-  private twice(recipe: Recipe, prompt: string, image1: string, image2: string | undefined, slot: PictureTask['slot']): PictureTask[] {
-    return Array.from({ length: CANDIDATES }, () => ({ recipe, prompt, image1, ...(image2 ? { image2 } : {}), slot }))
+  private twice(recipe: Recipe, image1: string, steps: PictureTask['steps'], slot: PictureTask['slot']): PictureTask[] {
+    return Array.from({ length: CANDIDATES }, () => ({ recipe, image1, steps, slot }))
   }
 
   private checkDisk(): void {
@@ -377,10 +403,10 @@ export class FilmDirector {
         const current = film.shots.find((s) => s.id === shot.id)!
         if (current.clipId && current.clipRev === current.revision) continue
         const place = film.places.find((p) => p.id === current.placeId)!
-        const member = film.cast.find((c) => c.castId === current.castId)!
         this.o.emit({ filmId: film.id, stage: 'making', shotId: current.id })
-        const prompt = shotPrompt(place, { name: member.name, wording: member.wording },
-          { action: current.action, startPose: current.startPose, endPose: current.endPose ?? '', closeUp: current.closeUp }, film.look as FilmLook)
+        const members = castOf(film, current)
+        const characters = current.characters.map((c, j) => ({ cast: members[j]!, startPose: c.startPose, endPose: c.endPose ?? '' }))
+        const prompt = shotPrompt(place, sheetCast(film, place.id), { action: current.action, closeUp: current.closeUp, characters }, film.look as FilmLook)
         const params = {
           prompt, sheet: place.sheetId!, start: current.startId!, ...(current.closeUp ? {} : { end: current.endId! }),
           frames: current.seconds * FPS + 1, seed: current.seed,
@@ -421,15 +447,16 @@ export class FilmDirector {
     }
   }
 
-  // One reference sheet per place (ffmpeg, seconds each): the place, the character's turnaround and face, and the
-  // first shot there with the character in it. Made only when missing.
+  // One reference sheet per place (ffmpeg, seconds each): the place, one character's turnaround and face (the first
+  // character of the first shot there), and that shot's start picture with its characters in it. Made only when
+  // missing. Hand test T8 found a sheet of one character guides a shot of three as well.
   private async makeSheets(run: Run, tools: FfmpegTools): Promise<void> {
     const film = this.o.films.get(run.filmId)
     if (!film) return
     for (const place of film.places) {
       const shot = film.shots.find((s) => s.placeId === place.id)
       if (!shot || place.sheetId || run.stopped) continue
-      const member = film.cast.find((c) => c.castId === shot.castId)!
+      const member = sheetCast(film, place.id).cast
       this.checkDisk()
       const sheet = await this.o.ffmpeg.sheet(tools, join(this.o.mediaDir, 'inputs'), {
         place: place.emptyId ?? place.masterId!, turnaround: member.turnaroundId!, face: member.faceId!, placeWithCast: shot.startId!,
@@ -437,6 +464,17 @@ export class FilmDirector {
       this.o.films.setSheet(film.id, place.id, this.o.queue.savePicture(sheet))
     }
   }
+}
+
+// The film's own copy of each character in a shot, in the shot's order.
+function castOf(film: Film, shot: FilmShot): FilmCastMember[] {
+  return shot.characters.map((c) => film.cast.find((m) => m.castId === c.castId)!)
+}
+
+// Who a place's reference sheet shows: the first character of the first shot there, and everyone in that shot.
+function sheetCast(film: Film, placeId: string): { cast: FilmCastMember; with: FilmCastMember[] } {
+  const members = castOf(film, film.shots.find((s) => s.placeId === placeId)!)
+  return { cast: members[0]!, with: members }
 }
 
 /**
