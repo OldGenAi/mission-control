@@ -16,7 +16,7 @@ import { randomBytes, randomInt } from 'node:crypto'
 import { join } from 'node:path'
 import { FfmpegError, type FfmpegTools, type JoinClip, type JoinPlan, type joinFilm, type makeSheet, type stopLeftoverFfmpeg } from './ffmpeg.js'
 import {
-  closeUpPrompt, facePrompt, firstMasterPrompt, laterMasterPrompt, posePrompts, shotPrompt, turnaroundPrompt, type FilmLook,
+  addingOrder, closeUpPrompt, facePrompt, firstMasterPrompt, laterMasterPrompt, posePrompts, shotPrompt, turnaroundPrompt, type FilmLook,
 } from './film-wording.js'
 import { PICTURE_STAGES, STOP_FIRST, followsOn, slotBasis, type Film, type FilmCastMember, type FilmShot, type FilmStage, type FilmStore, type OwnerKind } from './films.js'
 import { VideoRequestError, type VideoEvent, type VideoStatus } from './jobs.js'
@@ -489,13 +489,13 @@ export class FilmDirector {
       const [member] = members as [FilmCastMember]
       return this.twice(film, this.o.recipes.fine, place.emptyId!, [{ prompt: closeUpPrompt(member, shot.characters[0]!.startPose), image2: alone(member) }], slot)
     }
-    const characters = members.map((member, i) => {
+    const characters = addingOrder(members.map((member, i) => {
       if (!member.kind) throw new VideoRequestError(`Say what ${member.name} is in one word (like dog or man) in the film's cast first.`)
       const character = shot.characters[i]!
-      return { cast: { name: member.name, wording: member.wording, kind: member.kind }, pose: role === 'start' ? character.startPose : character.endPose! }
-    })
+      return { member, cast: { name: member.name, wording: member.wording, kind: member.kind }, pose: role === 'start' ? character.startPose : character.endPose! }
+    }))
     const prompts = posePrompts(characters, place, film.look as FilmLook)
-    return this.twice(film, this.o.recipes.fast, place.emptyId!, prompts.map((prompt, i) => ({ prompt, image2: alone(members[i]!) })), slot)
+    return this.twice(film, this.o.recipes.fast, place.emptyId!, prompts.map((prompt, i) => ({ prompt, image2: alone(characters[i]!.member) })), slot)
   }
 
   private twice(film: Film, recipe: Recipe, image1: string, steps: PictureTask['steps'], slot: PictureTask['slot']): PictureTask[] {
