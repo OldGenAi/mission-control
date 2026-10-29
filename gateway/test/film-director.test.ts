@@ -572,3 +572,146 @@ test('deleting a film removes the half-way pictures of its chains too', async ()
   assert.equal(await s.films.delete(film.id), true)
   assert.deepEqual(pictures.filter((id) => s.jobs.hasImage(id)), [])
 })
+
+// Every picture job the director queued for this film is some candidate's: nothing runs on the card for nothing.
+const orphans = (s: Setup, filmId: string) => {
+  const owned = new Set(s.films.get(filmId)!.pictures.map((p) => p.jobId))
+  return s.submitted.filter((j) => j.filmId === filmId && j.recipeId !== 'film-shot' && !owned.has(j.id))
+}
+
+test('after a pose is edited, its old pictures are out of date and round two makes new ones (review M1)', async () => {
+  const s = setup()
+  const { film, garden, kitchen, shots } = planned(s)
+  await s.director.makePictures(film.id, { round: 'places' })
+  await s.finishAll()
+  pick(s, film.id, garden.id, 'master')
+  await s.director.makePictures(film.id, { round: 'places' })
+  await s.finishAll()
+  pick(s, film.id, kitchen.id, 'master')
+  await s.director.makePictures(film.id, { round: 'shots' })
+  await s.finishAll()
+  const shot = s.films.get(film.id)!.shots[0]!
+  s.films.saveShot(film.id, { id: shot.id, placeId: garden.id, characters: [{ ...shot.characters[0]!, startPose: 'lying by the gate' }], action: shot.action, seconds: shot.seconds, joins: shot.joins, closeUp: false })
+  await s.director.makePictures(film.id, { round: 'shots' })
+  const remade = await s.finishAll()
+  assert.equal(remade.length, 2, 'two new start pictures for the edited shot, nothing else')
+  assert.match(String(remade[0]!.params['prompt']), /lying by the gate/)
+  const starts = s.films.get(film.id)!.pictures.filter((p) => p.ownerId === shots[0]!.id && p.role === 'start')
+  assert.deepEqual(starts.map((p) => p.stale), [true, true, false, false])
+})
+
+test('an edit while a round is queued: the edited slot\'s queued pictures are dropped, never made from the old words (review M1, S3)', async () => {
+  const s = setup()
+  const { film, garden, kitchen } = planned(s)
+  await s.director.makePictures(film.id, { round: 'places' })
+  await s.finishAll()
+  pick(s, film.id, garden.id, 'master')
+  await s.director.makePictures(film.id, { round: 'places' })
+  await s.finishAll()
+  pick(s, film.id, kitchen.id, 'master')
+  await s.director.makePictures(film.id, { round: 'shots' })
+  await s.next()
+  const shot = s.films.get(film.id)!.shots[0]!
+  s.films.saveShot(film.id, { id: shot.id, placeId: garden.id, characters: [{ ...shot.characters[0]!, endPose: 'lying at the door' }], action: shot.action, seconds: shot.seconds, joins: shot.joins, closeUp: false })
+  await s.finishAll()
+  const ends = s.films.get(film.id)!.pictures.filter((p) => p.ownerId === shot.id && p.role === 'end')
+  assert.deepEqual(ends, [], 'the end pictures planned before the edit were never made')
+  assert.deepEqual(orphans(s, film.id), [])
+})
+
+test('a shot deleted while its pictures are queued: nothing runs for it, and the round carries on (review S3)', async () => {
+  const s = setup()
+  const { film, garden, kitchen, shots } = planned(s)
+  await s.director.makePictures(film.id, { round: 'places' })
+  await s.finishAll()
+  pick(s, film.id, garden.id, 'master')
+  await s.director.makePictures(film.id, { round: 'places' })
+  await s.finishAll()
+  pick(s, film.id, kitchen.id, 'master')
+  await s.director.makePictures(film.id, { round: 'shots' })
+  await s.next()
+  s.films.deleteShot(film.id, shots[2]!.id)
+  await s.finishAll()
+  assert.deepEqual(orphans(s, film.id), [])
+  assert.equal(s.films.get(film.id)!.problem, null)
+  assert.equal(s.films.get(film.id)!.pictures.filter((p) => p.ownerKind === 'shot').length, 6, 'shots 1 and 2 got theirs')
+})
+
+test('Make more pressed again and again never goes past twelve pictures or leaves a job without a slot (review S3)', async () => {
+  const s = setup()
+  const { film } = planned(s)
+  await s.director.makePictures(film.id, { round: 'places' })
+  for (let i = 0; i < 6; i++) {
+    try { await s.director.makePictures(film.id, { ownerId: s.rex.id, role: 'face' }) } catch (err) { assert.match(String(err), /12/) }
+  }
+  await s.finishAll()
+  assert.ok(s.films.get(film.id)!.pictures.filter((p) => p.role === 'face').length <= 12)
+  assert.deepEqual(orphans(s, film.id), [])
+})
+
+test('Stop for one film doesn\'t wait for another film\'s pictures; its waiting round never starts (review S5)', async () => {
+  const s = setup()
+  const a = planned(s)
+  const b = planned(s)
+  await s.director.makePictures(a.film.id, { round: 'places' })
+  await s.director.makePictures(b.film.id, { round: 'places' })
+  await s.next()
+  let stopped = false
+  const stopping = s.director.stop(b.film.id).then(() => { stopped = true })
+  await new Promise((r) => setTimeout(r, 30))
+  assert.equal(stopped, true, 'B stopped while A is still going')
+  await stopping
+  await s.finishAll()
+  assert.equal(s.submitted.filter((j) => j.filmId === b.film.id).length, 0)
+  assert.equal(s.films.get(a.film.id)!.pictures.length, 6)
+})
+
+test('the sheet is made again when the place\'s first shot changes, from its first shot that isn\'t a close-up (review S2)', async () => {
+  const s = setup()
+  const { film, green, three, closeUp } = together(s)
+  await placesChosen(s, film.id, [s.rex.id, s.nip.id, s.tom.id], green.id)
+  await s.director.makePictures(film.id, { round: 'shots' })
+  await s.finishAll()
+  for (const [id, role] of [[three.id, 'start'], [three.id, 'end'], [closeUp.id, 'start']] as const) pick(s, film.id, id, role)
+  s.films.moveShot(film.id, closeUp.id, 0)
+  s.director.make(film.id)
+  await s.finishAll()
+  const made = s.films.get(film.id)!
+  assert.equal(s.sheets[0]!.placeWithCast, made.shots[1]!.startId, 'the three-shot, not the close-up of Rex')
+  // Swapping who comes first in the three-shot: a new sheet (Rex first now), and both shots there made again.
+  const shot = made.shots[1]!
+  s.films.saveShot(film.id, { id: shot.id, placeId: green.id, characters: [shot.characters[1]!, shot.characters[0]!, shot.characters[2]!], action: shot.action, seconds: shot.seconds, joins: shot.joins, closeUp: false })
+  await s.director.makePictures(film.id, { round: 'shots' })
+  await s.finishAll()
+  pick(s, film.id, shot.id, 'start')
+  pick(s, film.id, shot.id, 'end')
+  const before = s.submitted.length
+  s.director.make(film.id)
+  const again = await s.finishAll()
+  assert.equal(s.sheets.length, 2)
+  const rex = s.films.get(film.id)!.cast.find((c) => c.castId === s.rex.id)!
+  assert.equal(s.sheets[1]!.face, rex.faceId)
+  assert.equal(again.length, 2, 'the close-up too: its sheet changed')
+  assert.ok(s.submitted.length - before === 2)
+})
+
+test('Make more is for pictures already being made, not before the plan is done', async () => {
+  const s = setup()
+  const { film, garden } = planned(s)
+  await assert.rejects(s.director.makePictures(film.id, { ownerId: garden.id, role: 'master' }), /round one/)
+  assert.equal(s.submitted.length, 0)
+})
+
+test('Redo refused because another film is being made leaves the shot\'s seed as it was', async () => {
+  const s = setup()
+  const a = await readyToMake(s)
+  s.director.make(a.film.id)
+  await s.finishAll()
+  const b = await readyToMake(s)
+  s.director.make(b.film.id)
+  await s.next()
+  const seed = s.films.get(a.film.id)!.shots[1]!.seed
+  assert.throws(() => s.director.redo(a.film.id, a.shots[1]!.id, true), /another film/)
+  assert.equal(s.films.get(a.film.id)!.shots[1]!.seed, seed)
+  await s.director.stop(b.film.id)
+})
