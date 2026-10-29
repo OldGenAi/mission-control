@@ -40,6 +40,9 @@ const PlaceEditor: React.FC<{
   const changed = JSON.stringify(draft) !== saved
 
   const save = async () => {
+    // The keep words go into every pose picture of the place: say so before chosen pictures are cleared.
+    const clears = place && draft.keep.trim() !== place.keep && film.shots.some((s) => s.placeId === place.id && (s.startId || s.endId))
+    if (clears && !window.confirm(`Changing what stays the same in ${place.name} means the start and end pictures of its shots are made again. Carry on?`)) return
     try {
       await gateway.request('video.film.place.save', { filmId: film.id, place: { ...draft, prop: draft.prop.trim() || undefined } })
       onSaved()

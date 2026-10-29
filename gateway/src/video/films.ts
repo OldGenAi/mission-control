@@ -338,8 +338,16 @@ export class FilmStore {
     const now = Date.now()
     if (fields['id'] !== undefined) {
       const place = this.place(film.id, fields['id'])
-      this.db.prepare(`UPDATE film_places SET name = ?, description = ?, keep = ?, prop = ? WHERE id = ?`).run(name, description, keep, prop, place.id)
-      this.touch(film.id, now)
+      this.db.transaction(() => {
+        this.db.prepare(`UPDATE film_places SET name = ?, description = ?, keep = ?, prop = ? WHERE id = ?`).run(name, description, keep, prop, place.id)
+        // The keep words go into every pose picture of the place, so those are made again; the name, description and
+        // prop go into its shots' words, so only the clips are.
+        const shotsHere = `WHERE place_id = ? AND film_id = ? AND deleted_at IS NULL`
+        if (keep !== place.keep) this.db.prepare(`UPDATE film_shots SET start_id = NULL, end_id = NULL, revision = revision + 1 ${shotsHere}`).run(place.id, film.id)
+        else if (name !== place.name || description !== place.description || prop !== place.prop) this.db.prepare(`UPDATE film_shots SET revision = revision + 1 ${shotsHere}`).run(place.id, film.id)
+        this.touch(film.id, now)
+        this.syncFollowsOn(film.id)
+      })()
       return this.place(film.id, place.id)
     }
     const count = this.livePlaces(film.id).length
@@ -876,6 +884,10 @@ export class FilmStore {
       for (const row of this.db.prepare(`SELECT ${column} AS id FROM ${table} WHERE film_id = ? AND ${column} IS NOT NULL`).all(filmId) as Array<{ id: string }>) ids.add(row.id)
     }
     for (const row of this.db.prepare(`SELECT image_id AS id FROM videos WHERE film_id = ? AND image_id IS NOT NULL`).all(filmId) as Array<{ id: string }>) ids.add(row.id)
+    // And the pictures its jobs were made from (a sheet since replaced is named only there).
+    for (const row of this.db.prepare(`SELECT params FROM videos WHERE film_id = ?`).all(filmId) as Array<{ params: string }>) {
+      for (const value of Object.values(JSON.parse(row.params) as Record<string, unknown>)) if (typeof value === 'string' && ID.test(value)) ids.add(value)
+    }
     return [...ids]
   }
 
