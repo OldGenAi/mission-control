@@ -787,6 +787,46 @@ test('a sheet replaced or dropped takes its file with it, unless something else 
   assert.equal(s.jobs.hasImage(second), false)
 })
 
+test('a place\'s keep words changed after pictures are chosen: its shots\' pictures are made again; other words remake only the clips (third review N3-S1)', () => {
+  const s = setup()
+  const { film, garden, kitchen, shots } = filmWithPlan(s)
+  setStage(s.db, film.id, 'shots')
+  for (const shot of shots) {
+    s.films.choose(film.id, candidate(s, film.id, 'shot', shot.id, 'start').pictureId)
+    if (!shot.closeUp) s.films.choose(film.id, candidate(s, film.id, 'shot', shot.id, 'end').pictureId)
+  }
+  const before = s.films.get(film.id)!
+  s.films.savePlace(film.id, { id: garden.id, name: 'The garden', description: 'a small walled garden', keep: 'the red door stays open' })
+  const kept = s.films.get(film.id)!
+  assert.deepEqual(kept.shots.slice(0, 2).map((x) => [x.startId, x.endId]), [[null, null], [null, null]], 'the garden\'s pictures were made with the old keep words')
+  assert.deepEqual(kept.shots[2]!.startId, before.shots[2]!.startId, 'the kitchen keeps its pictures')
+  assert.ok(kept.shots[0]!.revision > before.shots[0]!.revision)
+  // The kitchen's description goes into its shots' words, not its pictures: the clips are remade, the pictures stay.
+  s.films.savePlace(film.id, { id: kitchen.id, name: 'The kitchen', description: 'a farmhouse kitchen at night', keep: 'the table stays by the window', prop: 'a red ball' })
+  const described = s.films.get(film.id)!
+  assert.equal(described.shots[2]!.startId, before.shots[2]!.startId)
+  assert.ok(described.shots[2]!.revision > kept.shots[2]!.revision)
+  // Saving a place unchanged changes nothing.
+  s.films.savePlace(film.id, { id: kitchen.id, name: 'The kitchen', description: 'a farmhouse kitchen at night', keep: 'the table stays by the window', prop: 'a red ball' })
+  assert.equal(s.films.get(film.id)!.shots[2]!.revision, described.shots[2]!.revision)
+})
+
+test('deleting a film also removes a replaced sheet that only its old shot jobs named (third review nit)', async () => {
+  const s = setup()
+  const { film, garden } = filmWithPlan(s)
+  setStage(s.db, film.id, 'shots')
+  const old = s.picture()
+  s.films.setSheet(film.id, garden.id, old, 'one')
+  const clipId = randomBytes(16).toString('hex')
+  s.db.prepare(`INSERT INTO videos (id, recipe_id, params, status, created_at, kind, film_id) VALUES (?, 'film-shot', ?, 'done', ?, 'video', ?)`)
+    .run(clipId, JSON.stringify({ prompt: 'x', sheet: old, start: s.picture() }), Date.now(), film.id)
+  s.films.setSheet(film.id, garden.id, s.picture(), 'two')
+  assert.equal(s.jobs.hasImage(old), true, 'the old clip job still names it')
+  await s.films.delete(film.id)
+  assert.equal(s.jobs.hasImage(old), false)
+  assert.equal(s.jobs.hasImage(s.rex.imageId!), true)
+})
+
 test('no AI tool can reach the film modules (harness fit, storyboard spec 16)', () => {
   const toolsDir = join(__dirname, '..', 'src', 'tools')
   const offenders = readdirSync(toolsDir, { recursive: true, encoding: 'utf8' })
