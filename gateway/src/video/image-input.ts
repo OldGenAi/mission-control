@@ -105,8 +105,13 @@ export class ImageInputs {
     return { id, ...info }
   }
 
-  /** Keeps a picture Mission Control made itself (a ComfyUI picture job, a reference sheet): PNG only, stripped first. */
-  saveBuffer(buf: Buffer): (ImageInfo & { id: string }) | string {
+  /**
+   * Keeps a picture Mission Control made itself (a ComfyUI picture job, a reference sheet): PNG only, stripped first.
+   * A picture made from another one (a character cut out) can be kept under an id given for it; if a picture is
+   * already kept under that id, that one stays.
+   */
+  saveBuffer(buf: Buffer, givenId?: string): (ImageInfo & { id: string }) | string {
+    if (givenId !== undefined && !/^[0-9a-f]{32}$/.test(givenId)) return 'the picture id is not valid'
     if (buf.length > MAX_IMAGE_BYTES) return `the picture is larger than ${MAX_IMAGE_BYTES / 1024 ** 2} MB`
     const kind = readImageInfo(buf)
     if (typeof kind === 'string' || kind.type !== 'png') return 'the picture is not a PNG'
@@ -114,8 +119,12 @@ export class ImageInputs {
     if (!clean) return 'the PNG file is damaged'
     const info = inspectImage(clean)
     if (typeof info === 'string') return info
-    const id = randomBytes(16).toString('hex')
-    writeFileSync(join(this.dir, `${id}.png`), clean, { mode: 0o600 })
+    const id = givenId ?? randomBytes(16).toString('hex')
+    try {
+      writeFileSync(join(this.dir, `${id}.png`), clean, { mode: 0o600, flag: 'wx' })
+    } catch (err) {
+      if (givenId === undefined || (err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+    }
     return { id, ...info }
   }
 

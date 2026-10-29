@@ -10,7 +10,9 @@ import type Database from 'better-sqlite3'
 import type WebSocket from 'ws'
 import { ComfyClient, checkComfyUrl, listensBeyondThisComputer, type ComfyMessage } from './comfyui.js'
 import { ImageInputs, type ImageInfo, type StoredImage } from './image-input.js'
+import type { FfmpegTools, RunOptions } from './ffmpeg.js'
 import { stripMp4Metadata } from './mp4-strip.js'
+import { cutReference } from './reference-cut.js'
 import { validateParams } from './params.js'
 import { findRecipe, nodeClasses, type ComfyGraph, type Recipe } from './recipes.js'
 import type { ParamValues } from './recipe-types.js'
@@ -222,6 +224,11 @@ export class VideoJobs {
   /** A copy of a stored picture under a new id (the film store's copy of a cast picture). */
   copyImage(id: string): string | null {
     return this.images.copy(id)
+  }
+
+  /** A character's picture cut down to the character on its own (the film director's picture 2 for poses). */
+  cutOut(tools: FfmpegTools, pictureId: string, options: RunOptions): ReturnType<typeof cutReference> {
+    return cutReference(tools, this.images, pictureId, options)
   }
 
   /** Removes a stored picture. The film store calls it only once no live row names the picture. */
