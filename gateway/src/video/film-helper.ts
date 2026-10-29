@@ -96,9 +96,8 @@ export interface HelperOptions {
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-function checkText(value: unknown, field: string, max: number, where: string, problems: string[], opts: { oneLine?: boolean; mayBeEmpty?: boolean } = {}): void {
-  // "the action", or a character's own field as given: "Rex's start pose".
-  const what = field.includes("'s ") ? field : `the ${field}`
+// `what` names the field as the problem says it: "the action", "Rex's start pose".
+function checkText(value: unknown, what: string, max: number, where: string, problems: string[], opts: { oneLine?: boolean; mayBeEmpty?: boolean } = {}): void {
   if (typeof value !== 'string' || (!opts.mayBeEmpty && value.trim() === '')) return void problems.push(`${where}: ${what} is missing`)
   if ([...value].length > max) problems.push(`${where}: ${what} is longer than ${max} characters`)
   if (INVISIBLE.test(value)) problems.push(`${where}: ${what} has an invisible character`)
@@ -127,10 +126,10 @@ export function checkPlan(answer: unknown, film: HelperFilm): { problems: string
     const where = `place ${i + 1}`
     if (!isObject(place)) return void problems.push(`${where}: not an object`)
     for (const key of Object.keys(place)) if (!PLACE_FIELDS.has(key)) problems.push(`${where}: unknown field ${key}`)
-    checkText(place['name'], 'name', FIELD_LIMITS.name, where, problems, { oneLine: true })
-    checkText(place['description'], 'description', FIELD_LIMITS.description, where, problems)
-    checkText(place['keep'], 'keep line', FIELD_LIMITS.keep, where, problems)
-    if (place['prop'] !== undefined) checkText(place['prop'], 'prop', FIELD_LIMITS.prop, where, problems, { mayBeEmpty: true })
+    checkText(place['name'], 'the name', FIELD_LIMITS.name, where, problems, { oneLine: true })
+    checkText(place['description'], 'the description', FIELD_LIMITS.description, where, problems)
+    checkText(place['keep'], 'the keep line', FIELD_LIMITS.keep, where, problems)
+    if (place['prop'] !== undefined) checkText(place['prop'], 'the prop', FIELD_LIMITS.prop, where, problems, { mayBeEmpty: true })
     if (NEGATIVE.test(`${String(place['description'])} ${String(place['keep'])} ${String(place['prop'] ?? '')}`)) problems.push(`${where}: negative wording`)
   })
 
@@ -168,7 +167,7 @@ export function checkPlan(answer: unknown, film: HelperFilm): { problems: string
       }
       poses.push(`${String(character['startPose'])} ${String(character['endPose'] ?? '')}`)
     }
-    checkText(shot['action'], 'action', FIELD_LIMITS.action, where, problems)
+    checkText(shot['action'], 'the action', FIELD_LIMITS.action, where, problems)
     const seconds = shot['seconds']
     if (closeUp === true) {
       if (seconds !== 4 && seconds !== 5) problems.push(`${where}: a close-up lasts 4 or 5 seconds`)
