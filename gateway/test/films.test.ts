@@ -11,6 +11,9 @@ import { openDatabase } from '../src/store/db.js'
 import { VideoCast } from '../src/video/cast.js'
 import { VideoJobs, VideoRequestError } from '../src/video/jobs.js'
 import { FilmStore, MAX_FILMS, MAX_PLACES, MAX_SHOTS, MAX_CANDIDATES, slotBasis } from '../src/video/films.js'
+import { ImageInputs } from '../src/video/image-input.js'
+import { rgbPng } from '../src/video/png-strip.js'
+import { referenceIdFor } from '../src/video/reference-cut.js'
 import { registerFilmMakingMethods, registerVideoMethods } from '../src/methods/video.js'
 import type { FilmDirector } from '../src/video/film-director.js'
 import type { FilmHelper } from '../src/video/film-helper.js'
@@ -771,6 +774,27 @@ test('a place\'s "what stays the same" words are part of what its pose pictures 
   const before = slotBasis(s.films.get(film.id)!, 'shot', shots[0]!.id, 'start')
   s.films.savePlace(film.id, { id: garden.id, name: 'The garden', description: 'a small walled garden', keep: 'the red door stays open' })
   assert.notEqual(slotBasis(s.films.get(film.id)!, 'shot', shots[0]!.id, 'start'), before)
+})
+
+test('a pose\'s pictures are made from its characters\' pictures too: a new picture puts them out of date (hand test T10)', () => {
+  const s = setup()
+  const { film, shots } = filmWithPlan(s)
+  setStage(s.db, film.id, 'shots')
+  const before = slotBasis(s.films.get(film.id)!, 'shot', shots[0]!.id, 'start')
+  const castId = shots[0]!.characters[0]!.castId
+  s.db.prepare(`UPDATE film_cast SET picture_id = ? WHERE film_id = ? AND cast_id = ?`).run('f'.repeat(32), film.id, castId)
+  assert.notEqual(slotBasis(s.films.get(film.id)!, 'shot', shots[0]!.id, 'start'), before)
+})
+
+test('a deleted film takes its characters\' cut-out pictures with it, even one no job was made from (hand test T10)', async () => {
+  const s = setup()
+  const { film } = filmWithPlan(s)
+  const castPicture = s.films.get(film.id)!.cast[0]!.pictureId!
+  const cut = referenceIdFor(castPicture)
+  const kept = new ImageInputs(join(s.mediaDir, 'inputs')).saveBuffer(rgbPng(64, 64, Buffer.alloc(64 * 64 * 3, 200)), cut)
+  assert.ok(typeof kept !== 'string' && s.jobs.findImage(cut), 'the cut-out is kept where the film\'s pictures are')
+  await s.films.delete(film.id)
+  assert.equal(s.jobs.findImage(cut), null)
 })
 
 test('a sheet replaced or dropped takes its file with it, unless something else still uses it (second review nit 1)', () => {

@@ -37,6 +37,9 @@ const SHOT: Recipe = { ...FILM_EDIT_FAST, id: 'film-shot', output: 'video', para
 
 interface Job { id: string; recipeId: string; params: Record<string, unknown>; filmId: string; status: string }
 
+// The fake cutter's picture of a character on its own: a made-up id that is plainly that picture's.
+const cutOf = (pictureId: string) => [...pictureId].reverse().join('')
+
 function setup(opts: { shot?: Recipe | null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'mc-director-'))
   const db = openDatabase(join(dir, 'test.sqlite'))
@@ -55,7 +58,9 @@ function setup(opts: { shot?: Recipe | null } = {}) {
   const events: FilmEvent[] = []
   const joins: JoinPlan[] = []
   const sheets: SheetPictures[] = []
-  const calls = { interruptAndFree: 0, maxActive: 0, stopLeftover: [] as string[], pidFiles: [] as string[] }
+  // What the (fake) cutter says about a character's picture; anything not named here has the character on a plain background.
+  const cutFor = new Map<string, 'busy' | 'empty'>()
+  const calls = { interruptAndFree: 0, maxActive: 0, stopLeftover: [] as string[], pidFiles: [] as string[], cuts: [] as string[] }
   let diskUsage: number | null = null
   let freeBytes = 100 * 1024 ** 3
   let director: FilmDirector
@@ -106,6 +111,7 @@ function setup(opts: { shot?: Recipe | null } = {}) {
       sheet: async (_tools, _inputs, pictures, options) => { sheets.push(pictures); calls.pidFiles.push(options.pidFile!); return PNG },
       stopLeftover: (pidFile) => { calls.stopLeftover.push(pidFile) },
     },
+    references: async (pictureId) => { calls.cuts.push(pictureId); return cutFor.get(pictureId) ?? { id: cutOf(pictureId) } },
   })
   director = make(opts.shot === undefined ? SHOT : opts.shot)
 
@@ -143,7 +149,7 @@ function setup(opts: { shot?: Recipe | null } = {}) {
   const rex = cast.save({ name: 'Rex', wording: 'black and white border collie', imageId: castPicture() })
   const nip = cast.save({ name: 'Nipper', wording: 'a mostly black collie with white paws', imageId: castPicture() })
   const tom = cast.save({ name: 'Tom', wording: 'a man in his sixties with a flat tweed cap', imageId: castPicture() })
-  return { db, mediaDir, jobs, cast, films, picture, submitted, events, joins, sheets, calls, rex, nip, tom, next, finishAll, active,
+  return { db, mediaDir, jobs, cast, films, picture, submitted, events, joins, sheets, calls, cutFor, rex, nip, tom, next, finishAll, active,
     get director() { return director }, restart: () => { director = make(opts.shot === undefined ? SHOT : opts.shot); return director },
     setDiskUsage: (bytes: number | null) => { diskUsage = bytes }, setFreeBytes: (bytes: number) => { freeBytes = bytes } }
 }
@@ -261,7 +267,7 @@ test('round two: start and end poses into each place, a follows-on shot only its
   assert.deepEqual(jobs.map((j) => j.recipeId), ['film-edit-fast', 'film-edit-fast', 'film-edit-fast', 'film-edit-fast', 'film-edit-fast', 'film-edit-fast', 'film-edit-fine', 'film-edit-fine'])
   const place = s.films.get(film.id)!.places
   assert.equal(jobs[0]!.params['image1'], place[0]!.emptyId, 'poses are added into the place on its own')
-  assert.equal(jobs[0]!.params['image2'], s.films.get(film.id)!.cast[0]!.pictureId, 'picture 2 shows what Rex looks like')
+  assert.equal(jobs[0]!.params['image2'], cutOf(s.films.get(film.id)!.cast[0]!.pictureId!), 'picture 2 shows what Rex looks like, on his own')
   assert.match(String(jobs[0]!.params['prompt']), /^Add exactly one dog to picture 1: Rex, .*there is exactly one dog in the whole picture/)
   assert.ok(s.films.get(film.id)!.pictures.every((p) => p.steps === 1), 'one character: one edit each')
   assert.match(String(jobs[6]!.params['prompt']), /^A close-up at Rex's eye level/)
@@ -464,7 +470,9 @@ test('a pose of three characters is a chain of edits, one character each, made o
     assert.deepEqual(chain.map((j) => j.recipeId), ['film-edit-fast', 'film-edit-fast', 'film-edit-fast'])
     assert.equal(chain[0]!.params['image1'], made.places[0]!.emptyId, 'the first edit adds to the place on its own')
     assert.deepEqual(chain.slice(1).map((j) => j.params['image1']), chain.slice(0, 2).map((j) => s.jobs.pictureOf(j.id)), 'each next edit adds to the picture before')
-    assert.deepEqual(chain.map((j) => j.params['image2']), [cast(s.nip.id), cast(s.rex.id), cast(s.tom.id)], 'picture 2 shows who is being added')
+    // Picture 2 is who is being added, on their own and cut tight: the whole cast picture got pasted in as well as drawn
+    // in the pose (two Toms, three dogs in the live test; hand test T10).
+    assert.deepEqual(chain.map((j) => j.params['image2']), [cast(s.nip.id), cast(s.rex.id), cast(s.tom.id)].map((id) => cutOf(id!)), 'picture 2 shows who is being added, on their own')
     assert.equal(new Set(chain.map((j) => j.params['seed'])).size, 1, 'one seed for the whole chain')
   }
   const prompts = chains[0]!.map((j) => String(j.params['prompt']))
@@ -473,6 +481,7 @@ test('a pose of three characters is a chain of edits, one character each, made o
   assert.match(prompts[2]!, /^Add exactly one man to picture 1: Tom, .*standing on the middle\. .*Keep Nipper and Rex exactly as before, in the same places\. There are exactly two dogs and one man/)
   assert.match(String(chains[2]![0]!.params['prompt']), /lying on the left/, 'the end chain uses the end poses')
   assert.equal(jobs[12]!.recipeId, 'film-edit-fine')
+  assert.equal(jobs[12]!.params['image2'], cutOf(cast(s.rex.id)!), 'a close-up\'s picture 2 is the character on its own too')
 
   // Each chain is one candidate, finished at its last edit, with that edit's picture; nothing half made to choose.
   const candidates = made.pictures.filter((p) => p.ownerId === three.id)
@@ -544,6 +553,25 @@ test('the pose pictures need every character\'s kind, and say whose is missing b
   const count = s.submitted.length
   await assert.rejects(s.director.makePictures(film.id, { round: 'shots' }), /what Tom is in one word/)
   assert.equal(s.submitted.length, count)
+})
+
+test('a character whose picture has a busy background is refused with plain words before any pose is queued (hand test T10)', async () => {
+  const s = setup()
+  const { film, green, three } = together(s)
+  const nipper = s.films.get(film.id)!.cast.find((c) => c.castId === s.nip.id)!.pictureId!
+  s.cutFor.set(nipper, 'busy')
+  // Round one makes turnarounds and faces from the whole picture, so it doesn't need the cut.
+  await placesChosen(s, film.id, [s.rex.id, s.nip.id, s.tom.id], green.id)
+  assert.deepEqual(s.calls.cuts, [])
+  const count = s.submitted.length
+  await assert.rejects(s.director.makePictures(film.id, { round: 'shots' }), /Nipper's picture has a busy background.*Nipper alone on a plain background/)
+  await assert.rejects(s.director.makePictures(film.id, { ownerId: three.id, role: 'end' }), /Nipper's picture has a busy background/)
+  s.cutFor.set(nipper, 'empty')
+  await assert.rejects(s.director.makePictures(film.id, { round: 'shots' }), /can't find Nipper in Nipper's picture/)
+  assert.equal(s.submitted.length, count, 'nothing queued')
+  s.cutFor.clear()
+  await s.director.makePictures(film.id, { round: 'shots' })
+  assert.ok((await s.finishAll()).length > 0)
 })
 
 test('Make film with three characters: the sheet holds the first one, the shot words name everyone', async () => {
