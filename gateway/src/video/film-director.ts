@@ -487,7 +487,7 @@ export class FilmDirector {
     // Picture 2 is each character on their own (makePictures, cutOut).
     if (shot.closeUp) {
       const [member] = members as [FilmCastMember]
-      return this.twice(film, this.o.recipes.fine, place.emptyId!, [{ prompt: closeUpPrompt(member, shot.characters[0]!.startPose, film.look as FilmLook), image2: alone(member) }], slot)
+      return this.twice(film, this.o.recipes.fine, place.emptyId!, [{ prompt: closeUpPrompt(member, shot.characters[0]!.startPose, place, film.look as FilmLook), image2: alone(member) }], slot)
     }
     const characters = addingOrder(members.map((member, i) => {
       if (!member.kind) throw new VideoRequestError(`Say what ${member.name} is in one word (like dog or man) in the film's cast first.`)
