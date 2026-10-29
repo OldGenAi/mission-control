@@ -38,7 +38,8 @@ function setup(timing = { stopWaitMs: 2000, stopPollMs: 10 }) {
   const picture = () => jobs.uploadImage(png().toString('base64')).id
   const rex = cast.save({ name: 'Rex', wording: 'black and white border collie, white blaze', imageId: picture() })
   const bess = cast.save({ name: 'Bess', wording: 'small brown terrier' })
-  return { db, mediaDir, jobs, cast, films, picture, rex, bess }
+  const tom = cast.save({ name: 'Tom', wording: 'a man in his sixties with a flat tweed cap', imageId: picture() })
+  return { db, mediaDir, jobs, cast, films, picture, rex, bess, tom }
 }
 
 type Setup = ReturnType<typeof setup>
@@ -50,7 +51,7 @@ function filmWithPlan(s: Setup) {
   const garden = s.films.savePlace(film.id, { name: 'The garden', description: 'a small walled garden', keep: 'the red door stays shut' })
   const kitchen = s.films.savePlace(film.id, { name: 'The kitchen', description: 'a farmhouse kitchen', keep: 'the table stays by the window', prop: 'a red ball' })
   const shot = (placeId: string, joins = 'follows', extra: Record<string, unknown> = {}) => s.films.saveShot(film.id, {
-    placeId, castId: s.rex.id, action: 'walks to the door', startPose: 'standing by the wall', endPose: 'standing at the door', seconds: 6, joins, closeUp: false, ...extra,
+    placeId, characters: [{ castId: s.rex.id, startPose: 'standing by the wall', endPose: 'standing at the door' }], action: 'walks to the door', seconds: 6, joins, closeUp: false, ...extra,
   })
   const shots = [shot(garden.id, 'fade_short'), shot(garden.id), shot(kitchen.id, 'fade_long')]
   return { film, garden, kitchen, shots }
@@ -183,28 +184,55 @@ test('places are checked, kept in order, moved, and at most eight', () => {
   assert.deepEqual(s.films.get(film.id)!.places.map((p) => p.position), [0, 1, 2, 3, 4, 5, 6])
 })
 
-test('shots are checked: the place and the character must be this film\'s, lengths and joins in range', () => {
+test('shots are checked: the place and the characters must be this film\'s, lengths and joins in range', () => {
   const s = setup()
   const { film, garden } = filmWithPlan(s)
   const other = filmWithPlan(s)
-  const ok = { placeId: garden.id, castId: s.rex.id, action: 'sniffs the door', startPose: 'sitting by the door', endPose: 'standing at the door', seconds: 5, joins: 'follows', closeUp: false }
+  const rex = { castId: s.rex.id, startPose: 'sitting by the door', endPose: 'standing at the door' }
+  const ok = { placeId: garden.id, characters: [rex], action: 'sniffs the door', seconds: 5, joins: 'follows', closeUp: false }
+  const closeUp = { ...ok, closeUp: true, seconds: 4, characters: [{ castId: s.rex.id, startPose: 'sitting by the door' }] }
   refused(() => s.films.saveShot(film.id, { ...ok, placeId: other.garden.id }), /place/)
-  refused(() => s.films.saveShot(film.id, { ...ok, castId: s.bess.id }), /cast/)
+  refused(() => s.films.saveShot(film.id, { ...ok, characters: [{ ...rex, castId: s.bess.id }] }), /cast/)
+  refused(() => s.films.saveShot(film.id, { ...ok, castId: s.rex.id }), /unknown field: castId/)
   refused(() => s.films.saveShot(film.id, { ...ok, seconds: 9 }), /4 to 8/)
   refused(() => s.films.saveShot(film.id, { ...ok, seconds: 5.5 }), /4 to 8/)
-  refused(() => s.films.saveShot(film.id, { ...ok, closeUp: true, seconds: 6, endPose: '' }), /close-up.*4 or 5/)
-  refused(() => s.films.saveShot(film.id, { ...ok, closeUp: true, seconds: 4 }), /close-up.*end/)
-  refused(() => s.films.saveShot(film.id, { ...ok, endPose: '' }), /end/)
+  refused(() => s.films.saveShot(film.id, { ...closeUp, seconds: 6 }), /close-up.*4 or 5/)
+  refused(() => s.films.saveShot(film.id, { ...closeUp, characters: [rex] }), /close-up.*end/)
+  refused(() => s.films.saveShot(film.id, { ...ok, characters: [{ ...rex, endPose: '' }] }), /how Rex ends/)
+  refused(() => s.films.saveShot(film.id, { ...ok, characters: [{ ...rex, startPose: ' ' }] }), /how Rex starts/)
   refused(() => s.films.saveShot(film.id, { ...ok, joins: 'wipe' }), /joins/)
   refused(() => s.films.saveShot(film.id, { ...ok, action: 'x'.repeat(601) }), /at most 600/)
-  refused(() => s.films.saveShot(film.id, { ...ok, startPose: 'x'.repeat(301) }), /at most 300/)
+  refused(() => s.films.saveShot(film.id, { ...ok, characters: [{ ...rex, startPose: 'x'.repeat(301) }] }), /at most 300/)
+  refused(() => s.films.saveShot(film.id, { ...ok, characters: [{ ...rex, endPose: 'x'.repeat(301) }] }), /at most 300/)
   refused(() => s.films.saveShot(film.id, { ...ok, seed: -1 }), /seed/)
   refused(() => s.films.saveShot(film.id, { ...ok, id: other.shots[0]!.id }), /no longer/)
-  const closeUp = s.films.saveShot(film.id, { ...ok, closeUp: true, seconds: 4, endPose: '' })
-  assert.equal(closeUp.endPose, null)
-  assert.ok(closeUp.seed >= 1)
+  const made = s.films.saveShot(film.id, closeUp)
+  assert.deepEqual(made.characters, [{ castId: s.rex.id, startPose: 'sitting by the door', endPose: null }])
+  assert.ok(made.seed >= 1)
   for (let i = s.films.get(film.id)!.shots.length; i < MAX_SHOTS; i++) s.films.saveShot(film.id, ok)
   refused(() => s.films.saveShot(film.id, ok), new RegExp(`${MAX_SHOTS} shots`))
+})
+
+test('a shot can show one to three different characters, each with its own start and end; a close-up shows one', () => {
+  const s = setup()
+  const film = s.films.create({ ...FILM, castIds: [s.rex.id, s.bess.id, s.tom.id] })
+  const extra = s.cast.save({ name: 'Moss', wording: 'a grey cat', imageId: s.picture() })
+  const garden = s.films.savePlace(film.id, { name: 'The garden', description: 'a small walled garden', keep: 'the red door stays shut' })
+  const who = (castId: string, i = 0) => ({ castId, startPose: `standing at spot ${i}`, endPose: `sitting at spot ${i}` })
+  const ok = { placeId: garden.id, characters: [who(s.rex.id, 1), who(s.bess.id, 2), who(s.tom.id, 3)], action: 'they settle on the grass', seconds: 6, joins: 'follows', closeUp: false }
+  const three = s.films.saveShot(film.id, ok)
+  assert.deepEqual(three.characters, ok.characters, 'kept in the order given: the first is added to the picture first')
+  assert.deepEqual(s.films.get(film.id)!.shots[0]!.characters, ok.characters)
+  refused(() => s.films.saveShot(film.id, { ...ok, characters: [] }), /at least one character/)
+  refused(() => s.films.saveShot(film.id, { ...ok, characters: [...ok.characters, who(extra.id)] }), /at most 3 characters/)
+  refused(() => s.films.saveShot(film.id, { ...ok, characters: [who(s.rex.id), who(s.rex.id, 2)] }), /Rex.*twice/)
+  refused(() => s.films.saveShot(film.id, { ...ok, characters: [who(extra.id)] }), /cast/)
+  refused(() => s.films.saveShot(film.id, { ...ok, characters: 'Rex' }), /characters/)
+  refused(() => s.films.saveShot(film.id, { ...ok, characters: [{ ...who(s.rex.id), colour: 'red' }] }), /unknown field: colour/)
+  refused(() => s.films.saveShot(film.id, { ...ok, characters: [null] }), /character/)
+  refused(() => s.films.saveShot(film.id, { ...ok, closeUp: true, seconds: 4, characters: [{ castId: s.rex.id, startPose: 'a' }, { castId: s.tom.id, startPose: 'b' }] }), /close-up shows one character/)
+  // A character a shot uses stays in the film's cast.
+  refused(() => s.films.update(film.id, { ...FILM, castIds: [s.rex.id, s.bess.id] }), /A shot uses Tom/)
 })
 
 test('editing a shot bumps its revision and drops the pictures its change makes wrong', () => {
@@ -216,15 +244,44 @@ test('editing a shot bumps its revision and drops the pictures its change makes 
   s.films.choose(film.id, candidate(s, film.id, 'shot', shot.id, 'end').pictureId)
   const chosen = s.films.get(film.id)!.shots[2]!
   assert.ok(chosen.startId && chosen.endId)
-  const fields = { placeId: kitchen.id, castId: s.rex.id, action: chosen.action, startPose: chosen.startPose, endPose: chosen.endPose, seconds: 6, joins: 'fade_long', closeUp: false }
+  const rex = chosen.characters[0]!
+  const fields = { placeId: kitchen.id, characters: [rex], action: chosen.action, seconds: 6, joins: 'fade_long', closeUp: false }
+  const same = s.films.saveShot(film.id, { ...fields, id: shot.id })
+  assert.equal(same.revision, chosen.revision, 'saving it unchanged changes nothing')
   const actionOnly = s.films.saveShot(film.id, { ...fields, id: shot.id, action: 'runs to the door' })
   assert.equal(actionOnly.revision, chosen.revision + 1)
   assert.equal(actionOnly.startId, chosen.startId, 'a new action keeps the pictures')
-  const newEnd = s.films.saveShot(film.id, { ...fields, id: shot.id, endPose: 'lying by the door' })
+  const newEnd = s.films.saveShot(film.id, { ...fields, id: shot.id, characters: [{ ...rex, endPose: 'lying by the door' }] })
   assert.equal(newEnd.startId, chosen.startId)
   assert.equal(newEnd.endId, null)
   const moved = s.films.saveShot(film.id, { ...fields, id: shot.id, placeId: garden.id })
   assert.equal(moved.startId, null, 'pictures of another place no longer fit')
+})
+
+test('a change to who is in a shot, or to any one character\'s pose, drops the pictures it makes wrong', () => {
+  const s = setup()
+  const film = s.films.create({ ...FILM, castIds: [s.rex.id, s.tom.id] })
+  const garden = s.films.savePlace(film.id, { name: 'The garden', description: 'a small walled garden', keep: 'the red door stays shut' })
+  const rex = { castId: s.rex.id, startPose: 'standing on the left', endPose: 'lying on the left' }
+  const tom = { castId: s.tom.id, startPose: 'standing on the right', endPose: 'sitting on the right' }
+  const fields = { placeId: garden.id, characters: [rex, tom], action: 'they settle', seconds: 6, joins: 'follows', closeUp: false }
+  const shot = s.films.saveShot(film.id, fields)
+  setStage(s.db, film.id, 'shots')
+  const choose = () => {
+    s.films.choose(film.id, candidate(s, film.id, 'shot', shot.id, 'start').pictureId)
+    s.films.choose(film.id, candidate(s, film.id, 'shot', shot.id, 'end').pictureId)
+    return s.films.get(film.id)!.shots[0]!
+  }
+  let chosen = choose()
+  const tomEnds = s.films.saveShot(film.id, { ...fields, id: shot.id, characters: [rex, { ...tom, endPose: 'lying on the right' }] })
+  assert.deepEqual([tomEnds.startId, tomEnds.endId], [chosen.startId, null], 'only the end picture shows the changed end')
+  chosen = choose()
+  const swapped = s.films.saveShot(film.id, { ...fields, id: shot.id, characters: [tom, rex] })
+  assert.deepEqual([swapped.startId, swapped.endId], [null, null], 'a new order is a new chain of edits')
+  chosen = choose()
+  const alone = s.films.saveShot(film.id, { ...fields, id: shot.id, characters: [rex] })
+  assert.deepEqual([alone.startId, alone.endId], [null, null])
+  assert.ok(alone.revision > chosen.revision)
 })
 
 test('shots move up and down, and a deleted shot leaves the others in order', () => {
@@ -315,6 +372,65 @@ test('choosing a character\'s turnaround or face drops the sheets it was on and 
   assert.equal(shots.length, 3)
 })
 
+test('a character\'s new face drops the sheets of places where it is in any shot, not only as the first character', () => {
+  const s = setup()
+  const film = s.films.create({ ...FILM, castIds: [s.rex.id, s.tom.id] })
+  const garden = s.films.savePlace(film.id, { name: 'The garden', description: 'a garden', keep: 'the door stays shut' })
+  const lane = s.films.savePlace(film.id, { name: 'The lane', description: 'a lane', keep: 'the gate stays open' })
+  const who = (castId: string) => ({ castId, startPose: 'standing', endPose: 'sitting' })
+  s.films.saveShot(film.id, { placeId: garden.id, characters: [who(s.rex.id), who(s.tom.id)], action: 'they sit', seconds: 5, joins: 'follows', closeUp: false })
+  s.films.saveShot(film.id, { placeId: lane.id, characters: [who(s.rex.id)], action: 'he sits', seconds: 5, joins: 'fade_short', closeUp: false })
+  setStage(s.db, film.id, 'shots')
+  for (const place of [garden, lane]) s.db.prepare(`UPDATE film_places SET sheet_id = ? WHERE id = ?`).run(s.picture(), place.id)
+  s.films.choose(film.id, candidate(s, film.id, 'cast', s.tom.id, 'face').pictureId)
+  assert.deepEqual(s.films.get(film.id)!.places.map((p) => p.sheetId === null), [true, false])
+})
+
+test('each character\'s kind is one word, kept with the film\'s copy; for the pictures still to be made', () => {
+  const s = setup()
+  const { film, shots } = filmWithPlan(s)
+  assert.equal(s.films.get(film.id)!.cast[0]!.kind, null)
+  s.films.setKind(film.id, s.rex.id, ' Dog ')
+  const after = s.films.get(film.id)!
+  assert.equal(after.cast[0]!.kind, 'dog')
+  // Only the pose edits use it, and a picture already made or chosen stays as it is; the shot's words don't use it.
+  assert.deepEqual(after.shots.map((x) => x.revision), shots.map((x) => x.revision))
+  refused(() => s.films.setKind(film.id, s.rex.id, 'border collie'), /one word/)
+  refused(() => s.films.setKind(film.id, s.rex.id, 'd0g'), /one word/)
+  refused(() => s.films.setKind(film.id, s.rex.id, 'x'.repeat(21)), /one word/)
+  refused(() => s.films.setKind(film.id, s.rex.id, 7), /one word/)
+  refused(() => s.films.setKind(film.id, s.bess.id, 'dog'), /cast/)
+  s.films.setKind(film.id, s.rex.id, '')
+  assert.equal(s.films.get(film.id)!.cast[0]!.kind, null, 'an empty box clears it')
+  s.films.setKind(film.id, s.rex.id, 'dog')
+  s.films.copyCastForPlan(film.id)
+  assert.equal(s.films.get(film.id)!.cast[0]!.kind, 'dog', 'refreshing the cast at plan time keeps the kind')
+  setStage(s.db, film.id, 'making')
+  refused(() => s.films.setKind(film.id, s.rex.id, 'cat'), /Stop the film first/)
+})
+
+test('a chain of edits is one candidate: shown as being made until its last edit is done, never half made', () => {
+  const s = setup()
+  const { film, shots } = filmWithPlan(s)
+  setStage(s.db, film.id, 'shots')
+  const first = finishedPictureJob(s, film.id, 'done')
+  const pictureId = s.films.addCandidate(film.id, { ownerKind: 'shot', ownerId: shots[0]!.id, role: 'start', jobId: first.jobId, seed: 5, steps: 3 })
+  const shown = () => s.films.get(film.id)!.pictures.find((p) => p.id === pictureId)!
+  assert.deepEqual([shown().status, shown().imageId, shown().step, shown().steps], ['cancelled', null, 1, 3], 'a chain that stopped after its first edit')
+  refused(() => s.films.choose(film.id, pictureId), /not finished/)
+  const second = finishedPictureJob(s, film.id, 'running')
+  s.films.advanceCandidate(film.id, pictureId, second.jobId)
+  assert.deepEqual([shown().status, shown().imageId, shown().step], ['running', null, 2])
+  const third = finishedPictureJob(s, film.id, 'done')
+  refused(() => s.films.advanceCandidate(film.id, pictureId, finishedPictureJob(s, filmWithPlan(s).film.id).jobId), /job/)
+  s.films.advanceCandidate(film.id, pictureId, third.jobId)
+  assert.deepEqual([shown().status, shown().imageId, shown().step], ['done', third.imageId, 3])
+  refused(() => s.films.advanceCandidate(film.id, pictureId, finishedPictureJob(s, film.id).jobId), /last/)
+  refused(() => s.films.addCandidate(film.id, { ownerKind: 'shot', ownerId: shots[0]!.id, role: 'start', jobId: first.jobId, seed: 5, steps: 4 }), /steps/)
+  s.films.choose(film.id, pictureId)
+  assert.equal(s.films.get(film.id)!.shots[0]!.startId, third.imageId)
+})
+
 test('Make film starts once: a second press, or a second film, is refused while one is being made', () => {
   const s = setup()
   const a = filmWithPlan(s)
@@ -354,7 +470,8 @@ test('while a film is being made, its edits, choices and delete are refused unti
   refused(() => s.films.savePlace(film.id, { id: garden.id, name: 'x', description: 'y', keep: 'z' }), stopFirst)
   refused(() => s.films.deletePlace(film.id, garden.id), stopFirst)
   refused(() => s.films.movePlace(film.id, garden.id, 1), stopFirst)
-  refused(() => s.films.saveShot(film.id, { id: shots[0]!.id, placeId: garden.id, castId: s.rex.id, action: 'a', startPose: 'b', endPose: 'c', seconds: 5, joins: 'follows', closeUp: false }), stopFirst)
+  refused(() => s.films.saveShot(film.id, { id: shots[0]!.id, placeId: garden.id, characters: [{ castId: s.rex.id, startPose: 'b', endPose: 'c' }], action: 'a', seconds: 5, joins: 'follows', closeUp: false }), stopFirst)
+  refused(() => s.films.setKind(film.id, s.rex.id, 'dog'), stopFirst)
   refused(() => s.films.deleteShot(film.id, shots[0]!.id), stopFirst)
   refused(() => s.films.moveShot(film.id, shots[0]!.id, 1), stopFirst)
   refused(() => s.films.choose(film.id, pick), stopFirst)
@@ -448,6 +565,9 @@ test('the video.film methods refuse with plain words, and get comes with signed 
   const { film } = await dispatch('video.film.create', { film: { ...FILM, castIds: [s.rex.id] } }, client) as { film: { id: string } }
   const { place } = await dispatch('video.film.place.save', { filmId: film.id, place: { name: 'Garden', description: 'a garden', keep: 'the door stays shut' } }, client) as { place: { id: string } }
   await assert.rejects(dispatch('video.film.shot.save', { filmId: film.id, shot: { placeId: place.id } }, client), { code: 'INVALID_PARAMS' })
+  await assert.rejects(dispatch('video.film.cast.kind', { filmId: film.id, castId: s.rex.id, kind: 'two words' }, client), { code: 'INVALID_PARAMS' })
+  const kinded = await dispatch('video.film.cast.kind', { filmId: film.id, castId: s.rex.id, kind: 'dog' }, client) as { film: { cast: Array<{ kind: string }> } }
+  assert.equal(kinded.film.cast[0]!.kind, 'dog')
   setStage(s.db, film.id, 'places')
   const master = candidate(s, film.id, 'place', place.id, 'master')
   await dispatch('video.film.pictures.choose', { filmId: film.id, pictureId: master.pictureId }, client)
