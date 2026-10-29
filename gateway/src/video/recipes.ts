@@ -31,7 +31,7 @@ export function nodeClasses(graph: ComfyGraph): string[] {
 }
 
 // Builds a graph with short sequential node ids and returns references as [id, output].
-class GraphBuilder {
+export class GraphBuilder {
   readonly graph: ComfyGraph = {}
   private next = 1
 
