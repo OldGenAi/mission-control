@@ -28,7 +28,7 @@ const PNG = (() => {
 })()
 const MP4 = (() => {
   const box = (type: string, body: Buffer) => { const h = Buffer.alloc(8); h.writeUInt32BE(8 + body.length, 0); h.write(type, 4, 'latin1'); return Buffer.concat([h, body]) }
-  return Buffer.concat([box('ftyp', Buffer.from('isom')), box('moov', Buffer.alloc(4)), box('mdat', Buffer.from('frames'))])
+  return Buffer.concat([box('ftyp', Buffer.from('isom')), box('moov', box('mvhd', Buffer.alloc(4))), box('mdat', Buffer.from('frames'))])
 })()
 
 type OutputFile = { filename: string; subfolder: string; type: string }

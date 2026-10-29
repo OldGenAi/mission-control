@@ -17,6 +17,8 @@ import type { ParamValues } from './recipe-types.js'
 
 const JOB_TIMEOUT_MS = 30 * 60 * 1000
 const MAX_VIDEO_BYTES = 512 * 1024 * 1024
+const MAX_PICTURE_BYTES = 16 * 1024 * 1024
+const ID = /^[0-9a-f]{32}$/
 const MAX_QUEUED = 10
 const MAX_MEDIA_BYTES = 50 * 1024 ** 3
 const PREVIEW_MIN_INTERVAL_MS = 250
@@ -86,6 +88,7 @@ interface Running {
   id: string
   client: ComfyClient
   graph: ComfyGraph
+  output: Recipe['output']
   promptId: string | null
   socket: WebSocket | null
   lastPreviewAt: number
@@ -103,6 +106,9 @@ export class VideoJobs {
   private starting: { id: string; cancelled: boolean } | null = null
   private freedAt = -Infinity   // performance.now() when the last job asked ComfyUI for its memory back
   private readonly images: ImageInputs
+  // The Storyboard's own recipes, by id, as handed to submitFilm. Kept apart from RECIPES so video.submit can never
+  // name one. A job can't survive a restart, so they don't need to outlive this process.
+  private readonly filmRecipes = new Map<string, Recipe>()
 
   constructor(
     private readonly db: Database.Database,
@@ -119,25 +125,44 @@ export class VideoJobs {
                 WHERE status IN ('queued', 'running')`).run(Date.now())
   }
 
+  /** A finished Video page video's file. A film's own clips and pictures are never found here (see filmFilePath). */
   filePath(id: string): string | null {
-    if (!/^[0-9a-f]{32}$/.test(id)) return null
-    const row = this.db.prepare(`SELECT status FROM videos WHERE id = ? AND deleted_at IS NULL`).get(id) as { status: string } | undefined
-    if (row?.status !== 'done') return null
+    if (!ID.test(id)) return null
+    const row = this.db.prepare(`SELECT status FROM videos WHERE id = ? AND deleted_at IS NULL AND film_id IS NULL AND kind = 'video'`).get(id) as { status: string } | undefined
+    return row?.status === 'done' ? this.existingClip(id) : null
+  }
+
+  /** A finished clip of this film, for the Storyboard page only. */
+  filmFilePath(id: string, filmId: string): string | null {
+    if (!ID.test(id) || !ID.test(filmId)) return null
+    const row = this.db.prepare(`SELECT status FROM videos WHERE id = ? AND deleted_at IS NULL AND film_id = ? AND kind = 'video'`).get(id, filmId) as { status: string } | undefined
+    return row?.status === 'done' ? this.existingClip(id) : null
+  }
+
+  private existingClip(id: string): string | null {
     const path = join(this.mediaDir, `${id}.mp4`)
     return existsSync(path) ? path : null
   }
 
+  /** The picture id a finished picture job stored, or null. */
+  pictureOf(id: string): string | null {
+    if (!ID.test(id)) return null
+    const row = this.db.prepare(`SELECT image_id AS imageId FROM videos WHERE id = ? AND kind = 'picture' AND status = 'done' AND deleted_at IS NULL`).get(id) as { imageId: string | null } | undefined
+    return row?.imageId ?? null
+  }
+
+  /** The Video page's videos: never a film's own clips or pictures. Filtered before the limit, so it still shows `limit`. */
   list(limit = 50): VideoRow[] {
     const rows = this.db.prepare(`SELECT id, recipe_id AS recipeId, params, status, error, file_bytes AS fileBytes,
       created_at AS createdAt, started_at AS startedAt, finished_at AS finishedAt, kept
-      FROM videos WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?`).all(Math.min(Math.max(limit, 1), 200)) as Array<Omit<VideoRow, 'params' | 'kept'> & { params: string; kept: number }>
+      FROM videos WHERE deleted_at IS NULL AND film_id IS NULL AND kind = 'video' ORDER BY created_at DESC LIMIT ?`).all(Math.min(Math.max(limit, 1), 200)) as Array<Omit<VideoRow, 'params' | 'kept'> & { params: string; kept: number }>
     return rows.map((r) => ({ ...r, params: JSON.parse(r.params) as Record<string, unknown>, kept: r.kept !== 0 }))
   }
 
   /** Stars a video so clearUnkept leaves it alone, or takes the star off. */
   keep(id: string, kept: boolean): boolean {
-    if (!/^[0-9a-f]{32}$/.test(id)) return false
-    return this.db.prepare(`UPDATE videos SET kept = ? WHERE id = ? AND deleted_at IS NULL`).run(kept ? 1 : 0, id).changes > 0
+    if (!ID.test(id)) return false
+    return this.db.prepare(`UPDATE videos SET kept = ? WHERE id = ? AND deleted_at IS NULL AND film_id IS NULL AND kind = 'video'`).run(kept ? 1 : 0, id).changes > 0
   }
 
   /**
@@ -145,7 +170,7 @@ export class VideoJobs {
    * ones the page showed are named, so a video the person never saw is never cleared. Returns how many went.
    */
   clearUnkept(ids: string[]): number {
-    const row = this.db.prepare(`SELECT kept FROM videos WHERE id = ? AND deleted_at IS NULL`)
+    const row = this.db.prepare(`SELECT kept FROM videos WHERE id = ? AND deleted_at IS NULL AND film_id IS NULL AND kind = 'video'`)
     return ids.filter((id) => /^[0-9a-f]{32}$/.test(id) && (row.get(id) as { kept: number } | undefined)?.kept === 0 && this.delete(id)).length
   }
 
@@ -195,9 +220,26 @@ export class VideoJobs {
     return placed
   }
 
+  /** Queues a Video page video. Only the recipes in RECIPES can be named. */
   submit(recipeId: unknown, params: unknown): string {
     const recipe = findRecipe(recipeId)
     if (!recipe) throw new VideoRequestError('There is no recipe with that name.')
+    return this.enqueue(recipe, params, null)
+  }
+
+  /**
+   * Queues one of a film's pictures or shot clips. The Storyboard hands over the recipe itself (from its own list),
+   * never a name from the page; the row is the film's, out of reach of the Video page's methods.
+   */
+  submitFilm(recipe: Recipe, params: unknown, filmId: string): string {
+    if (!ID.test(filmId)) throw new VideoRequestError('That is not a film.')
+    const known = this.filmRecipes.get(recipe.id)
+    if (findRecipe(recipe.id) || (known && known !== recipe)) throw new VideoRequestError('That recipe name is already taken.')
+    this.filmRecipes.set(recipe.id, recipe)
+    return this.enqueue(recipe, params, filmId)
+  }
+
+  private enqueue(recipe: Recipe, params: unknown, filmId: string | null): string {
     const checked = validateParams(recipe.params, params)
     if (!checked.ok) throw new VideoRequestError(checked.errors.join('; '))
     for (const [name, spec] of Object.entries(recipe.params)) {
@@ -214,8 +256,8 @@ export class VideoJobs {
     // Seed 0 means "pick one": the real seed is stored so the same video can be made again.
     if (checked.values['seed'] === 0) checked.values['seed'] = randomInt(1, 2 ** 40)
     const id = randomBytes(16).toString('hex')
-    this.db.prepare(`INSERT INTO videos (id, recipe_id, params, status, created_at) VALUES (?, ?, ?, 'queued', ?)`)
-      .run(id, recipe.id, JSON.stringify(checked.values), Date.now())
+    this.db.prepare(`INSERT INTO videos (id, recipe_id, params, status, created_at, kind, film_id) VALUES (?, ?, ?, 'queued', ?, ?, ?)`)
+      .run(id, recipe.id, JSON.stringify(checked.values), Date.now(), recipe.output, filmId)
     this.queue.push(id)
     this.cardShare?.setVideoBusy(true)
     this.emit({ id, status: 'queued' })
@@ -231,7 +273,23 @@ export class VideoJobs {
     this.freedAt = performance.now()
   }
 
+  /** Stops a Video page video. A film's own jobs are stopped only through cancelFilmJob. */
   cancel(id: string): boolean {
+    if (!ID.test(id) || this.filmOf(id) !== null) return false
+    return this.stop(id)
+  }
+
+  /** Stops one of this film's jobs (the Storyboard's Stop, or a film being deleted). */
+  cancelFilmJob(id: string, filmId: string): boolean {
+    if (!ID.test(id) || !ID.test(filmId) || this.filmOf(id) !== filmId) return false
+    return this.stop(id)
+  }
+
+  private filmOf(id: string): string | null {
+    return (this.db.prepare(`SELECT film_id AS filmId FROM videos WHERE id = ?`).get(id) as { filmId: string | null } | undefined)?.filmId ?? null
+  }
+
+  private stop(id: string): boolean {
     const queuedAt = this.queue.indexOf(id)
     if (queuedAt >= 0) {
       this.queue.splice(queuedAt, 1)
@@ -256,10 +314,12 @@ export class VideoJobs {
   // The row is kept (soft delete, like artifacts) but the file goes: videos are large, and
   // the disk cap counts every file in the media folder.
   delete(id: string): boolean {
-    if (!/^[0-9a-f]{32}$/.test(id)) return false
+    if (!ID.test(id)) return false
     // Judged by the stored status, not by `running`: a finished job stays the running one for a
     // moment while the graphics memory is handed back, and its video can already be deleted.
-    const deleted = this.db.prepare(`UPDATE videos SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL AND status NOT IN ('queued', 'running')`)
+    // A film's own clips and pictures go only with the film (and its pictures with their own files).
+    const deleted = this.db.prepare(`UPDATE videos SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL AND status NOT IN ('queued', 'running')
+                                     AND film_id IS NULL AND kind = 'video'`)
       .run(Date.now(), id).changes > 0
     if (deleted) rmSync(join(this.mediaDir, `${id}.mp4`), { force: true })
     return deleted
@@ -292,8 +352,8 @@ export class VideoJobs {
   }
 
   private async run(id: string, start: { cancelled: boolean }): Promise<void> {
-    const row = this.db.prepare(`SELECT recipe_id AS recipeId, params FROM videos WHERE id = ?`).get(id) as { recipeId: string; params: string }
-    const recipe = findRecipe(row.recipeId)
+    const row = this.db.prepare(`SELECT recipe_id AS recipeId, params, film_id AS filmId FROM videos WHERE id = ?`).get(id) as { recipeId: string; params: string; filmId: string | null }
+    const recipe = row.filmId ? this.filmRecipes.get(row.recipeId) : findRecipe(row.recipeId)
     if (!recipe) return this.finish(id, 'failed', 'This recipe no longer exists.')
     const { comfyUrl, freeAfterJob } = this.settings()
     const checkedUrl = checkComfyUrl(comfyUrl)
@@ -323,7 +383,7 @@ export class VideoJobs {
     const outcome = await new Promise<Outcome>((resolve) => {
       let settled = false
       const job: Running = {
-        id, client, graph, promptId: null, socket: null, lastPreviewAt: 0, cancelled: false,
+        id, client, graph, output: recipe.output, promptId: null, socket: null, lastPreviewAt: 0, cancelled: false,
         settle: (o) => {
           if (settled) return
           settled = true
@@ -463,7 +523,7 @@ export class VideoJobs {
     while (this.running === job && job.promptId) {
       await new Promise((r) => setTimeout(r, POLL_MS))
       try {
-        if ((await job.client.outputs(job.promptId)).length > 0) return job.settle('success')
+        if ((await job.client.outputs(job.promptId, job.output)).length > 0) return job.settle('success')
       } catch {
         // ComfyUI busy or restarting: keep trying until the job timeout.
       }
@@ -471,12 +531,29 @@ export class VideoJobs {
   }
 
   private async collect(job: Running): Promise<void> {
-    const files = await job.client.outputs(job.promptId!)
+    if (job.output === 'picture') return this.collectPicture(job)
+    const files = await job.client.outputs(job.promptId!, 'video')
     if (files.length === 0) return this.finish(job.id, 'failed', 'ComfyUI finished but saved no video.')
     const raw = await job.client.download(files[0]!, MAX_VIDEO_BYTES)
     const clean = stripMp4Metadata(raw)
     if (!clean) return this.finish(job.id, 'failed', 'ComfyUI sent back something that is not an MP4 video.')
     writeFileSync(join(this.mediaDir, `${job.id}.mp4`), clean.data, { mode: 0o600 })
     this.finish(job.id, 'done', null, clean.data.length)
+  }
+
+  // A picture is kept like an uploaded one (stripped of its text chunks, under a new id), so later recipes take it by id.
+  private async collectPicture(job: Running): Promise<void> {
+    const files = await job.client.outputs(job.promptId!, 'picture')
+    if (files.length === 0) return this.finish(job.id, 'failed', 'ComfyUI finished but saved no picture.')
+    let raw: Buffer
+    try {
+      raw = await job.client.download(files[0]!, MAX_PICTURE_BYTES)
+    } catch {
+      return this.finish(job.id, 'failed', 'ComfyUI\'s picture could not be fetched, or was too large.')
+    }
+    const saved = this.images.saveBuffer(raw)
+    if (typeof saved === 'string') return this.finish(job.id, 'failed', `ComfyUI sent back something that is not a PNG picture (${saved}).`)
+    this.db.prepare(`UPDATE videos SET image_id = ? WHERE id = ?`).run(saved.id, job.id)
+    this.finish(job.id, 'done', null)
   }
 }
