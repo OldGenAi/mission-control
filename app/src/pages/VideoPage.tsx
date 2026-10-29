@@ -226,10 +226,12 @@ export const VideoPage: React.FC = () => {
     return () => window.clearInterval(again)
   }, [comfyReachable])
 
+  // Only a recipe this page offers: a Storyboard film's row names its own join, which has no form.
   const pickRecipe = (id: string) => {
     const next = recipes.find((r) => r.id === id)
+    if (!next) return
     setRecipeId(id)
-    if (next) setValues(startValues(next, loadSavedPicture(), seedLockRef.current))
+    setValues(startValues(next, loadSavedPicture(), seedLockRef.current))
   }
 
   // The lock is also kept in a ref: Continue reads it after reading a video, which can take a while.
@@ -588,7 +590,9 @@ export const VideoPage: React.FC = () => {
                     {continuing === v.id ? 'Reading the last frame...' : 'Continue'}
                   </button>
                 )}
-                <button onClick={() => makeAgain(v)} disabled={continuing !== null} style={{ ...linkButton('#67e8f9'), opacity: continuing !== null ? 0.5 : 1 }}>Use again</button>
+                {recipes.some((r) => r.id === v.recipeId) && (
+                  <button onClick={() => makeAgain(v)} disabled={continuing !== null} style={{ ...linkButton('#67e8f9'), opacity: continuing !== null ? 0.5 : 1 }}>Use again</button>
+                )}
                 <button onClick={() => void deleteVideo(v.id)} style={linkButton('#6B7280')}>Delete</button>
               </span>
             </div>

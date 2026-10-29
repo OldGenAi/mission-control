@@ -8,7 +8,7 @@ import type { VideoCast } from '../video/cast.js'
 import type { Film, FilmStore } from '../video/films.js'
 import type { FilmDirector } from '../video/film-director.js'
 import type { FilmHelper } from '../video/film-helper.js'
-import type { FfmpegTools } from '../video/ffmpeg.js'
+import { ffmpegMajor, type FfmpegTools } from '../video/ffmpeg.js'
 import type { RecipeParams, ParamValues } from '../video/recipe-types.js'
 
 function invalid(message: string): never {
@@ -67,7 +67,9 @@ export function registerVideoMethods(jobs: VideoJobs, cast: VideoCast, comfyUrl:
   registerMethod('video.status', async () => {
     const url = comfyUrl()
     // Found once at start (Storyboard spec 6.2): the page shows the path, and greys out Make film without it.
-    const ffmpegFound = ffmpeg ? { path: ffmpeg.ffmpeg, version: ffmpeg.version } : null
+    // An old release is pointed out, not refused: Ubuntu backports fixes without changing the number.
+    const major = ffmpeg ? ffmpegMajor(ffmpeg.version) : null
+    const ffmpegFound = ffmpeg ? { path: ffmpeg.ffmpeg, version: ffmpeg.version, old: major !== null && major < 7 } : null
     const checked = checkComfyUrl(url)
     if ('error' in checked) return { reachable: false, url, problem: checked.error, ffmpeg: ffmpegFound }
     const client = new ComfyClient(checked.url)
@@ -183,7 +185,6 @@ export function registerVideoMethods(jobs: VideoJobs, cast: VideoCast, comfyUrl:
 
   registerMethod('video.film.create', async (params) => refusals(() => ({ film: films.create(params['film']) })))
   registerMethod('video.film.update', async (params) => refusals(() => ({ film: films.update(params['id'], params['film']) })))
-  registerMethod('video.film.delete', async (params) => refusals(async () => ({ deleted: await films.delete(params['id']) })))
 
   registerMethod('video.film.cast.kind', async (params) => refusals(() => {
     films.setKind(params['filmId'], params['castId'], params['kind'])
@@ -245,6 +246,12 @@ export function registerFilmMakingMethods(director: FilmDirector, films: FilmSto
     else if (typeof role === 'string') await director.makePictures(params['filmId'], { ownerId, role })
     else invalid('Say which pictures to make.')
     return { queued: true }
+  }))
+
+  // Deleting a film stops its pictures first (a round may be running or waiting), then the store removes its files.
+  registerMethod('video.film.delete', async (params) => refusals(async () => {
+    await director.stop(params['id'])
+    return { deleted: await films.delete(params['id']) }
   }))
 
   registerMethod('video.film.make', async (params) => refusals(() => {

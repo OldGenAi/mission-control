@@ -67,7 +67,7 @@ export const VideoCast: React.FC<{
   }
 
   const remove = async (member: CastMember) => {
-    if (!window.confirm(`Take ${member.name} out of the cast? Videos already made are not affected.`)) return
+    if (!window.confirm(`Take ${member.name} out of the cast? Videos already made are not affected, and Storyboard films keep their own copy of ${member.name}.`)) return
     try {
       await gateway.request('video.cast.delete', { id: member.id })
       await load()

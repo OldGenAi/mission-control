@@ -7,6 +7,12 @@ import { followsOn, type Film, type FilmPicture, type Stage } from '../component
 interface FilmSummary { id: string; title: string; stage: Stage; seconds: number; look: string; thumbLink: string | null; updatedAt: number }
 interface CastMember { id: string; name: string; wording: string; thumb: string | null }
 interface Live { shotId?: string; step?: number; steps?: number; preview?: string }
+interface FfmpegFound { path: string; version: string; old: boolean }
+// The same words as the gateway's (film-director.ts): one install line per system.
+const NO_FFMPEG = 'Making a film needs ffmpeg. Install it (Ubuntu: sudo apt install ffmpeg; Mac: brew install ffmpeg; ' +
+  'Windows: winget install Gyan.FFmpeg, a third-party build), then restart Mission Control.'
+const REPLACES_FILM = 'This makes the film again in place of the one you have. The one you have is removed from the Video page, ' +
+  'unless you star it there first. Carry on?'
 
 const STAGES: Record<Stage, string> = {
   story: 'Story', plan: 'Planned', places: 'Round one pictures', shots: 'Round two pictures', making: 'Being made', done: 'Done', stopped: 'Stopped',
@@ -127,7 +133,8 @@ export const StoryboardPage: React.FC = () => {
   const [film, setFilm] = useState<Film | null>(null)
   const [links, setLinks] = useState<Record<string, string>>({})
   const [live, setLive] = useState<Live>({})
-  const [ffmpeg, setFfmpeg] = useState<{ path: string; version: string } | null | undefined>(undefined)
+  const [ffmpeg, setFfmpeg] = useState<FfmpegFound | null | undefined>(undefined)
+  const [comfyWarnings, setComfyWarnings] = useState<string[]>([])
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const filmIdRef = useRef<string | null>(null)
@@ -161,7 +168,12 @@ export const StoryboardPage: React.FC = () => {
   useEffect(() => {
     const loadFirst = async () => {
       await loadFilms()
-      try { setFfmpeg((await gateway.request<{ ffmpeg: { path: string; version: string } | null }>('video.status')).ffmpeg) } catch { setFfmpeg(null) }
+      try {
+        const status = await gateway.request<{ ffmpeg: FfmpegFound | null; warnings?: string[] }>('video.status')
+        setFfmpeg(status.ffmpeg)
+        // ComfyUI's own start-up advice (--disable-metadata among it), as on the Video page.
+        setComfyWarnings(status.warnings ?? [])
+      } catch { setFfmpeg(null) }
     }
     void loadFirst()
     // Debounced: a finished job sends a few events at once.
@@ -201,7 +213,20 @@ export const StoryboardPage: React.FC = () => {
   }
   const makePictures = (request: Record<string, unknown>) =>
     act(() => gateway.request('video.film.pictures.make', { filmId: film!.id, request }), 'Could not make the pictures.')
-  const choose = (pictureId: string) => act(() => gateway.request('video.film.pictures.choose', { filmId: film!.id, pictureId }), 'Could not choose that picture.')
+  const choose = (pictureId: string) => {
+    // A new master clears the pictures of every shot in that place: say so first.
+    const picture = film!.pictures.find((p) => p.id === pictureId)
+    const place = picture?.role === 'master' ? film!.places.find((p) => p.id === picture.ownerId) : undefined
+    const cleared = place?.masterId && film!.shots.some((s) => s.placeId === place.id && (s.startId || s.endId))
+    if (cleared && !window.confirm(`A new picture of ${place.name} clears the start and end pictures chosen for its shots, and they are made again. Carry on?`)) return
+    void act(() => gateway.request('video.film.pictures.choose', { filmId: film!.id, pictureId }), 'Could not choose that picture.')
+  }
+  const stop = () => act(() => gateway.request('video.film.stop', { filmId: film!.id }), 'Could not stop the film.')
+  // Making the film again replaces the joined film the person has: say so first.
+  const remake = (work: () => Promise<unknown>) => {
+    if (film!.videoId && !window.confirm(REPLACES_FILM)) return
+    void act(work, 'Could not start the film.')
+  }
   const deleteFilm = async () => {
     if (!film || !window.confirm(`Delete "${film.title}"? Its pictures and shots go for good. The finished film stays on the Video page.`)) return
     await act(() => gateway.request('video.film.delete', { id: film.id }), 'Could not delete the film.')
@@ -239,7 +264,8 @@ export const StoryboardPage: React.FC = () => {
   // ---- one film ----
   const making = film.stage === 'making'
   const picturesBeingMade = film.pictures.some((p) => p.status === 'queued' || p.status === 'running')
-  const candidates = (ownerId: string, role: string) => film.pictures.filter((p) => p.ownerId === ownerId && p.role === role)
+  // Pictures made from older words or an older place picture are never offered.
+  const candidates = (ownerId: string, role: string) => film.pictures.filter((p) => p.ownerId === ownerId && p.role === role && !p.stale)
   const roundOneDone = film.cast.every((c) => c.turnaroundId && c.faceId) && film.places.length > 0 && film.places.every((p) => p.masterId)
   const allPicturesChosen = film.shots.length > 0 && film.shots.every((s) => s.startId && (s.closeUp || s.endId))
   const canChoose = !making && ['places', 'shots', 'stopped', 'done'].includes(film.stage)
@@ -254,6 +280,7 @@ export const StoryboardPage: React.FC = () => {
         <button onClick={() => void deleteFilm()} disabled={making || busy} className="px-3 py-1 rounded text-xs ml-auto" style={button()}>Delete film</button>
       </div>
       {film.problem && <p className="text-xs" style={{ color: '#f87171' }}>{film.problem}</p>}
+      {comfyWarnings.map((w) => <p key={w} className="text-xs" style={{ color: '#fcd34d' }}>{w}</p>)}
       {error && <p className="text-xs" style={{ color: '#f87171' }}>{error}</p>}
 
       <StoryForm key={film.id} film={film} onSaved={() => void loadFilm()} onError={setError} />
@@ -265,7 +292,8 @@ export const StoryboardPage: React.FC = () => {
           <div className="flex items-center gap-3">
             <h3 className="text-xs font-medium text-gray-300">3. Pictures, round one: the characters and the places</h3>
             <span className="text-xs text-gray-500">{checkNote}</span>
-            <button onClick={() => void makePictures({ round: 'places' })} disabled={busy || making} className="px-3 py-1 rounded text-xs ml-auto" style={button(true)}>
+            {picturesBeingMade && <button onClick={() => void stop()} className="px-3 py-1 rounded text-xs ml-auto" style={button()}>Stop</button>}
+            <button onClick={() => void makePictures({ round: 'places' })} disabled={busy || making} className={`px-3 py-1 rounded text-xs ${picturesBeingMade ? '' : 'ml-auto'}`} style={button(true)}>
               {film.pictures.length === 0 ? 'Make the pictures' : 'Make the missing pictures'}
             </button>
           </div>
@@ -290,7 +318,8 @@ export const StoryboardPage: React.FC = () => {
         <div className="rounded-xl p-4 flex flex-col gap-4" style={card}>
           <div className="flex items-center gap-3">
             <h3 className="text-xs font-medium text-gray-300">4. Pictures, round two: how each shot starts and ends</h3>
-            <button onClick={() => void makePictures({ round: 'shots' })} disabled={busy || making} className="px-3 py-1 rounded text-xs ml-auto" style={button(true)}>
+            {picturesBeingMade && <button onClick={() => void stop()} className="px-3 py-1 rounded text-xs ml-auto" style={button()}>Stop</button>}
+            <button onClick={() => void makePictures({ round: 'shots' })} disabled={busy || making} className={`px-3 py-1 rounded text-xs ${picturesBeingMade ? '' : 'ml-auto'}`} style={button(true)}>
               {film.pictures.some((p) => p.ownerKind === 'shot') ? 'Make the missing pictures' : 'Make the pictures'}
             </button>
           </div>
@@ -317,10 +346,11 @@ export const StoryboardPage: React.FC = () => {
         <div className="rounded-xl p-4 flex flex-col gap-3" style={card}>
           <div className="flex items-center gap-3">
             <h3 className="text-xs font-medium text-gray-300">5. Make film</h3>
-            {ffmpeg === null && <span className="text-xs" style={{ color: '#fcd34d' }}>Making a film needs ffmpeg. Install it (Ubuntu: sudo apt install ffmpeg), then restart Mission Control.</span>}
+            {ffmpeg === null && <span className="text-xs" style={{ color: '#fcd34d' }}>{NO_FFMPEG}</span>}
+            {ffmpeg?.old && <span className="text-xs" style={{ color: '#fcd34d' }}>ffmpeg {ffmpeg.version} is an old release. Films still join; update it when you can, for its later fixes.</span>}
             {making || picturesBeingMade
-              ? <button onClick={() => void act(() => gateway.request('video.film.stop', { filmId: film.id }), 'Could not stop the film.')} className="px-3 py-1 rounded text-xs ml-auto" style={button()}>Stop</button>
-              : <button onClick={() => void act(() => gateway.request('video.film.make', { filmId: film.id }), 'Could not start the film.')} disabled={busy || !ffmpeg}
+              ? <button onClick={() => void stop()} className="px-3 py-1 rounded text-xs ml-auto" style={button()}>Stop</button>
+              : <button onClick={() => remake(() => gateway.request('video.film.make', { filmId: film.id }))} disabled={busy || !ffmpeg}
                   className="px-4 py-1.5 rounded text-xs ml-auto" style={{ ...button(true), opacity: busy || !ffmpeg ? 0.5 : 1 }}>
                   {film.shots.some((s) => s.clipId) ? 'Make film (carry on)' : 'Make film'}
                 </button>}
@@ -349,8 +379,8 @@ export const StoryboardPage: React.FC = () => {
                   {s.clipId && !current && <p className="text-xs" style={{ color: '#fcd34d' }}>Made from older words or pictures: Make film makes it again.</p>}
                   {!making && current && (film.stage === 'done' || film.stage === 'stopped') && (
                     <span className="flex gap-3 text-xs">
-                      <button onClick={() => void act(() => gateway.request('video.film.redo', { filmId: film.id, shotId: s.id, newSeed: false }), 'Could not make the shot again.')} disabled={busy} style={linkButton('#67e8f9')}>Make again</button>
-                      <button onClick={() => void act(() => gateway.request('video.film.redo', { filmId: film.id, shotId: s.id, newSeed: true }), 'Could not make the shot again.')} disabled={busy} style={linkButton('#67e8f9')}>Make again, a new variation</button>
+                      <button onClick={() => remake(() => gateway.request('video.film.redo', { filmId: film.id, shotId: s.id, newSeed: false }))} disabled={busy} style={linkButton('#67e8f9')}>Make again</button>
+                      <button onClick={() => remake(() => gateway.request('video.film.redo', { filmId: film.id, shotId: s.id, newSeed: true }))} disabled={busy} style={linkButton('#67e8f9')}>Make again, a new variation</button>
                     </span>
                   )}
                 </div>
