@@ -155,9 +155,11 @@ export function joinCommand(mediaDir: string, plan: JoinPlan, hasAudio: readonly
     const i = k + 1
     const length = clip.outFrame - clip.inFrame
     if (clip.transition === 'cut') {
+      // concat hands on a microsecond time base; a crossfade after it needs both sides at 1/24 again.
       chains.push(plan.sound
-        ? `[${video}][${audio}][v${i}][a${i}]concat=n=2:v=1:a=1[jv${i}][ja${i}]`
-        : `[${video}][v${i}]concat=n=2:v=1:a=0[jv${i}]`)
+        ? `[${video}][${audio}][v${i}][a${i}]concat=n=2:v=1:a=1[cv${i}][ja${i}]`
+        : `[${video}][v${i}]concat=n=2:v=1:a=0[cv${i}]`)
+      chains.push(`[cv${i}]settb=1/${FPS}[jv${i}]`)
       frames += length
     } else {
       const fade = seconds(clip.transitionFrames)

@@ -145,6 +145,18 @@ test('a real join with a crossfade and no sound', { skip: !tools }, async () => 
   assert.equal(s.some((x) => x.codec_type === 'audio'), false)
 })
 
+test('a real join with a cut and then a crossfade (as a film goes from one place to the next)', { skip: !tools }, async () => {
+  const media = mkdtempSync(join(tmpdir(), 'mc-ff-media-'))
+  makeClips(media)
+  const out = 'd'.repeat(32)
+  const clips = [...plan().clips, { videoId: A, inFrame: 0, outFrame: 97, transition: 'crossfade' as const, transitionFrames: 12 as const }]
+  for (const sound of [true, false]) {
+    const result = await joinFilm(tools!, media, plan({ sound, clips }), out, { timeoutMs: 120_000 })
+    assert.equal(result.frames, 97 + 96 + 97 - 12)
+    assert.equal(Number(streams(join(media, `${out}.mp4`)).find((x) => x.codec_type === 'video')!.nb_read_frames), result.frames)
+  }
+})
+
 test('a missing clip or a link instead of a file is refused', { skip: !tools || !unix }, async () => {
   const media = mkdtempSync(join(tmpdir(), 'mc-ff-media-'))
   makeClips(media)
