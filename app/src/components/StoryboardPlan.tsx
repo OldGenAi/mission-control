@@ -189,7 +189,7 @@ const KindBox: React.FC<{ film: Film; member: FilmCast; editable: boolean; onSav
     <label className="text-xs text-gray-300 flex items-center gap-2">
       {member.name} is a
       <input aria-label={`What ${member.name} is`} value={kind} maxLength={20} disabled={!editable} onChange={(e) => setKind(e.target.value)} onBlur={() => void save()}
-        placeholder="dog" className="px-2 py-1 rounded text-xs w-24" style={{ ...input, borderColor: member.kind ? undefined : '#fcd34d' }} />
+        placeholder="one word" className="px-2 py-1 rounded text-xs w-28" style={{ ...input, borderColor: member.kind ? undefined : '#fcd34d' }} />
     </label>
   )
 }
