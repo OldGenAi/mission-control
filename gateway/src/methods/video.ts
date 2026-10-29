@@ -7,6 +7,7 @@ import { VideoRequestError, listensBeyondThisComputer, type VideoJobs } from '..
 import type { VideoCast } from '../video/cast.js'
 import type { Film, FilmStore } from '../video/films.js'
 import type { FilmDirector } from '../video/film-director.js'
+import type { FilmHelper } from '../video/film-helper.js'
 import type { FfmpegTools } from '../video/ffmpeg.js'
 import type { RecipeParams, ParamValues } from '../video/recipe-types.js'
 
@@ -204,8 +205,33 @@ export function registerVideoMethods(jobs: VideoJobs, cast: VideoCast, comfyUrl:
   }))
 }
 
-// Making a film's pictures and the film itself, through the director: one job on the graphics card at a time.
-export function registerFilmMakingMethods(director: FilmDirector): void {
+// Planning with the local helper, and making a film's pictures and the film itself through the director (one job on
+// the graphics card at a time).
+export function registerFilmMakingMethods(director: FilmDirector, films: FilmStore, helper: FilmHelper): void {
+  // A running helper request per film, so Stop can abort it.
+  const planning = new Map<string, AbortController>()
+
+  // Plans the film's places and shots from its story. Returns { confirm: address } when the model server is on the
+  // local network and the person hasn't said yes to it yet; the page asks, then calls again with allowAddress.
+  registerMethod('video.film.plan', async (params) => refusals(async () => {
+    const replace = params['replace'] === true
+    const allowAddress = typeof params['allowAddress'] === 'string' ? params['allowAddress'] : undefined
+    const film = films.copyCastForPlan(params['filmId'])
+    if ((film.places.length > 0 || film.shots.length > 0) && !replace) invalid('This film already has a plan. Replace it?')
+    if (planning.has(film.id)) invalid('The helper is already planning this film.')
+    const stop = new AbortController()
+    planning.set(film.id, stop)
+    try {
+      const asked = await helper.plan({ story: film.story, seconds: film.seconds, look: film.look, cast: film.cast.map(({ name, wording }) => ({ name, wording })) },
+        { signal: stop.signal, ...(allowAddress ? { allowAddress } : {}) })
+      if ('confirm' in asked) return { confirm: asked.confirm }
+      films.replacePlan(film.id, asked.plan, replace)
+      return { film: films.get(film.id), warnings: asked.warnings }
+    } finally {
+      planning.delete(film.id)
+    }
+  }))
+
   // { round: 'places' | 'shots' } for a picture round, or { ownerId, role } for two more pictures (Make more).
   registerMethod('video.film.pictures.make', async (params) => refusals(async () => {
     const request = params['request']
@@ -223,6 +249,7 @@ export function registerFilmMakingMethods(director: FilmDirector): void {
   }))
 
   registerMethod('video.film.stop', async (params) => refusals(async () => {
+    if (typeof params['filmId'] === 'string') planning.get(params['filmId'])?.abort()
     await director.stop(params['filmId'])
     return { stopped: true }
   }))

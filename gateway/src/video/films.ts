@@ -30,6 +30,8 @@ const MAX_PROP = 300
 const MAX_ACTION = 600
 const MAX_POSE = 300
 const MAX_SEED = 2 ** 40
+/** The same limits for a plan from the story helper as for the person's own edits. */
+export const FIELD_LIMITS = { name: MAX_TITLE, description: MAX_PLACE_TEXT, keep: MAX_PLACE_TEXT, prop: MAX_PROP, action: MAX_ACTION, pose: MAX_POSE } as const
 const FILM_SECONDS = [30, 60, 90, 120]
 const LOOKS = ['realistic', 'cartoon']
 const JOINS = ['follows', 'fade_short', 'fade_long']
@@ -78,6 +80,12 @@ export interface FilmShot {
 export interface FilmPicture {
   id: string; ownerKind: OwnerKind; ownerId: string; role: string; jobId: string; status: string | null; imageId: string | null
   seed: number; checkState: string; checkNotes: string | null; createdAt: number
+}
+
+/** A story helper's plan once it has passed every check (film-helper.ts). */
+export interface CheckedPlan {
+  places: Array<{ name: string; description: string; keep: string; prop?: string }>
+  shots: Array<{ place: number; character: string; action: string; startPose: string; endPose: string; seconds: number; joins: string; closeUp: boolean }>
 }
 
 export interface FilmSummary { id: string; title: string; stage: FilmStage; seconds: number; look: string; thumbId: string | null; updatedAt: number }
@@ -413,6 +421,45 @@ export class FilmStore {
     const before = this.find(filmId)?.videoId ?? null
     this.db.prepare(`UPDATE films SET video_id = ?, stage = 'done', problem = NULL, updated_at = ? WHERE id = ?`).run(videoId, Date.now(), filmId)
     return before
+  }
+
+  /**
+   * A checked plan from the story helper becomes the film's places and shots, each saved through the same checks as
+   * the person's own edits, all or nothing. An existing plan is replaced only when the person said so (the page asks
+   * first), and only before pictures are made. Characters are found by the names the helper was given
+   * (copyCastForPlan, just before it was asked).
+   */
+  replacePlan(filmId: unknown, plan: CheckedPlan, replace: boolean): void {
+    const film = this.editable(filmId)
+    if (!EARLY_STAGES.has(film.stage)) throw new VideoRequestError('A film can be planned again only before its pictures are made. Start a new film for a new plan.')
+    const places = this.livePlaces(film.id)
+    const shots = this.liveShots(film.id)
+    if ((places.length > 0 || shots.length > 0) && !replace) throw new VideoRequestError('This film already has a plan. Replace it?')
+    this.db.transaction(() => {
+      const castByName = new Map((this.db.prepare(`SELECT cast_id AS castId, name FROM film_cast WHERE film_id = ?`).all(film.id) as Array<{ castId: string; name: string }>).map((c) => [c.name, c.castId]))
+      const now = Date.now()
+      this.db.prepare(`UPDATE film_shots SET deleted_at = ? WHERE film_id = ? AND deleted_at IS NULL`).run(now, film.id)
+      this.db.prepare(`UPDATE film_places SET deleted_at = ? WHERE film_id = ? AND deleted_at IS NULL`).run(now, film.id)
+      const placeIds = plan.places.map((p) => this.savePlace(film.id, { name: p.name, description: p.description, keep: p.keep, prop: p.prop }).id)
+      for (const s of plan.shots) {
+        this.saveShot(film.id, {
+          placeId: placeIds[s.place], castId: castByName.get(s.character), action: s.action, startPose: s.startPose,
+          endPose: s.endPose, seconds: s.seconds, joins: s.joins, closeUp: s.closeUp,
+        })
+      }
+    })()
+  }
+
+  /**
+   * Plan time: the film's copy of each character takes the cast's name and wording as they are now (spec 15 item 12),
+   * and from here on the film keeps its copy. Returns the film for the helper.
+   */
+  copyCastForPlan(filmId: unknown): Film {
+    const film = this.editable(filmId)
+    if (!EARLY_STAGES.has(film.stage)) throw new VideoRequestError('A film can be planned again only before its pictures are made. Start a new film for a new plan.')
+    const cast = this.db.prepare(`SELECT cast_id AS castId FROM film_cast WHERE film_id = ?`).all(film.id) as Array<{ castId: string }>
+    this.db.transaction(() => { for (const { castId } of cast) this.refreshCast(film.id, castId) })()
+    return this.get(film.id)!
   }
 
   /** Redo: the shot's clip is no longer current, made again with a new seed if asked. */
