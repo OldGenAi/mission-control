@@ -153,11 +153,13 @@ export function addingOrder<T extends { cast: { name: string }; pose: string }>(
 }
 
 /** Fine edit for a close-up's start picture (the fast editor ignores framing words). */
-export function closeUpPrompt(cast: FilmCast, pose: string, look: FilmLook): string {
+export function closeUpPrompt(cast: FilmCast, pose: string, place: FilmPlace, look: FilmLook): string {
   const name = field(cast.name)
-  // The place in picture 1 and the look named: without them the live test's close-up was a photo of a dog on a road.
+  // The place described, the character alone in it, and the look: without them the live test's close-up was a photo
+  // of a dog on a road, then a cartoon dog on a deck with people behind (hand test T10b).
   const style = look === 'cartoon' ? ` Draw ${name} and the place in the same hand-drawn cartoon style as picture 1.` : ''
-  return `A close-up at ${name}'s eye level of ${field(cast.wording)}, ${field(pose)}, in the place in picture 1, softly out of focus behind. ` +
+  return `A close-up at ${name}'s eye level of ${field(cast.wording)}, ${field(pose)}. ` +
+    `Behind ${name}, softly out of focus, is the place in picture 1: ${field(place.description)}. ${name} is the only one there. ` +
     `Picture 2 only shows what ${name} looks like.${style}`
 }
 
