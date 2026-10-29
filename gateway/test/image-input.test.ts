@@ -2,9 +2,10 @@
 // Pictures for image-to-video are judged by their contents, never their names.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readdirSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { crc32 } from 'node:zlib'
 import { ImageInputs, inspectImage, MAX_IMAGE_BYTES } from '../src/video/image-input.js'
 
 const SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
@@ -75,4 +76,26 @@ test('oversized or malformed data is refused before it is decoded or stored', ()
   assert.match(String(store.save('')), /no picture/)
   assert.match(String(store.save(123)), /no picture/)
   assert.deepEqual(readdirSync(dir), [])
+})
+
+test('pictures Mission Control made itself are kept only as stripped PNGs', () => {
+  const crcChunk = (type: string, data: Buffer) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length)
+    const body = Buffer.concat([Buffer.from(type, 'latin1'), data])
+    const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(body))
+    return Buffer.concat([len, body, crc])
+  }
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(640, 0); ihdr.writeUInt32BE(352, 4); ihdr[8] = 8; ihdr[9] = 2
+  const made = Buffer.concat([SIG, crcChunk('IHDR', ihdr), crcChunk('tEXt', Buffer.from('prompt\0secret words', 'latin1')),
+    crcChunk('IDAT', Buffer.from('x')), crcChunk('IEND', Buffer.alloc(0))])
+  const dir = mkdtempSync(join(tmpdir(), 'mc-images-'))
+  const store = new ImageInputs(dir)
+  const saved = store.saveBuffer(made)
+  if (typeof saved === 'string') assert.fail(saved)
+  assert.deepEqual(saved, { id: saved.id, type: 'png', width: 640, height: 352 })
+  assert.equal(readFileSync(join(dir, `${saved.id}.png`)).includes(Buffer.from('secret words')), false)
+  assert.match(String(store.saveBuffer(jpeg(640, 480))), /PNG/, 'only PNGs')
+  assert.match(String(store.saveBuffer(png(640, 480))), /damaged/, 'checksums are checked')
+  assert.match(String(store.saveBuffer(Buffer.alloc(MAX_IMAGE_BYTES + 1))), /larger than 11 MB/)
+  assert.deepEqual(readdirSync(dir), [`${saved.id}.png`])
 })
