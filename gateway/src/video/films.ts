@@ -16,6 +16,7 @@ import type Database from 'better-sqlite3'
 import { VideoRequestError } from './jobs.js'
 import { hasControlCharacter } from './params.js'
 import type { StoredImage } from './image-input.js'
+import { referenceIdFor } from './reference-cut.js'
 
 export const MAX_FILMS = 50
 export const MAX_PLACES = 8
@@ -209,9 +210,11 @@ export function slotBasis(film: Pick<Film, 'cast' | 'places' | 'shots' | 'look'>
   const shot = film.shots.find((s) => s.id === ownerId)
   const place = shot && film.places.find((p) => p.id === shot.placeId)
   if (!shot || !place) return null
-  const poses = shot.characters.map((c) => [c.castId, role === 'start' ? c.startPose : c.endPose])
+  // Each character's picture goes in as picture 2, cut out on its own; pictures made before that (with the whole
+  // picture, which got pasted in as well as drawn: hand test T10) are out of date.
+  const poses = shot.characters.map((c) => [c.castId, role === 'start' ? c.startPose : c.endPose, film.cast.find((m) => m.castId === c.castId)?.pictureId ?? null])
   // The place's keep words go into every pose edit (film-wording.ts keepLine).
-  return JSON.stringify([role, place.emptyId, place.keep, shot.closeUp, poses])
+  return JSON.stringify([role, place.emptyId, place.keep, shot.closeUp, poses, 'cut-out'])
 }
 
 // The characters column is written only by saveShot, as checked JSON.
@@ -884,6 +887,8 @@ export class FilmStore {
       for (const row of this.db.prepare(`SELECT ${column} AS id FROM ${table} WHERE film_id = ? AND ${column} IS NOT NULL`).all(filmId) as Array<{ id: string }>) ids.add(row.id)
     }
     for (const row of this.db.prepare(`SELECT image_id AS id FROM videos WHERE film_id = ? AND image_id IS NOT NULL`).all(filmId) as Array<{ id: string }>) ids.add(row.id)
+    // And its characters cut out on their own (reference-cut.ts): named only by jobs, or by none after a refused round.
+    for (const row of this.db.prepare(`SELECT picture_id AS id FROM film_cast WHERE film_id = ? AND picture_id IS NOT NULL`).all(filmId) as Array<{ id: string }>) ids.add(referenceIdFor(row.id))
     // And the pictures its jobs were made from (a sheet since replaced is named only there).
     for (const row of this.db.prepare(`SELECT params FROM videos WHERE film_id = ?`).all(filmId) as Array<{ params: string }>) {
       for (const value of Object.values(JSON.parse(row.params) as Record<string, unknown>)) if (typeof value === 'string' && ID.test(value)) ids.add(value)

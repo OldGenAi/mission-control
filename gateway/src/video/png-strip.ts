@@ -6,8 +6,10 @@
 //
 // IHDR must come first, every chunk's checksum must match, and nothing after IEND is kept. An animated PNG is
 // refused rather than cut down to its first frame.
+//
+// Also the plain 8-bit RGB pictures Mission Control writes and reads itself (a blank place, a character cut out).
 
-import { deflateSync } from 'node:zlib'
+import { deflateSync, inflateSync } from 'node:zlib'
 
 const SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 // The picture itself, and the two colour hints that are plain numbers.
@@ -41,15 +43,72 @@ function chunk(type: string, data: Buffer): Buffer {
 
 /** A plain grey picture of this size: what the first place of a film is drawn from (nobody in it to keep). */
 export function plainPng(width: number, height: number, grey: number): Buffer {
+  return rgbPng(width, height, Buffer.alloc(width * height * 3, grey))
+}
+
+/** A PNG of these pixels: 8-bit RGB, row after row, with nothing but the picture in it. */
+export function rgbPng(width: number, height: number, rgb: Buffer): Buffer {
+  if (rgb.length !== width * height * 3) throw new Error('rgbPng: the pixels don\'t fit the size')
   const header = Buffer.alloc(13)
   header.writeUInt32BE(width, 0)
   header.writeUInt32BE(height, 4)
   header[8] = 8 // bits per sample
   header[9] = 2 // RGB
-  const row = Buffer.alloc(1 + width * 3, grey)
-  row[0] = 0 // no filter
-  const pixels = deflateSync(Buffer.concat(Array.from({ length: height }, () => row)))
-  return Buffer.concat([SIGNATURE, chunk('IHDR', header), chunk('IDAT', pixels), chunk('IEND', Buffer.alloc(0))])
+  const rows = Buffer.alloc(height * (1 + width * 3))
+  for (let y = 0; y < height; y++) rgb.copy(rows, y * (1 + width * 3) + 1, y * width * 3, (y + 1) * width * 3) // filter 0
+  return Buffer.concat([SIGNATURE, chunk('IHDR', header), chunk('IDAT', deflateSync(rows)), chunk('IEND', Buffer.alloc(0))])
+}
+
+/**
+ * The pixels of an 8-bit RGB PNG that isn't interlaced (what ffmpeg writes when asked for rgb24), or null for any other
+ * kind or a damaged file. The data can't inflate past the size the header gives.
+ */
+export function readRgbPng(buf: Buffer): { width: number; height: number; rgb: Buffer } | null {
+  const sound = stripPng(buf)
+  if (!sound) return null
+  const width = sound.readUInt32BE(16)
+  const height = sound.readUInt32BE(20)
+  if (sound[24] !== 8 || sound[25] !== 2 || sound[26] !== 0 || sound[27] !== 0 || sound[28] !== 0) return null
+  if (width < 1 || height < 1 || width > 8192 || height > 8192) return null
+  const data: Buffer[] = []
+  for (let at = SIGNATURE.length; at + 12 <= sound.length;) {
+    const length = sound.readUInt32BE(at)
+    if (sound.toString('latin1', at + 4, at + 8) === 'IDAT') data.push(sound.subarray(at + 8, at + 8 + length))
+    at += 12 + length
+  }
+  const stride = width * 3
+  let rows: Buffer
+  try {
+    rows = inflateSync(Buffer.concat(data), { maxOutputLength: height * (1 + stride) })
+  } catch {
+    return null
+  }
+  if (rows.length !== height * (1 + stride)) return null
+  const rgb = Buffer.alloc(height * stride)
+  for (let y = 0; y < height; y++) {
+    const filter = rows[y * (1 + stride)]!
+    const line = rows.subarray(y * (1 + stride) + 1, (y + 1) * (1 + stride))
+    const out = y * stride
+    for (let i = 0; i < stride; i++) {
+      const left = i >= 3 ? rgb[out + i - 3]! : 0
+      const up = y > 0 ? rgb[out - stride + i]! : 0
+      const upLeft = y > 0 && i >= 3 ? rgb[out - stride + i - 3]! : 0
+      let add: number
+      if (filter === 0) add = 0
+      else if (filter === 1) add = left
+      else if (filter === 2) add = up
+      else if (filter === 3) add = (left + up) >> 1
+      else if (filter === 4) {
+        const p = left + up - upLeft
+        const pa = Math.abs(p - left)
+        const pb = Math.abs(p - up)
+        const pc = Math.abs(p - upLeft)
+        add = pa <= pb && pa <= pc ? left : pb <= pc ? up : upLeft
+      } else return null
+      rgb[out + i] = (line[i]! + add) & 0xff
+    }
+  }
+  return { width, height, rgb }
 }
 
 /** The picture without its metadata, or null when it isn't a sound, still PNG. */

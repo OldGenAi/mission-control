@@ -340,6 +340,26 @@ function tempName(folder: string, ext: string): string {
   return join(folder, `tmp-${randomBytes(16).toString('hex')}.${ext}`)
 }
 
+// The kinds of still picture Mission Control keeps (image-input.ts), each pinned to its own format and decoder.
+const PICTURE_INPUT = {
+  png: ['-f', 'png_pipe', '-c:v', 'png'], jpg: ['-f', 'jpeg_pipe', '-c:v', 'mjpeg'], webp: ['-f', 'webp_pipe', '-c:v', 'webp'],
+} as const
+const PICTURE_TIME_LIMIT_S = 20
+
+/** A picture in inputsDir by id, as an 8-bit RGB PNG whatever kind it is kept as, so its pixels can be read. */
+export async function pictureAsRgbPng(tools: FfmpegTools, inputsDir: string, id: string, ext: keyof typeof PICTURE_INPUT, maxBytes: number, options: RunOptions): Promise<Buffer> {
+  const input = ownFile(inputsDir, id, ext, 'The picture is missing.')
+  const outPath = tempName(inputsDir, 'png')
+  try {
+    await runFfmpeg(tools, ['-nostdin', '-hide_banner', '-v', 'error', '-timelimit', String(PICTURE_TIME_LIMIT_S),
+      '-protocol_whitelist', 'file', ...PICTURE_INPUT[ext], '-i', `file:${input}`, '-frames:v', '1', '-map_metadata', '-1',
+      '-fflags', '+bitexact', '-threads', String(THREADS), '-fs', String(maxBytes), '-f', 'image2', '-c:v', 'png', '-pix_fmt', 'rgb24', '-y', outPath], options)
+    return readFileSync(outPath)
+  } finally {
+    rmSync(outPath, { force: true })
+  }
+}
+
 /** Joins a film's shots into mediaDir/<outId>.mp4. Every clip is checked first; the result is checked before it is kept. */
 export async function joinFilm(tools: FfmpegTools, mediaDir: string, plan: JoinPlan, outId: string, options: RunOptions): Promise<{ frames: number; bytes: number }> {
   if (!ID.test(outId)) throw new FfmpegError('The film needs a Mission Control id.')
