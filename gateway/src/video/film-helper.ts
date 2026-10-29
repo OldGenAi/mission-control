@@ -24,6 +24,8 @@ const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]'])
 const NEGATIVE = /\b(no|not|without|never|absent)\b/i
 const FAST = /\b(run|runs|running|chase|chases|chasing|jump|jumps|jumping|fight|fights|grab|grabs|sprint|sprints|race|races)\b/i
 const INVISIBLE = /\p{Cf}/u
+// An end pose of a character on the way out of the picture (rule 5): the next shot without them is the story.
+const LEAVING = /\b(leav(es|ing)|exit(s|ing)?|walk(s|ing)? (away|off|out)|out of the (picture|frame|shot)|edge of the picture)\b/i
 const GAVE_UP = 'The helper couldn\'t plan this story. Try a shorter story, or add the shots yourself.'
 
 /**
@@ -34,7 +36,7 @@ const RULES = `You plan short films for Mission Control's Storyboard page. You t
 
 What the video model can and can't do (the rules come from real tests):
 1. Every shot happens in exactly one place, with the camera still. A shot never moves between places. Going through a door is always two shots: the first ends outside as the character steps through, the second starts inside with the character in the doorway.
-2. Each shot shows one, two or three characters from the cast list, together in that place. List every character on screen in the shot's "characters". Every one of them is on screen from the first moment of the shot to the last. A character who is in a place stays in every shot of that place, with a start and end pose, until the story says they leave; only a close-up shows one character on its own.
+2. Each shot shows one, two or three characters from the cast list, together in that place. List every character on screen in the shot's "characters". Every one of them is on screen from the first moment of the shot to the last. A character who is in a place stays in every shot of that place, with a start and end pose, until the story says they leave; only a close-up leaves the others out.
 3. Movement is calm and natural: walking, trotting, sitting, lying down, looking, sniffing, picking something up. No running, chasing, fighting, jumping, shaking or fast action. Ask for slow turns ("slowly turns round").
 4. Shot length matches the distance moved: 4 seconds for a few steps, 5 or 6 seconds for a short walk, 7 or 8 seconds to cross a room. Shots are 4 to 8 seconds long.
 5. Each character in a shot has its own start pose and end pose: where it is in the picture and what it is doing at the first and last moment, for example "standing on the path on the left of the picture, facing right" or "lying on the grass just to the right of Spot". Say where each one is, so they stand apart, and keep each one on the same side of the picture from start to end. The end pose must show the character, never an empty place. A character that leaves ends at the edge of the picture, walking away.
@@ -138,8 +140,8 @@ export function checkPlan(answer: unknown, film: HelperFilm): { problems: string
   })
 
   const names = new Set(film.cast.map((c) => c.name))
-  // Who is in each shot, for the scene check below.
-  const cast: Array<Set<string>> = []
+  // Who is in each shot, and how each ends it, for the scene check below.
+  const cast: Array<Map<string, string>> = []
   let total = 0
   shots.forEach((shot, i) => {
     const where = `shot ${i + 1}`
@@ -154,7 +156,8 @@ export function checkPlan(answer: unknown, film: HelperFilm): { problems: string
     if (characters.length > MAX_SHOT_CAST) problems.push(`${where}: more than ${MAX_SHOT_CAST} characters`)
     if (closeUp === true && characters.length > 1) problems.push(`${where}: a close-up shows one character`)
     const inShot = new Set<string>()
-    cast[i] = inShot
+    const endings = new Map<string, string>()
+    cast[i] = endings
     const poses: string[] = []
     for (const character of characters) {
       if (!isObject(character)) {
@@ -165,7 +168,10 @@ export function checkPlan(answer: unknown, film: HelperFilm): { problems: string
       const name = character['name']
       if (typeof name !== 'string' || !names.has(name)) problems.push(`${where}: "${String(name)}" is not in the cast`)
       else if (inShot.has(name)) problems.push(`${where}: ${name} is in the shot twice`)
-      else inShot.add(name)
+      else {
+        inShot.add(name)
+        endings.set(name, String(character['endPose'] ?? ''))
+      }
       checkText(character['startPose'], `${String(name)}'s start pose`, FIELD_LIMITS.pose, where, problems)
       if (closeUp === true) {
         if (character['endPose'] !== '') problems.push(`${where}: a close-up has an end pose`)
@@ -200,8 +206,8 @@ export function checkPlan(answer: unknown, film: HelperFilm): { problems: string
         const earlier = shots[j]
         if (!isObject(earlier) || earlier['place'] !== place) break
         if (earlier['closeUp'] === true) continue
-        for (const name of cast[j] ?? []) {
-          if (!inShot.has(name)) dropped.push(`Shot ${i + 1} leaves out ${name}, who is in shot ${j + 1} in the same place. If ${name} is still there, add ${name} to shot ${i + 1}.`)
+        for (const [name, ending] of cast[j] ?? []) {
+          if (!inShot.has(name) && !LEAVING.test(ending)) dropped.push(`Shot ${i + 1} leaves out ${name}, who is in shot ${j + 1} in the same place. If ${name} is still there, add ${name} to shot ${i + 1}.`)
         }
         break
       }
@@ -276,7 +282,14 @@ export class FilmHelper {
     // A plan that passes but drops someone from a scene (JB's live test) is kept, and the helper asked once more.
     let kept: { plan: CheckedPlan; warnings: string[]; dropped: number } | null = null
     for (let attempt = 1; attempt <= 2; attempt++) {
-      const content = await this.ask(server, host, messages, opts.signal)
+      let content: string
+      try {
+        content = await this.ask(server, host, messages, opts.signal)
+      } catch (err) {
+        // A second try that doesn't arrive leaves the first plan, which passed; Stop still stops.
+        if (kept && !opts.signal?.aborted) return { plan: kept.plan, warnings: kept.warnings }
+        throw err
+      }
       let parsed: unknown = null
       try { parsed = JSON.parse(content) } catch { /* checked below as "not a JSON object" */ }
       const checked = checkPlan(parsed, film)
@@ -289,7 +302,7 @@ export class FilmHelper {
         kept = answer
         messages.push({ role: 'assistant', content }, {
           role: 'user',
-          content: `Some shots leave out a character who is still in that place:\n- ${checked.dropped.join('\n- ')}\n` +
+          content: `Some shots leave out a character who is still in that place:\n- ${checked.dropped.map(unmarked).join('\n- ')}\n` +
             'Where they are still there, add them to the shot with their own start and end poses; if the story says they left, keep that shot as it is. Send the whole plan again.',
         })
         continue
@@ -302,7 +315,6 @@ export class FilmHelper {
         : ''
       messages.push({ role: 'assistant', content }, { role: 'user', content: `That plan has these problems. Send the whole plan again with them fixed:\n- ${checked.problems.join('\n- ')}${short}` })
     }
-    if (kept) return { plan: kept.plan, warnings: kept.warnings }
     throw new VideoRequestError(GAVE_UP)
   }
 
