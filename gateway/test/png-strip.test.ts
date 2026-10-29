@@ -4,7 +4,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { crc32 } from 'node:zlib'
-import { stripPng } from '../src/video/png-strip.js'
+import { plainPng, stripPng } from '../src/video/png-strip.js'
 import { readImageInfo } from '../src/video/image-input.js'
 
 const SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
@@ -53,4 +53,11 @@ test('damaged or odd files are refused', () => {
   assert.equal(stripPng(Buffer.concat([SIG, IHDR, animated, IDAT, IEND])), null, 'animated PNG')
   const huge = Buffer.alloc(12); huge.writeUInt32BE(0x7fffffff, 0); huge.write('IDAT', 4, 'latin1')
   assert.equal(stripPng(Buffer.concat([SIG, IHDR, huge])), null, 'a chunk longer than the file')
+})
+
+test('a plain picture is a sound PNG of the size asked for, kept whole by the strip', () => {
+  const png = plainPng(1392, 752, 200)
+  assert.equal(png.readUInt32BE(16), 1392)
+  assert.equal(png.readUInt32BE(20), 752)
+  assert.deepEqual(stripPng(png), png)
 })
