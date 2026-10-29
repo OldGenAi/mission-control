@@ -31,9 +31,9 @@ test('the pose edit says exactly one, keeps the place, and puts the cast wording
 
 test('masters, the empty master and the close-up follow the recipe', () => {
   assert.equal(firstMasterPrompt(GREEN, 'realistic'),
-    `Show a new place: ${GREEN.description}, wide shot at eye level. Photorealistic. Nobody in the picture, the place on its own.`)
+    `Show a new place: ${GREEN.description}, wide shot at eye level. Photorealistic. No people or animals.`)
   assert.equal(laterMasterPrompt(GREEN),
-    `Show a new place in the same world, with the same light and style: ${GREEN.description}, wide shot at eye level. Nobody in the picture, the place on its own.`)
+    `Show a new place in the same world, with the same light and style: ${GREEN.description}, wide shot at eye level. No people or animals.`)
   assert.equal(emptyMasterPrompt(GREEN),
     `Remove every person and animal from picture 1. Keep everything else exactly the same: same camera, same light, ${GREEN.keep}.`)
   assert.equal(closeUpPrompt(BESS, 'lying on the grass chewing the twig'),
