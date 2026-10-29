@@ -510,6 +510,22 @@ test('Stop in the middle of a chain leaves it as cancelled, never as a half-made
   assert.equal(s.films.get(film.id)!.pictures.filter((p) => p.ownerId === three.id && p.role === 'start' && p.status === 'done').length, 2)
 })
 
+test('a follows-on shot with different characters gets its own start pictures', async () => {
+  const s = setup()
+  const { film, green, three } = together(s)
+  const after = s.films.saveShot(film.id, {
+    placeId: green.id, characters: [{ castId: s.rex.id, startPose: 'lying on the right', endPose: 'sitting on the right' }],
+    action: 'Rex sits up', seconds: 4, joins: 'follows', closeUp: false,
+  })
+  s.films.moveShot(film.id, after.id, 1)
+  await placesChosen(s, film.id, [s.rex.id, s.nip.id, s.tom.id], green.id)
+  await s.director.makePictures(film.id, { round: 'shots' })
+  await s.finishAll()
+  const roles = s.films.get(film.id)!.pictures.filter((p) => p.ownerId === after.id).map((p) => p.role)
+  assert.deepEqual(roles, ['start', 'start', 'end', 'end'], 'the shot before has Nipper and Tom in its end picture too')
+  assert.ok(three)
+})
+
 test('the pose pictures need every character\'s kind, and say whose is missing before anything is queued', async () => {
   const s = setup()
   const { film, green } = together(s)
