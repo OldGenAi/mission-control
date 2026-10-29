@@ -76,6 +76,7 @@ function setup(opts: { shot?: Recipe | null } = {}) {
       return true
     },
     statusOf: (id) => jobs.statusOf(id),
+    pictureOf: (id) => jobs.pictureOf(id),
     savePicture: (buf) => jobs.savePicture(buf),
     addJoinedFilm: (id, bytes) => jobs.addJoinedFilm(id, bytes),
     removeFilmClip: (id, filmId) => jobs.removeFilmClip(id, filmId),
@@ -135,8 +136,11 @@ function setup(opts: { shot?: Recipe | null } = {}) {
     }
   }
 
-  const rex = cast.save({ name: 'Rex', wording: 'black and white border collie', imageId: jobs.uploadImage(PNG.toString('base64')).id })
-  return { db, mediaDir, jobs, cast, films, picture, submitted, events, joins, sheets, calls, rex, next, finishAll, active,
+  const castPicture = () => jobs.uploadImage(PNG.toString('base64')).id
+  const rex = cast.save({ name: 'Rex', wording: 'black and white border collie', imageId: castPicture() })
+  const nip = cast.save({ name: 'Nipper', wording: 'a mostly black collie with white paws', imageId: castPicture() })
+  const tom = cast.save({ name: 'Tom', wording: 'a man in his sixties with a flat tweed cap', imageId: castPicture() })
+  return { db, mediaDir, jobs, cast, films, picture, submitted, events, joins, sheets, calls, rex, nip, tom, next, finishAll, active,
     get director() { return director }, restart: () => { director = make(opts.shot === undefined ? SHOT : opts.shot); return director },
     setDiskUsage: (bytes: number | null) => { diskUsage = bytes } }
 }
@@ -145,13 +149,36 @@ type Setup = ReturnType<typeof setup>
 
 function planned(s: Setup) {
   const film = s.films.create({ title: 'The red door', story: 'Rex goes through the red door.', seconds: 30, look: 'realistic', sound: true, castIds: [s.rex.id] })
+  s.films.setKind(film.id, s.rex.id, 'dog')
   const garden = s.films.savePlace(film.id, { name: 'The garden', description: 'a small walled garden', keep: 'the red door stays shut' })
   const kitchen = s.films.savePlace(film.id, { name: 'The kitchen', description: 'a farmhouse kitchen', keep: 'the table stays by the window' })
+  const rex = { castId: s.rex.id, startPose: 'standing by the wall', endPose: 'standing at the door' }
   const shot = (placeId: string, joins: string, extra: Record<string, unknown> = {}) => s.films.saveShot(film.id, {
-    placeId, castId: s.rex.id, action: 'walks to the door', startPose: 'standing by the wall', endPose: 'standing at the door', seconds: 6, joins, closeUp: false, ...extra,
+    placeId, characters: [rex], action: 'walks to the door', seconds: 6, joins, closeUp: false, ...extra,
   })
-  const shots = [shot(garden.id, 'fade_short'), shot(garden.id, 'follows'), shot(kitchen.id, 'fade_long', { closeUp: true, seconds: 4, endPose: '' })]
+  const shots = [shot(garden.id, 'fade_short'), shot(garden.id, 'follows'), shot(kitchen.id, 'fade_long', { closeUp: true, seconds: 4, characters: [{ castId: s.rex.id, startPose: 'sitting' }] })]
   return { film, garden, kitchen, shots }
+}
+
+// A man and his two dogs in one place: one shot of all three (Nipper first), then a close-up of Rex.
+function together(s: Setup) {
+  const film = s.films.create({ title: 'Three', story: 'Tom and his dogs on the green.', seconds: 30, look: 'realistic', sound: true, castIds: [s.rex.id, s.nip.id, s.tom.id] })
+  for (const [member, kind] of [[s.rex, 'dog'], [s.nip, 'dog'], [s.tom, 'man']] as const) s.films.setKind(film.id, member.id, kind)
+  const green = s.films.savePlace(film.id, { name: 'The green', description: 'a village green', keep: 'the path stays dry' })
+  const who = (castId: string, side: string) => ({ castId, startPose: `standing on the ${side}`, endPose: `lying on the ${side}` })
+  const three = s.films.saveShot(film.id, {
+    placeId: green.id, characters: [who(s.nip.id, 'left'), who(s.rex.id, 'right'), who(s.tom.id, 'middle')],
+    action: 'they settle on the grass', seconds: 6, joins: 'follows', closeUp: false,
+  })
+  const closeUp = s.films.saveShot(film.id, { placeId: green.id, characters: [{ castId: s.rex.id, startPose: 'lying' }], action: 'looks up', seconds: 4, joins: 'fade_short', closeUp: true })
+  return { film, green, three, closeUp }
+}
+
+async function placesChosen(s: Setup, filmId: string, castIds: string[], placeId: string) {
+  await s.director.makePictures(filmId, { round: 'places' })
+  await s.finishAll()
+  for (const castId of castIds) for (const role of ['turnaround', 'face']) pick(s, filmId, castId, role)
+  pick(s, filmId, placeId, 'master')
 }
 
 const pick = (s: Setup, filmId: string, ownerId: string, role: string) => {
@@ -225,7 +252,8 @@ test('round two: start and end poses into each place, a follows-on shot only its
   const place = s.films.get(film.id)!.places
   assert.equal(jobs[0]!.params['image1'], place[0]!.emptyId, 'poses are added into the place on its own')
   assert.equal(jobs[0]!.params['image2'], s.films.get(film.id)!.cast[0]!.pictureId, 'picture 2 shows what Rex looks like')
-  assert.match(String(jobs[0]!.params['prompt']), /there is exactly one Rex in the whole picture/)
+  assert.match(String(jobs[0]!.params['prompt']), /^Add exactly one dog to picture 1: Rex, .*there is exactly one dog in the whole picture/)
+  assert.ok(s.films.get(film.id)!.pictures.every((p) => p.steps === 1), 'one character: one edit each')
   assert.match(String(jobs[6]!.params['prompt']), /^A close-up at Rex's eye level/)
   assert.equal(jobs[6]!.params['image1'], place[1]!.emptyId)
   assert.equal(s.films.get(film.id)!.stage, 'shots')
@@ -406,4 +434,125 @@ test('deleting a film while its pictures are being made stops the round', async 
   assert.equal(await s.films.delete(film.id), true)
   await s.director.idle()
   assert.equal(s.submitted.length, 2, 'nothing queued after the delete')
+})
+
+test('a pose of three characters is a chain of edits, one character each, made one job at a time (hand test T6)', async () => {
+  const s = setup()
+  const { film, green, three } = together(s)
+  await placesChosen(s, film.id, [s.rex.id, s.nip.id, s.tom.id], green.id)
+  const before = s.submitted.length
+  await s.director.makePictures(film.id, { round: 'shots' })
+  const jobs = await s.finishAll()
+  assert.equal(s.calls.maxActive, 1, 'never two jobs waiting at once')
+  const made = s.films.get(film.id)!
+  const cast = (id: string) => made.cast.find((c) => c.castId === id)!.pictureId
+  // Two start candidates and two end candidates for the three-shot, each three edits; two fine starts for the close-up.
+  assert.equal(jobs.length, 2 * 3 + 2 * 3 + 2)
+  assert.equal(s.submitted.length - before, jobs.length)
+  const chains = [jobs.slice(0, 3), jobs.slice(3, 6), jobs.slice(6, 9), jobs.slice(9, 12)]
+  for (const chain of chains) {
+    assert.deepEqual(chain.map((j) => j.recipeId), ['film-edit-fast', 'film-edit-fast', 'film-edit-fast'])
+    assert.equal(chain[0]!.params['image1'], made.places[0]!.emptyId, 'the first edit adds to the place on its own')
+    assert.deepEqual(chain.slice(1).map((j) => j.params['image1']), chain.slice(0, 2).map((j) => s.jobs.pictureOf(j.id)), 'each next edit adds to the picture before')
+    assert.deepEqual(chain.map((j) => j.params['image2']), [cast(s.nip.id), cast(s.rex.id), cast(s.tom.id)], 'picture 2 shows who is being added')
+    assert.equal(new Set(chain.map((j) => j.params['seed'])).size, 1, 'one seed for the whole chain')
+  }
+  const prompts = chains[0]!.map((j) => String(j.params['prompt']))
+  assert.match(prompts[0]!, /^Add exactly one dog to picture 1: Nipper, .*standing on the left\. .*there is exactly one dog in the whole picture/)
+  assert.match(prompts[1]!, /^Add exactly one more dog to picture 1: Rex, .*standing on the right\. .*Keep Nipper exactly as before.*There are exactly two dogs in the whole picture/)
+  assert.match(prompts[2]!, /^Add exactly one man to picture 1: Tom, .*standing on the middle\. .*Keep Nipper and Rex exactly as before, in the same places\. There are exactly two dogs and one man/)
+  assert.match(String(chains[2]![0]!.params['prompt']), /lying on the left/, 'the end chain uses the end poses')
+  assert.equal(jobs[12]!.recipeId, 'film-edit-fine')
+
+  // Each chain is one candidate, finished at its last edit, with that edit's picture; nothing half made to choose.
+  const candidates = made.pictures.filter((p) => p.ownerId === three.id)
+  assert.deepEqual(candidates.map((p) => [p.role, p.steps, p.step, p.status]), [
+    ['start', 3, 3, 'done'], ['start', 3, 3, 'done'], ['end', 3, 3, 'done'], ['end', 3, 3, 'done'],
+  ])
+  assert.deepEqual(candidates.map((p) => p.imageId), chains.map((c) => s.jobs.pictureOf(c[2]!.id)))
+  const halfMade = new Set(chains.flatMap((c) => c.slice(0, 2).map((j) => s.jobs.pictureOf(j.id))))
+  assert.ok(!made.pictures.some((p) => halfMade.has(p.imageId)))
+
+  // Make more makes whole chains too.
+  await s.director.makePictures(film.id, { ownerId: three.id, role: 'end' })
+  assert.equal((await s.finishAll()).length, 6)
+})
+
+test('a chain whose middle edit fails shows as failed, and the round carries on to the next picture', async () => {
+  const s = setup()
+  const { film, green, three } = together(s)
+  await placesChosen(s, film.id, [s.rex.id, s.nip.id, s.tom.id], green.id)
+  await s.director.makePictures(film.id, { round: 'shots' })
+  await s.next()
+  await s.next('failed', 'ComfyUI stopped with an error')
+  const rest = await s.finishAll()
+  assert.equal(rest.length, 3 + 2 * 3 + 2, 'the failed chain goes no further; every other chain is made')
+  const starts = s.films.get(film.id)!.pictures.filter((p) => p.ownerId === three.id && p.role === 'start')
+  assert.deepEqual(starts.map((p) => [p.status, p.step, p.imageId === null]), [['failed', 2, true], ['done', 3, false]])
+})
+
+test('Stop in the middle of a chain leaves it as cancelled, never as a half-made picture to choose', async () => {
+  const s = setup()
+  const { film, green, three } = together(s)
+  await placesChosen(s, film.id, [s.rex.id, s.nip.id, s.tom.id], green.id)
+  await s.director.makePictures(film.id, { round: 'shots' })
+  await s.next()
+  while (s.active() === 0) await new Promise((r) => setTimeout(r, 2))
+  await s.director.stop(film.id)
+  const count = s.submitted.length
+  await new Promise((r) => setTimeout(r, 30))
+  assert.equal(s.submitted.length, count, 'nothing more queued')
+  const start = s.films.get(film.id)!.pictures.find((p) => p.ownerId === three.id && p.role === 'start')!
+  assert.deepEqual([start.status, start.imageId], ['cancelled', null])
+  // Pressing the round again makes that slot's pictures again.
+  await s.director.makePictures(film.id, { round: 'shots' })
+  await s.finishAll()
+  assert.equal(s.films.get(film.id)!.pictures.filter((p) => p.ownerId === three.id && p.role === 'start' && p.status === 'done').length, 2)
+})
+
+test('the pose pictures need every character\'s kind, and say whose is missing before anything is queued', async () => {
+  const s = setup()
+  const { film, green } = together(s)
+  await placesChosen(s, film.id, [s.rex.id, s.nip.id, s.tom.id], green.id)
+  s.films.setKind(film.id, s.tom.id, '')
+  const count = s.submitted.length
+  await assert.rejects(s.director.makePictures(film.id, { round: 'shots' }), /what Tom is in one word/)
+  assert.equal(s.submitted.length, count)
+})
+
+test('Make film with three characters: the sheet holds the first one, the shot words name everyone', async () => {
+  const s = setup()
+  const { film, green, three, closeUp } = together(s)
+  await placesChosen(s, film.id, [s.rex.id, s.nip.id, s.tom.id], green.id)
+  await s.director.makePictures(film.id, { round: 'shots' })
+  await s.finishAll()
+  for (const [id, role] of [[three.id, 'start'], [three.id, 'end'], [closeUp.id, 'start']] as const) pick(s, film.id, id, role)
+  s.db.prepare(`UPDATE film_cast SET face_id = NULL WHERE film_id = ? AND cast_id = ?`).run(film.id, s.tom.id)
+  assert.throws(() => s.director.make(film.id), /Tom's turnaround and face/)
+  pick(s, film.id, s.tom.id, 'face')
+
+  s.director.make(film.id)
+  const shotJobs = await s.finishAll()
+  const made = s.films.get(film.id)!
+  const nipper = made.cast.find((c) => c.castId === s.nip.id)!
+  assert.deepEqual(s.sheets[0], { place: made.places[0]!.emptyId, turnaround: nipper.turnaroundId, face: nipper.faceId, placeWithCast: made.shots[0]!.startId })
+  const prompt = String(shotJobs[0]!.params['prompt'])
+  assert.match(prompt, /\*\*Top Row Right \(Character\):\*\* Nipper, a mostly black collie/)
+  assert.match(prompt, /The same place with Nipper, Rex and Tom in it\./)
+  assert.match(prompt, /Three characters together: Nipper, .*; Rex, .*; Tom, .*\. Nipper starts standing on the left, Rex starts standing on the right and Tom starts standing on the middle\. They settle on the grass\. Nipper ends lying on the left/)
+  // The close-up's sheet is the place's: it says who that sheet shows, not only Rex.
+  assert.match(String(shotJobs[1]!.params['prompt']), /Top Row Right \(Character\):\*\* Nipper, .* The same place with Nipper, Rex and Tom in it\. .* Rex, black and white border collie, starts lying, looks up\./)
+  assert.equal(made.stage, 'done')
+})
+
+test('deleting a film removes the half-way pictures of its chains too', async () => {
+  const s = setup()
+  const { film, green } = together(s)
+  await placesChosen(s, film.id, [s.rex.id, s.nip.id, s.tom.id], green.id)
+  await s.director.makePictures(film.id, { round: 'shots' })
+  const jobs = await s.finishAll()
+  const pictures = jobs.map((j) => s.jobs.pictureOf(j.id)!)
+  assert.ok(pictures.every((id) => s.jobs.hasImage(id)))
+  assert.equal(await s.films.delete(film.id), true)
+  assert.deepEqual(pictures.filter((id) => s.jobs.hasImage(id)), [])
 })
