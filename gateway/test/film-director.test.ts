@@ -50,7 +50,7 @@ function setup(opts: { shot?: Recipe | null } = {}) {
     cancelFilmJob: (id, filmId) => queue.cancelFilmJob(id, filmId),
   }
   const films = new FilmStore(db, media)
-  const picture = () => jobs.savePicture(PNG)
+  const picture = () => jobs.savePicture(PNG, { width: 1280, height: 704 })
   const submitted: Job[] = []
   const events: FilmEvent[] = []
   const joins: JoinPlan[] = []
