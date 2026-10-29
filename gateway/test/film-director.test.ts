@@ -574,6 +574,24 @@ test('a character whose picture has a busy background is refused with plain word
   assert.ok((await s.finishAll()).length > 0)
 })
 
+test('a pose chain adds whoever a pose names before the one who names them (live test: a stray animal drawn in to be Spot)', async () => {
+  const s = setup()
+  const { film, green, three } = together(s)
+  s.films.saveShot(film.id, {
+    id: three.id, placeId: green.id, action: 'they settle on the grass', seconds: 6, joins: 'follows', closeUp: false, characters: [
+      { castId: s.tom.id, startPose: 'sitting to the left of Rex', endPose: 'lying down' },
+      { castId: s.rex.id, startPose: 'lying in the middle', endPose: 'lying down' },
+      { castId: s.nip.id, startPose: 'lying on the right', endPose: 'lying down' },
+    ],
+  })
+  await placesChosen(s, film.id, [s.rex.id, s.nip.id, s.tom.id], green.id)
+  await s.director.makePictures(film.id, { ownerId: three.id, role: 'start' })
+  const chain = (await s.finishAll()).slice(0, 3)
+  const picture = (castId: string) => cutOf(s.films.get(film.id)!.cast.find((c) => c.castId === castId)!.pictureId!)
+  assert.deepEqual(chain.map((j) => j.params['image2']), [picture(s.rex.id), picture(s.tom.id), picture(s.nip.id)])
+  assert.match(String(chain[1]!.params['prompt']), /^Add exactly one man to picture 1: Tom, .*sitting to the left of Rex\. .*Keep Rex exactly as before/)
+})
+
 test('the quick refusals come before any character is cut out, and only the pictures still to make need one (review 5 S3)', async () => {
   const s = setup()
   const { film, green, closeUp } = together(s)
