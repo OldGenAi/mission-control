@@ -380,6 +380,7 @@ export const MIGRATIONS: Migration[] = [
         master_id    TEXT,
         empty_id     TEXT,
         sheet_id     TEXT,
+        sheet_basis  TEXT,
         deleted_at   INTEGER
       );
 
@@ -406,7 +407,8 @@ export const MIGRATIONS: Migration[] = [
       );
 
       -- Candidate pictures to choose from, with the picture check's verdict (from a fixed list, never model text). A
-      -- pose of several characters is a chain of edits: job_id is the chain's latest job, step of steps.
+      -- pose of several characters is a chain of edits: job_id is the chain's latest job, step of steps. basis is what
+      -- it was made from (the place picture, the characters, the words); once that changes it is out of date.
       CREATE TABLE IF NOT EXISTS film_pictures (
         id           TEXT PRIMARY KEY,
         film_id      TEXT NOT NULL,
@@ -416,6 +418,7 @@ export const MIGRATIONS: Migration[] = [
         job_id       TEXT NOT NULL,
         steps        INTEGER NOT NULL DEFAULT 1,
         step         INTEGER NOT NULL DEFAULT 1,
+        basis        TEXT,
         image_id     TEXT,
         seed         INTEGER NOT NULL,
         check_state  TEXT NOT NULL DEFAULT 'none',

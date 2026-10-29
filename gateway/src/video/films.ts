@@ -82,6 +82,8 @@ export interface ShotCharacter { castId: string; startPose: string; endPose: str
 export interface FilmPlace {
   id: string; position: number; name: string; description: string; keep: string; prop: string | null
   masterId: string | null; emptyId: string | null; sheetId: string | null
+  /** What the sheet was made from (film-director.ts), so a changed first shot gets a new sheet. */
+  sheetBasis: string | null
 }
 
 export interface FilmShot {
@@ -94,6 +96,8 @@ export interface FilmPicture {
   id: string; ownerKind: OwnerKind; ownerId: string; role: string; jobId: string; status: string | null; imageId: string | null
   /** A pose of several characters is made in steps, one character each; it is finished only after the last. */
   steps: number; step: number
+  /** Made from words, characters or a place picture that have changed since: never offered or chosen. */
+  stale: boolean
   seed: number; checkState: string; checkNotes: string | null; createdAt: number
 }
 
@@ -120,7 +124,7 @@ interface FilmRow { id: string; title: string; story: string; seconds: number; l
 
 const FILM_COLUMNS = 'id, title, story, seconds, look, sound, stage, problem, video_id AS videoId, created_at AS createdAt, updated_at AS updatedAt'
 const CAST_COLUMNS = 'cast_id AS castId, name, wording, kind, picture_id AS pictureId, turnaround_id AS turnaroundId, face_id AS faceId'
-const PLACE_COLUMNS = 'id, position, name, description, keep, prop, master_id AS masterId, empty_id AS emptyId, sheet_id AS sheetId'
+const PLACE_COLUMNS = 'id, position, name, description, keep, prop, master_id AS masterId, empty_id AS emptyId, sheet_id AS sheetId, sheet_basis AS sheetBasis'
 const SHOT_COLUMNS = `id, position, place_id AS placeId, characters, action, seconds, joins,
   close_up AS closeUp, seed, start_id AS startId, end_id AS endId, clip_id AS clipId, clip_seed AS clipSeed, revision, clip_rev AS clipRev`
 
@@ -184,6 +188,30 @@ export function followsOn(before: FilmShot | undefined, shot: FilmShot): boolean
     before.characters.length === shot.characters.length && shot.characters.every((c) => before.characters.some((b) => b.castId === c.castId))
 }
 
+/**
+ * What one slot's pictures are made from: the picture they edit, and the words and characters that go into them. A
+ * candidate made from anything else (a pose changed, a character swapped, a new master) is out of date. Null when the
+ * owner is gone.
+ */
+export function slotBasis(film: Pick<Film, 'cast' | 'places' | 'shots' | 'look'>, ownerKind: string, ownerId: string, role: string): string | null {
+  if (ownerKind === 'cast') {
+    const member = film.cast.find((c) => c.castId === ownerId)
+    return member ? JSON.stringify([role, member.pictureId, member.wording]) : null
+  }
+  if (ownerKind === 'place') {
+    const place = film.places.find((p) => p.id === ownerId)
+    if (!place) return null
+    // The first place is drawn from the first character's picture; later places from the first chosen master.
+    const from = place.id === film.places[0]!.id ? film.cast[0]?.pictureId ?? null : film.places[0]!.masterId
+    return JSON.stringify([role, from, place.description, film.look])
+  }
+  const shot = film.shots.find((s) => s.id === ownerId)
+  const place = shot && film.places.find((p) => p.id === shot.placeId)
+  if (!shot || !place) return null
+  const poses = shot.characters.map((c) => [c.castId, role === 'start' ? c.startPose : c.endPose])
+  return JSON.stringify([role, place.emptyId, shot.closeUp, poses])
+}
+
 // The characters column is written only by saveShot, as checked JSON.
 const toShot = (row: Omit<FilmShot, 'closeUp' | 'characters'> & { closeUp: number; characters: string }): FilmShot =>
   ({ ...row, characters: JSON.parse(row.characters) as ShotCharacter[], closeUp: row.closeUp !== 0 })
@@ -212,9 +240,12 @@ export class FilmStore {
     const pictures = this.db.prepare(`SELECT fp.id, fp.owner_kind AS ownerKind, fp.owner_id AS ownerId, fp.role, fp.job_id AS jobId,
       CASE WHEN fp.step < fp.steps AND v.status = 'done' THEN 'cancelled' ELSE v.status END AS status,
       COALESCE(fp.image_id, CASE WHEN fp.step = fp.steps AND v.status = 'done' AND v.deleted_at IS NULL THEN v.image_id END) AS imageId,
-      fp.steps, fp.step, fp.seed, fp.check_state AS checkState, fp.check_notes AS checkNotes, fp.created_at AS createdAt
-      FROM film_pictures fp LEFT JOIN videos v ON v.id = fp.job_id WHERE fp.film_id = ? ORDER BY fp.created_at, fp.rowid`).all(film.id) as FilmPicture[]
-    return { ...film, sound: film.sound !== 0, cast, places, shots, pictures }
+      fp.steps, fp.step, fp.basis, fp.seed, fp.check_state AS checkState, fp.check_notes AS checkNotes, fp.created_at AS createdAt
+      FROM film_pictures fp LEFT JOIN videos v ON v.id = fp.job_id WHERE fp.film_id = ? ORDER BY fp.created_at, fp.rowid`).all(film.id) as Array<Omit<FilmPicture, 'stale'> & { basis: string | null }>
+    const plan = { cast, places, shots, look: film.look }
+    // A candidate with no basis recorded is never out of date (only the director records one).
+    const current = pictures.map(({ basis, ...p }) => ({ ...p, stale: basis !== null && basis !== slotBasis(plan, p.ownerKind, p.ownerId, p.role) }))
+    return { ...film, sound: film.sound !== 0, cast, places, shots, pictures: current }
   }
 
   /** A new film at the story stage, with its own copy of each chosen cast member. */
@@ -376,6 +407,7 @@ export class FilmStore {
         .run(place.id, stored, action, seconds, joins, closeUp ? 1 : 0, fields['seed'] === undefined ? shot.seed : seed,
           startId, endId, changed ? 1 : 0, shot.id)
       this.touch(film.id)
+      this.syncFollowsOn(film.id)
       return this.shot(film.id, shot.id)
     }
     const count = this.liveShots(film.id).length
@@ -384,6 +416,7 @@ export class FilmStore {
     this.db.prepare(`INSERT INTO film_shots (id, film_id, position, place_id, characters, action, seconds, joins, close_up, seed)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, film.id, count, place.id, stored, action, seconds, joins, closeUp ? 1 : 0, seed)
     this.touch(film.id)
+    this.syncFollowsOn(film.id)
     return this.shot(film.id, id)
   }
 
@@ -409,6 +442,7 @@ export class FilmStore {
       this.db.prepare(`UPDATE film_shots SET deleted_at = ? WHERE id = ?`).run(Date.now(), shot.id)
       this.renumber('film_shots', this.liveShots(film.id))
       this.touch(film.id)
+      this.syncFollowsOn(film.id)
     })()
     return true
   }
@@ -418,22 +452,25 @@ export class FilmStore {
     const shot = this.shot(film.id, id)
     this.move('film_shots', this.liveShots(film.id), shot.id, position)
     this.touch(film.id)
+    this.syncFollowsOn(film.id)
   }
 
   /**
    * Records a picture job the director queued as a candidate for one of this film's places, shots or cast members.
    * The role must fit the owner, and the job must be this film's own picture job.
    */
-  addCandidate(filmId: unknown, input: { ownerKind: string; ownerId: unknown; role: string; jobId: unknown; seed: number; steps?: number; checkState?: 'none' | 'off' }): string {
+  addCandidate(filmId: unknown, input: {
+    ownerKind: string; ownerId: unknown; role: string; jobId: unknown; seed: number; steps?: number; basis?: string; checkState?: 'none' | 'off'
+  }): string {
     const film = this.film(filmId)
-    const ownerId = this.checkSlot(film.id, input.ownerKind, input.ownerId, input.role, 1)
+    const ownerId = this.checkSlot(film.id, input.ownerKind, input.ownerId, input.role, 1, input.basis)
     const jobId = this.pictureJob(film.id, input.jobId)
     if (!Number.isInteger(input.seed)) throw new VideoRequestError('The seed must be a whole number.')
     const steps = input.steps ?? 1
     if (!Number.isInteger(steps) || steps < 1 || steps > MAX_SHOT_CAST) throw new VideoRequestError(`A picture is made in 1 to ${MAX_SHOT_CAST} steps.`)
     const id = randomBytes(16).toString('hex')
-    this.db.prepare(`INSERT INTO film_pictures (id, film_id, owner_kind, owner_id, role, job_id, steps, seed, check_state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, film.id, input.ownerKind, ownerId, input.role, jobId, steps, input.seed, input.checkState ?? 'none', Date.now())
+    this.db.prepare(`INSERT INTO film_pictures (id, film_id, owner_kind, owner_id, role, job_id, steps, basis, seed, check_state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, film.id, input.ownerKind, ownerId, input.role, jobId, steps, input.basis ?? null, input.seed, input.checkState ?? 'none', Date.now())
     return id
   }
 
@@ -452,12 +489,16 @@ export class FilmStore {
    * Checks that `adding` more candidates may go to this slot (the role fits the owner, the owner is this film's, and
    * the slot stays within MAX_CANDIDATES), before the director queues their jobs. Returns the owner's id.
    */
-  checkSlot(filmId: unknown, ownerKind: string, ownerId: unknown, role: string, adding: number): string {
+  checkSlot(filmId: unknown, ownerKind: string, ownerId: unknown, role: string, adding: number, basis?: string): string {
     const film = this.film(filmId)
     if (ROLE_OWNER[role] === undefined || ROLE_OWNER[role] !== ownerKind) throw new VideoRequestError('That role doesn\'t fit what the picture is for.')
     const owner = this.ownerOf(film.id, ownerKind as OwnerKind, ownerId)
     const count = (this.db.prepare(`SELECT COUNT(*) AS n FROM film_pictures WHERE film_id = ? AND owner_id = ? AND role = ?`).get(film.id, owner, role) as { n: number }).n
     if (count + adding > MAX_CANDIDATES) throw new VideoRequestError(`There can be at most ${MAX_CANDIDATES} pictures to choose from here. Choose one of them.`)
+    // A picture planned before an edit would be made from the old words or picture.
+    if (basis !== undefined && basis !== slotBasis(this.get(film.id)!, ownerKind, owner, role)) {
+      throw new VideoRequestError('That picture was planned before this part of the film changed.')
+    }
     return owner
   }
 
@@ -471,8 +512,13 @@ export class FilmStore {
     this.db.prepare(`UPDATE film_places SET empty_id = master_id WHERE film_id = ? AND empty_id IS NULL AND master_id IS NOT NULL AND deleted_at IS NULL`).run(filmId)
   }
 
-  setSheet(filmId: string, placeId: string, imageId: string): void {
-    this.db.prepare(`UPDATE film_places SET sheet_id = ? WHERE id = ? AND film_id = ? AND deleted_at IS NULL`).run(imageId, placeId, filmId)
+  /** A place's reference sheet and what it was made from. A new sheet in place of an old one remakes the shots there. */
+  setSheet(filmId: string, placeId: string, imageId: string, basis: string): void {
+    this.db.transaction(() => {
+      const replaced = this.db.prepare(`SELECT sheet_id AS sheetId FROM film_places WHERE id = ? AND film_id = ?`).get(placeId, filmId) as { sheetId: string | null } | undefined
+      this.db.prepare(`UPDATE film_places SET sheet_id = ?, sheet_basis = ? WHERE id = ? AND film_id = ? AND deleted_at IS NULL`).run(imageId, basis, placeId, filmId)
+      if (replaced?.sheetId) this.db.prepare(`UPDATE film_shots SET revision = revision + 1 WHERE place_id = ? AND film_id = ? AND deleted_at IS NULL`).run(placeId, filmId)
+    })()
   }
 
   /** Records a finished clip, only if the shot hasn't changed since it was queued. False: throw the clip away. */
@@ -554,6 +600,9 @@ export class FilmStore {
       FROM film_pictures WHERE id = ? AND film_id = ?`).get(id, film.id) as { ownerKind: OwnerKind; ownerId: string; role: string; jobId: string; imageId: string | null; steps: number; step: number } | undefined : undefined
     if (!picture) throw new VideoRequestError('That picture is no longer in this film.')
     if (picture.step < picture.steps) throw new VideoRequestError('That picture is not finished yet.')
+    if (this.get(film.id)!.pictures.find((p) => p.id === id)!.stale) {
+      throw new VideoRequestError('That picture was made before this part of the film changed. Make new pictures for it.')
+    }
     const imageId = picture.imageId ?? this.media.pictureOf(picture.jobId)
     if (!imageId) throw new VideoRequestError('That picture is not finished yet.')
     const ownerId = this.ownerOf(film.id, picture.ownerKind, picture.ownerId)
@@ -574,19 +623,10 @@ export class FilmStore {
           this.db.prepare(`UPDATE film_shots SET start_id = ? WHERE id = ?`).run(imageId, ownerId)
           remake.run(ownerId)
           break
-        case 'end': {
+        case 'end':
           this.db.prepare(`UPDATE film_shots SET end_id = ? WHERE id = ?`).run(imageId, ownerId)
           remake.run(ownerId)
-          // A shot that follows on starts where this one ends.
-          const shots = this.liveShots(film.id)
-          const at = shots.findIndex((s) => s.id === ownerId)
-          const next = shots[at + 1]
-          if (next && followsOn(shots[at], next)) {
-            this.db.prepare(`UPDATE film_shots SET start_id = ? WHERE id = ?`).run(imageId, next.id)
-            remake.run(next.id)
-          }
           break
-        }
         case 'turnaround':
         case 'face': {
           this.db.prepare(`UPDATE film_cast SET ${picture.role === 'face' ? 'face_id' : 'turnaround_id'} = ? WHERE film_id = ? AND cast_id = ?`).run(imageId, film.id, ownerId)
@@ -595,6 +635,8 @@ export class FilmStore {
           break
         }
       }
+      // A shot that follows on starts where the one before it now ends.
+      this.syncFollowsOn(film.id)
       this.touch(film.id)
     })()
   }
@@ -769,6 +811,16 @@ export class FilmStore {
       throw new VideoRequestError('That picture job is not this film\'s.')
     }
     return jobId
+  }
+
+  // Every shot that follows on starts on the end picture of the shot before it, whatever was edited, moved or chosen.
+  private syncFollowsOn(filmId: string): void {
+    const shots = this.liveShots(filmId)
+    const set = this.db.prepare(`UPDATE film_shots SET start_id = ?, revision = revision + 1 WHERE id = ?`)
+    shots.forEach((shot, i) => {
+      const before = shots[i - 1]
+      if (followsOn(before, shot) && shot.startId !== before!.endId) set.run(before!.endId, shot.id)
+    })
   }
 
   private refuse(message: string): never {

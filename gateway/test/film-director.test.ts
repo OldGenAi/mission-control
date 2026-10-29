@@ -182,7 +182,7 @@ async function placesChosen(s: Setup, filmId: string, castIds: string[], placeId
 }
 
 const pick = (s: Setup, filmId: string, ownerId: string, role: string) => {
-  const candidate = s.films.get(filmId)!.pictures.find((p) => p.ownerId === ownerId && p.role === role && p.imageId)
+  const candidate = s.films.get(filmId)!.pictures.find((p) => p.ownerId === ownerId && p.role === role && p.imageId && !p.stale)
   assert.ok(candidate, `a finished ${role} candidate for ${ownerId}`)
   s.films.choose(filmId, candidate.id)
 }
@@ -312,10 +312,10 @@ test('Make film is refused without ffmpeg-ready pictures: the character\'s sheet
   assert.equal(s.films.get(p.film.id)!.stage, 'shots', 'nothing started')
 })
 
-test('without the shot recipe (hand test T1 still to come) Make film says so', async () => {
+test('without a shot recipe Make film says so', async () => {
   const s = setup({ shot: null })
   const p = await readyToMake(s)
-  assert.throws(() => s.director.make(p.film.id), /isn't ready/)
+  assert.throws(() => s.director.make(p.film.id), /no shot recipe/)
 })
 
 test('a failed shot stops the film at that shot with the queue\'s own words, and nothing is joined', async () => {
