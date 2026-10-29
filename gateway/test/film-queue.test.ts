@@ -201,15 +201,16 @@ test('a picture download over 16 MB is refused', async () => {
   } finally { await comfy.close() }
 })
 
-test('a film\'s outputs go to its own folder in ComfyUI\'s output, so they can be tidied by hand (spec 15.5)', async () => {
-  const comfy = await fakeComfy({ outputs: [{ filename: 'clip_00001_.mp4', subfolder: `mission-control/film-${FILM}`, type: 'output' }], body: MP4 })
+test('a film\'s outputs are named after it in ComfyUI\'s output folder, so they can be tidied by hand (spec 15.5)', async () => {
+  // One folder level only: ComfyUI on Windows reports a deeper folder with a backslash, which the output check refuses.
+  const comfy = await fakeComfy({ outputs: [{ filename: `film-${FILM}-x_00001_.mp4`, subfolder: 'mission-control', type: 'output' }], body: MP4 })
   const { jobs, finished } = setup(comfy.url)
   try {
     const named: Recipe = { ...CLIP, id: 'test-named', build: (_values, prefix) => ({ '9': { class_type: 'SaveVideo', inputs: { filename_prefix: prefix } } }) }
     const id = jobs.submitFilm(named, { prompt: 'x' }, FILM)
     assert.equal((await finished(id)).status, 'done')
     const graph = comfy.prompts[0] as Record<string, { inputs: Record<string, unknown> }>
-    assert.equal(graph['9']!.inputs['filename_prefix'], `mission-control/film-${FILM}/${id}`)
+    assert.equal(graph['9']!.inputs['filename_prefix'], `mission-control/film-${FILM}-${id}`)
   } finally { await comfy.close() }
 })
 

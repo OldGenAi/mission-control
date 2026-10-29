@@ -725,6 +725,68 @@ test('a new reference sheet for a place remakes the shots there; the sheet remem
   assert.equal(shots.length, 3)
 })
 
+test('a shot that stops following on gives back the start picture it borrowed (second review N-S1)', () => {
+  const s = setup()
+  const { film, garden, shots } = filmWithPlan(s)
+  setStage(s.db, film.id, 'shots')
+  const end = candidate(s, film.id, 'shot', shots[0]!.id, 'end')
+  s.films.choose(film.id, end.pictureId)
+  const second = s.films.get(film.id)!.shots[1]!
+  assert.equal(second.startId, end.imageId)
+  const fields = { id: second.id, placeId: garden.id, characters: second.characters, action: second.action, seconds: second.seconds, closeUp: false }
+  s.films.saveShot(film.id, { ...fields, joins: 'fade_short' })
+  assert.equal(s.films.get(film.id)!.shots[1]!.startId, null, 'it needs a start of its own now')
+  // Its own chosen start stays when it no longer follows on.
+  const own = candidate(s, film.id, 'shot', second.id, 'start')
+  s.films.choose(film.id, own.pictureId)
+  s.films.moveShot(film.id, second.id, 0)
+  assert.equal(s.films.get(film.id)!.shots[0]!.startId, own.imageId)
+})
+
+test('out-of-date pictures don\'t count towards the twelve, so a slot never runs out (second review N-S2)', () => {
+  const s = setup()
+  const { film, garden, shots } = filmWithPlan(s)
+  setStage(s.db, film.id, 'shots')
+  s.films.choose(film.id, candidate(s, film.id, 'place', garden.id, 'master').pictureId)
+  s.films.useMasterAsEmpty(film.id)
+  const shot = shots[0]!
+  const made = () => s.films.addCandidate(film.id, { ownerKind: 'shot', ownerId: shot.id, role: 'start', jobId: finishedPictureJob(s, film.id).jobId, seed: 1,
+    basis: slotBasis(s.films.get(film.id)!, 'shot', shot.id, 'start')! })
+  for (let i = 0; i < MAX_CANDIDATES; i++) made()
+  refused(() => made(), /at most 12/)
+  const rex = shot.characters[0]!
+  s.films.saveShot(film.id, { id: shot.id, placeId: garden.id, characters: [{ ...rex, startPose: 'a new start' }], action: shot.action, seconds: shot.seconds, joins: shot.joins, closeUp: false })
+  assert.ok(made(), 'the twelve old ones are out of date and no longer count')
+  // A failed picture doesn't count either.
+  const failed = finishedPictureJob(s, film.id, 'failed')
+  s.films.addCandidate(film.id, { ownerKind: 'shot', ownerId: shot.id, role: 'start', jobId: failed.jobId, seed: 1, basis: slotBasis(s.films.get(film.id)!, 'shot', shot.id, 'start')! })
+  for (let i = 0; i < MAX_CANDIDATES - 1; i++) made()
+  refused(() => made(), /at most 12/)
+})
+
+test('a place\'s "what stays the same" words are part of what its pose pictures are made from (second review N-S3)', () => {
+  const s = setup()
+  const { film, garden, shots } = filmWithPlan(s)
+  setStage(s.db, film.id, 'shots')
+  const before = slotBasis(s.films.get(film.id)!, 'shot', shots[0]!.id, 'start')
+  s.films.savePlace(film.id, { id: garden.id, name: 'The garden', description: 'a small walled garden', keep: 'the red door stays open' })
+  assert.notEqual(slotBasis(s.films.get(film.id)!, 'shot', shots[0]!.id, 'start'), before)
+})
+
+test('a sheet replaced or dropped takes its file with it, unless something else still uses it (second review nit 1)', () => {
+  const s = setup()
+  const { film, garden } = filmWithPlan(s)
+  setStage(s.db, film.id, 'shots')
+  const first = s.picture()
+  s.films.setSheet(film.id, garden.id, first, 'one')
+  const second = s.picture()
+  s.films.setSheet(film.id, garden.id, second, 'two')
+  assert.equal(s.jobs.hasImage(first), false)
+  s.films.choose(film.id, candidate(s, film.id, 'cast', s.rex.id, 'face').pictureId)
+  assert.equal(s.films.get(film.id)!.places[0]!.sheetId, null)
+  assert.equal(s.jobs.hasImage(second), false)
+})
+
 test('no AI tool can reach the film modules (harness fit, storyboard spec 16)', () => {
   const toolsDir = join(__dirname, '..', 'src', 'tools')
   const offenders = readdirSync(toolsDir, { recursive: true, encoding: 'utf8' })

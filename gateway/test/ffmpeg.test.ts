@@ -5,7 +5,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import {
@@ -180,7 +180,8 @@ test('a real reference sheet in the red door layout', { skip: !tools }, async ()
 
 test('the filter graph goes in a file only where ffmpeg can read option files (7.0 and newer); older ones get it inline', () => {
   for (const [version, yes] of [['8.0.1-3ubuntu2', true], ['7.1-full_build-www.gyan.dev', true], ['n7.0.2', true], ['N-118000-gdeadbeef', true],
-    ['2025-01-20-git-1234-full_build-www.gyan.dev', true], ['6.1.1-3ubuntu5', false], ['4.4.2-0ubuntu0.22.04.1', false], ['test', false]] as const) {
+    ['2025-01-20-git-1234-full_build-www.gyan.dev', true], ['2023-11-02-git-abcd-full_build-www.gyan.dev', false], ['2024-04-05-git-abcd', true],
+    ['6.1.1-3ubuntu5', false], ['4.4.2-0ubuntu0.22.04.1', false], ['test', false]] as const) {
     assert.equal(supportsOptionFiles(version), yes, version)
   }
   assert.equal(ffmpegMajor('6.1.1-3ubuntu5'), 6)
@@ -233,4 +234,26 @@ test('a leftover ffmpeg from before a crash is stopped, but only when its pid fi
   writeFileSync(pidFile, `${process.pid}\n${sleeper.ffmpeg}`)
   stopLeftoverFfmpeg(pidFile, sleeper)
   assert.equal(existsSync(pidFile), false)
+})
+
+test('a leftover is stopped only if that process started when the pid file was written, never a later one with the same number (second review N-S4)', { skip: process.platform !== 'linux' }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mc-ff-pid2-'))
+  const pidFile = join(dir, 'ffmpeg.pid')
+  const sleeper = { ffmpeg: realpathSync('/bin/sleep'), ffprobe: realpathSync('/bin/sleep'), version: 'test' }
+  const later = runFfmpeg(sleeper, ['30'], { timeoutMs: 60_000 })
+  await new Promise((r) => setTimeout(r, 200))
+  const pid = Number(execFileSync('pgrep', ['-n', '-f', `${sleeper.ffmpeg} 30`], { encoding: 'utf8' }).trim())
+  // A pid file an hour old naming that pid: a process started since then is someone else's.
+  writeFileSync(pidFile, `${pid}\n${sleeper.ffmpeg}`)
+  const hourAgo = new Date(Date.now() - 3600_000)
+  utimesSync(pidFile, hourAgo, hourAgo)
+  stopLeftoverFfmpeg(pidFile, sleeper)
+  const ended = await Promise.race([later.then(() => true, () => true), new Promise((r) => setTimeout(() => r(false), 500))])
+  assert.equal(ended, false, 'still running')
+  assert.equal(existsSync(pidFile), false)
+  process.kill(pid, 'SIGKILL')
+  await assert.rejects(later)
+  // Anything but a small regular file is ignored.
+  mkdirSync(pidFile)
+  stopLeftoverFfmpeg(pidFile, sleeper)
 })
