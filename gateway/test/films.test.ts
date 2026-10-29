@@ -358,6 +358,22 @@ test('a follows-on shot in the same place starts on the end picture chosen for t
   assert.equal(after.shots[2]!.startId, null, 'shot 3 fades to the kitchen')
 })
 
+test('a shot follows on from the picture before only with the same characters in it', () => {
+  const s = setup()
+  const film = s.films.create({ ...FILM, castIds: [s.rex.id, s.tom.id] })
+  const garden = s.films.savePlace(film.id, { name: 'The garden', description: 'a garden', keep: 'the door stays shut' })
+  const who = (castId: string) => ({ castId, startPose: 'standing', endPose: 'sitting' })
+  const shot = (characters: Array<ReturnType<typeof who>>) => s.films.saveShot(film.id, { placeId: garden.id, characters, action: 'they sit', seconds: 5, joins: 'follows', closeUp: false })
+  const [both, sameTwo, onlyRex] = [shot([who(s.rex.id), who(s.tom.id)]), shot([who(s.tom.id), who(s.rex.id)]), shot([who(s.rex.id)])]
+  setStage(s.db, film.id, 'shots')
+  const first = candidate(s, film.id, 'shot', both.id, 'end')
+  s.films.choose(film.id, first.pictureId)
+  assert.equal(s.films.get(film.id)!.shots[1]!.startId, first.imageId, 'the same two, in any order')
+  s.films.choose(film.id, candidate(s, film.id, 'shot', sameTwo.id, 'end').pictureId)
+  assert.equal(s.films.get(film.id)!.shots[2]!.startId, null, 'Tom has left, so the picture before no longer fits')
+  assert.equal(onlyRex.characters.length, 1)
+})
+
 test('choosing a character\'s turnaround or face drops the sheets it was on and remakes those shots', () => {
   const s = setup()
   const { film, garden, shots } = filmWithPlan(s)
