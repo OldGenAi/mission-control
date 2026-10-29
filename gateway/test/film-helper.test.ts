@@ -198,6 +198,32 @@ test('a character who drops out of a scene is pointed out: still in the place, b
   assert.deepEqual(checkPlan(moved, FILM).warnings.filter((w) => /leaves out/.test(w)), [])
 })
 
+test('a plan that drops someone from a scene goes back once to put them in; a worse second answer keeps the first (live test, 29 Oct)', async () => {
+  const dropped = structuredClone(GOOD)
+  dropped.shots[4]!.characters = [dropped.shots[4]!.characters[0]!]
+  dropped.shots[4]!.action = 'lies down by the stove'
+  assert.deepEqual(checkPlan(dropped, FILM).dropped, ['Shot 5 leaves out Rex, who is in shot 3 in the same place. If Rex is still there, add Rex to shot 5.'])
+  assert.deepEqual(checkPlan(GOOD, FILM).dropped, [])
+
+  const fixed = await fakeServer([answer(dropped), answer(GOOD)])
+  const good = await helper(fixed.url).h.plan(FILM)
+  assert.ok('plan' in good)
+  assert.equal(good.plan.shots[4]!.characters.length, 2, 'the second answer, with Rex back')
+  assert.equal(fixed.requests.length, 2)
+  const asked = (fixed.requests[1]!.body['messages'] as Array<{ content: string }>).at(-1)!.content
+  assert.match(asked, /Shot 5 leaves out Rex/)
+  assert.match(asked, /if the story says they left, keep that shot as it is/)
+  await fixed.close()
+
+  const worse = await fakeServer([answer(dropped), answer('not json at all')])
+  const first = await helper(worse.url).h.plan(FILM)
+  assert.ok('plan' in first)
+  assert.equal(first.plan.shots[4]!.characters.length, 1, 'the first answer, since the second was broken')
+  assert.match(first.warnings.join(' '), /leaves out Rex/, 'and the page still points it out')
+  assert.equal(worse.requests.length, 2, 'never more than one try more')
+  await worse.close()
+})
+
 test('redirects are refused, and a slow or oversized answer is cut off', async () => {
   const redirect = await fakeServer([{ status: 302, headers: { location: 'http://example.com/steal' } }])
   await assert.rejects(helper(redirect.url).h.plan(FILM), (err: unknown) => err instanceof VideoRequestError && /model server/.test(err.message))
