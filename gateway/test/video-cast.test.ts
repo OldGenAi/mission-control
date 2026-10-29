@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { openDatabase } from '../src/store/db.js'
 import { VideoCast, MAX_CAST, MAX_THUMB_BYTES } from '../src/video/cast.js'
 import { VideoJobs, VideoRequestError } from '../src/video/jobs.js'
+import { FilmStore } from '../src/video/films.js'
 import { registerVideoMethods } from '../src/methods/video.js'
 import { dispatch } from '../src/router.js'
 import type { ConnectedClient } from '../src/types.js'
@@ -139,7 +140,7 @@ test('the page reaches the cast through video.cast.*: refusals come back as plai
   const dir = mkdtempSync(join(tmpdir(), 'mc-cast-methods-'))
   const db = openDatabase(join(dir, 'test.sqlite'))
   const jobs = new VideoJobs(db, join(dir, 'media'), () => ({ comfyUrl: 'http://127.0.0.1:1', freeAfterJob: false }), () => {})
-  registerVideoMethods(jobs, new VideoCast(db, (id) => jobs.hasImage(id)), () => 'http://127.0.0.1:1')
+  registerVideoMethods(jobs, new VideoCast(db, (id) => jobs.hasImage(id)), () => 'http://127.0.0.1:1', new FilmStore(db, jobs), null)
   const client = {} as ConnectedClient
 
   await assert.rejects(dispatch('video.cast.save', { member: { name: '', wording: 'x' } }, client), { code: 'INVALID_PARAMS', message: 'The character needs a name.' })
