@@ -265,8 +265,12 @@ export const StoryboardPage: React.FC = () => {
   const making = film.stage === 'making'
   const picturesBeingMade = film.pictures.some((p) => p.status === 'queued' || p.status === 'running')
   // Pictures made from older words or an older place picture are never offered; the one already chosen still shows.
-  const candidates = (ownerId: string, role: string, chosen: string | null) =>
-    film.pictures.filter((p) => p.ownerId === ownerId && p.role === role && (!p.stale || (p.imageId !== null && p.imageId === chosen)))
+  // Failed or stopped ones go once the slot has any other picture, made or on its way.
+  const candidates = (ownerId: string, role: string, chosen: string | null) => {
+    const shown = film.pictures.filter((p) => p.ownerId === ownerId && p.role === role && (!p.stale || (p.imageId !== null && p.imageId === chosen)))
+    const ended = (p: FilmPicture) => p.status === 'failed' || p.status === 'cancelled'
+    return shown.some((p) => !ended(p)) ? shown.filter((p) => !ended(p)) : shown
+  }
   const roundOneDone = film.cast.every((c) => c.turnaroundId && c.faceId) && film.places.length > 0 && film.places.every((p) => p.masterId)
   const allPicturesChosen = film.shots.length > 0 && film.shots.every((s) => s.startId && (s.closeUp || s.endId))
   const canChoose = !making && ['places', 'shots', 'stopped', 'done'].includes(film.stage)
@@ -308,7 +312,7 @@ export const StoryboardPage: React.FC = () => {
           ))}
           {film.places.map((p, i) => (
             <Slot key={p.id} label={p.name} pictures={candidates(p.id, 'master', p.masterId)} chosen={p.masterId} links={links}
-              note={i > 0 && !film.places[0]!.masterId ? `Made after you choose ${film.places[0]!.name}, so the light and style carry over` : undefined}
+              note={i > 0 && !film.places[0]!.masterId ? `Made after you choose ${film.places[0]!.name}, so the light and style carry over` : 'Choose one with nobody in it: the characters are added later'}
               disabled={!canChoose || busy} onChoose={(id) => void choose(id)} onMore={() => void makePictures({ ownerId: p.id, role: 'master' })} />
           ))}
         </div>

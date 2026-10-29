@@ -122,6 +122,7 @@ export const VideoCast: React.FC<{
               {draft.imageId ? 'Change picture' : 'Choose picture'}
             </button>
             {uploading && <span className="text-xs text-gray-500">Checking the picture...</span>}
+            {!uploading && <span className="text-xs text-gray-500">Works best: a wide picture of just this character, whole body, on a plain background.</span>}
             {draft.thumb && <img src={draft.thumb} alt="" style={{ maxHeight: 48, maxWidth: 96, borderRadius: 6 }} />}
             {draft.imageId && !uploading && <button onClick={() => setDraft({ ...draft, imageId: null, thumb: null })} className="px-3 py-1 rounded text-xs" style={button()}>Remove</button>}
           </div>

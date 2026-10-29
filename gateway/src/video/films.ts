@@ -202,8 +202,8 @@ export function slotBasis(film: Pick<Film, 'cast' | 'places' | 'shots' | 'look'>
   if (ownerKind === 'place') {
     const place = film.places.find((p) => p.id === ownerId)
     if (!place) return null
-    // The first place is drawn from the first character's picture; later places from the first chosen master.
-    const from = place.id === film.places[0]!.id ? film.cast[0]?.pictureId ?? null : film.places[0]!.masterId
+    // The first place is drawn from a blank picture (film-director.ts); later places from the first chosen master.
+    const from = place.id === film.places[0]!.id ? 'blank' : film.places[0]!.masterId
     return JSON.stringify([role, from, place.description, film.look])
   }
   const shot = film.shots.find((s) => s.id === ownerId)
