@@ -8,6 +8,7 @@
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { stripPng } from './png-strip.js'
 
 export type ImageType = 'png' | 'jpeg' | 'webp'
 
@@ -101,6 +102,20 @@ export class ImageInputs {
     if (typeof info === 'string') return info
     const id = randomBytes(16).toString('hex')
     writeFileSync(join(this.dir, `${id}.${EXT[info.type]}`), buf, { mode: 0o600 })
+    return { id, ...info }
+  }
+
+  /** Keeps a picture Mission Control made itself (a ComfyUI picture job, a reference sheet): PNG only, stripped first. */
+  saveBuffer(buf: Buffer): (ImageInfo & { id: string }) | string {
+    if (buf.length > MAX_IMAGE_BYTES) return `the picture is larger than ${MAX_IMAGE_BYTES / 1024 ** 2} MB`
+    const kind = readImageInfo(buf)
+    if (typeof kind === 'string' || kind.type !== 'png') return 'the picture is not a PNG'
+    const clean = stripPng(buf)
+    if (!clean) return 'the PNG file is damaged'
+    const info = inspectImage(clean)
+    if (typeof info === 'string') return info
+    const id = randomBytes(16).toString('hex')
+    writeFileSync(join(this.dir, `${id}.png`), clean, { mode: 0o600 })
     return { id, ...info }
   }
 

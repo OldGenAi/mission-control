@@ -17,6 +17,8 @@ export interface Recipe {
   hardware: string
   /** Free graphics memory (GB) the recipe needs before it is started. */
   minFreeVramGb: number
+  /** What it makes: a video (an MP4 from ComfyUI's output folder) or a picture (a PNG, from its output or temp folder). */
+  output: 'video' | 'picture'
   params: RecipeParams
   /** Model files it loads, by ComfyUI model folder (checked before a job starts). */
   models: ReadonlyArray<{ folder: string; file: string }>
@@ -138,6 +140,7 @@ const ltx25TextToVideo: Recipe = {
   description: 'A short clip with sound from a written description.',
   hardware: LTX_HARDWARE,
   minFreeVramGb: 14,
+  output: 'video',
   params: LTX_PARAMS,
   models: LTX_MODELS,
   build: (values, outputPrefix) => buildLtx(values, outputPrefix),
@@ -149,6 +152,7 @@ const ltx25ImageToVideo: Recipe = {
   description: 'Brings a still picture to life as a short clip with sound. The picture becomes the first frame.',
   hardware: LTX_HARDWARE,
   minFreeVramGb: 14,
+  output: 'video',
   params: { image: { kind: 'image', required: true }, ...LTX_PARAMS },
   models: LTX_MODELS,
   // By the time the graph is built, the job has copied the picture into ComfyUI and put the
@@ -172,6 +176,7 @@ const wan22TextToVideo: Recipe = {
   description: 'A short silent clip from a written description, for smaller graphics cards.',
   hardware: 'Runs on NVIDIA cards with 8 GB of video memory or more (slower on smaller cards; not yet timed on one).',
   minFreeVramGb: 6,
+  output: 'video',
   params: {
     prompt: { kind: 'text', maxLength: 2000, required: true },
     negative: { kind: 'text', maxLength: 500, default: 'blurry, static, distorted, extra fingers, low quality, watermark, text' },

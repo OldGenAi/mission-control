@@ -60,7 +60,7 @@ export interface Migration {
   sql: string
 }
 
-const MIGRATIONS: Migration[] = [
+export const MIGRATIONS: Migration[] = [
   {
     version: 1,
     sql: `
@@ -326,6 +326,99 @@ const MIGRATIONS: Migration[] = [
         updated_at  INTEGER NOT NULL,
         deleted_at  INTEGER
       );
+    `,
+  },
+  {
+    version: 18,
+    sql: `
+      -- The Storyboard page (video/films.ts). A film's own pictures and shot clips are rows in videos with film_id set,
+      -- so the queue runs them like any other job; the Video page shows only rows with no film_id. Pictures and clips
+      -- are named by ids, never paths. Soft delete like videos.
+      ALTER TABLE videos ADD COLUMN kind TEXT NOT NULL DEFAULT 'video';
+      ALTER TABLE videos ADD COLUMN image_id TEXT;
+      ALTER TABLE videos ADD COLUMN film_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_videos_film ON videos(film_id);
+
+      CREATE TABLE IF NOT EXISTS films (
+        id          TEXT PRIMARY KEY,
+        title       TEXT NOT NULL,
+        story       TEXT NOT NULL,
+        seconds     INTEGER NOT NULL,
+        look        TEXT NOT NULL,
+        sound       INTEGER NOT NULL DEFAULT 1,
+        stage       TEXT NOT NULL,
+        problem     TEXT,
+        video_id    TEXT,
+        created_at  INTEGER NOT NULL,
+        updated_at  INTEGER NOT NULL,
+        deleted_at  INTEGER
+      );
+
+      -- The name and wording are copied from the cast when the film is planned, and the film keeps its own copy of the
+      -- cast picture, so editing or deleting a character later can't change or break a film.
+      CREATE TABLE IF NOT EXISTS film_cast (
+        film_id        TEXT NOT NULL,
+        cast_id        TEXT NOT NULL,
+        name           TEXT NOT NULL,
+        wording        TEXT NOT NULL,
+        picture_id     TEXT,
+        turnaround_id  TEXT,
+        face_id        TEXT,
+        PRIMARY KEY (film_id, cast_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS film_places (
+        id           TEXT PRIMARY KEY,
+        film_id      TEXT NOT NULL,
+        position     INTEGER NOT NULL,
+        name         TEXT NOT NULL,
+        description  TEXT NOT NULL,
+        keep         TEXT NOT NULL,
+        prop         TEXT,
+        master_id    TEXT,
+        empty_id     TEXT,
+        sheet_id     TEXT,
+        deleted_at   INTEGER
+      );
+
+      -- revision goes up on every edit or choice; a clip finished for an older revision is thrown away.
+      CREATE TABLE IF NOT EXISTS film_shots (
+        id          TEXT PRIMARY KEY,
+        film_id     TEXT NOT NULL,
+        position    INTEGER NOT NULL,
+        place_id    TEXT NOT NULL,
+        cast_id     TEXT NOT NULL,
+        action      TEXT NOT NULL,
+        start_pose  TEXT NOT NULL,
+        end_pose    TEXT,
+        seconds     INTEGER NOT NULL,
+        joins       TEXT NOT NULL,
+        close_up    INTEGER NOT NULL DEFAULT 0,
+        seed        INTEGER NOT NULL,
+        start_id    TEXT,
+        end_id      TEXT,
+        clip_id     TEXT,
+        clip_seed   INTEGER,
+        revision    INTEGER NOT NULL DEFAULT 0,
+        clip_rev    INTEGER,
+        deleted_at  INTEGER
+      );
+
+      -- Candidate pictures to choose from, with the picture check's verdict (from a fixed list, never model text).
+      CREATE TABLE IF NOT EXISTS film_pictures (
+        id           TEXT PRIMARY KEY,
+        film_id      TEXT NOT NULL,
+        owner_kind   TEXT NOT NULL,
+        owner_id     TEXT NOT NULL,
+        role         TEXT NOT NULL,
+        job_id       TEXT NOT NULL,
+        image_id     TEXT,
+        seed         INTEGER NOT NULL,
+        check_state  TEXT NOT NULL DEFAULT 'none',
+        check_notes  TEXT,
+        created_at   INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_film_pictures_owner ON film_pictures(film_id, owner_id, role);
     `,
   },
 ]

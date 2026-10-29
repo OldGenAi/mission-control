@@ -26,7 +26,8 @@ export interface ComfyStats {
   device: { name: string; vramTotal: number; vramFree: number } | null
 }
 
-export interface ComfyOutputFile { filename: string; subfolder: string; type: 'output' }
+// 'temp' is where ComfyUI's PreviewImage saves; it clears that folder when it restarts.
+export interface ComfyOutputFile { filename: string; subfolder: string; type: 'output' | 'temp' }
 
 export type ComfyMessage =
   | { type: 'progress'; promptId: string; value: number; max: number; node: string | null }
@@ -209,8 +210,11 @@ export class ComfyClient {
     await this.tryPost('/interrupt', { prompt_id: promptId })
   }
 
-  /** The video files a finished job saved. */
-  async outputs(promptId: string): Promise<ComfyOutputFile[]> {
+  /**
+   * The files of the kind a recipe makes that a finished job saved: MP4 videos from the output folder, or PNG pictures
+   * from the output or temp folder. Anything else is ignored.
+   */
+  async outputs(promptId: string, kind: 'video' | 'picture' = 'video'): Promise<ComfyOutputFile[]> {
     const { status, value } = await this.json(`/history/${encodeURIComponent(promptId)}`)
     const entry = status === 200 && isRecord(value) ? value[promptId] : undefined
     if (!isRecord(entry) || !isRecord(entry.outputs)) return []
@@ -221,13 +225,15 @@ export class ComfyClient {
         const items = nodeOutput[key]
         if (!Array.isArray(items)) continue
         for (const item of items) {
-          if (!isRecord(item) || item.type !== 'output') continue
+          if (!isRecord(item)) continue
+          const type = item.type === 'output' || (kind === 'picture' && item.type === 'temp') ? item.type : null
+          if (!type) continue
           const filename = str(item.filename)
           const subfolder = typeof item.subfolder === 'string' ? item.subfolder : ''
           if (!filename || !SAFE_FILE.test(filename) || filename.includes('..') || !SAFE_SUBFOLDER.test(subfolder)) continue
-          // Mission Control keeps and strips MP4 only.
-          if (!/\.mp4$/i.test(filename)) continue
-          files.push({ filename, subfolder, type: 'output' })
+          // Mission Control keeps and strips MP4 videos and PNG pictures only.
+          if (!(kind === 'video' ? /\.mp4$/i : /\.png$/i).test(filename)) continue
+          files.push({ filename, subfolder, type })
         }
       }
     }
