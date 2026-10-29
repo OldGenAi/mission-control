@@ -13,6 +13,7 @@ import { ChannelsPage } from "./pages/ChannelsPage"
 import { MonitorPage } from "./pages/MonitorPage"
 import { ArtifactsPage } from "./pages/ArtifactsPage"
 import { VideoPage } from "./pages/VideoPage"
+import { StoryboardPage } from "./pages/StoryboardPage"
 import { HealthPage } from "./pages/HealthPage"
 
 // ---------- breadcrumb -------------------------------------------
@@ -77,6 +78,7 @@ function Shell() {
 
             <Route path="/artifacts" element={<ArtifactsPage />} />
             <Route path="/video" element={<VideoPage />} />
+            <Route path="/storyboard" element={<StoryboardPage />} />
 
             <Route path="/agents"   element={<AgentsPage />} />
             <Route path="/sessions" element={<SessionsPage />} />
