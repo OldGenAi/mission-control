@@ -9,7 +9,7 @@ import { join } from 'path'
 import type Database from 'better-sqlite3'
 import type WebSocket from 'ws'
 import { ComfyClient, checkComfyUrl, listensBeyondThisComputer, type ComfyMessage } from './comfyui.js'
-import { ImageInputs, type ImageInfo } from './image-input.js'
+import { ImageInputs, type ImageInfo, type StoredImage } from './image-input.js'
 import { stripMp4Metadata } from './mp4-strip.js'
 import { validateParams } from './params.js'
 import { findRecipe, nodeClasses, type ComfyGraph, type Recipe } from './recipes.js'
@@ -19,6 +19,7 @@ const JOB_TIMEOUT_MS = 30 * 60 * 1000
 const MAX_VIDEO_BYTES = 512 * 1024 * 1024
 const MAX_PICTURE_BYTES = 16 * 1024 * 1024
 const ID = /^[0-9a-f]{32}$/
+const TEMP_FILE = /^tmp-[0-9a-f]{32}\.(mp4|png|filter)$/
 const MAX_QUEUED = 10
 const MAX_MEDIA_BYTES = 50 * 1024 ** 3
 const PREVIEW_MIN_INTERVAL_MS = 250
@@ -123,6 +124,8 @@ export class VideoJobs {
     // A job can't survive a restart (ComfyUI may still finish it, but nothing is listening).
     db.prepare(`UPDATE videos SET status = 'failed', error = 'Mission Control restarted while this was running.', finished_at = ?
                 WHERE status IN ('queued', 'running')`).run(Date.now())
+    // Nor can an ffmpeg run: whatever it left half made goes.
+    for (const path of this.tempFiles()) rmSync(path, { force: true })
   }
 
   /** A finished Video page video's file. A film's own clips and pictures are never found here (see filmFilePath). */
@@ -179,13 +182,20 @@ export class VideoJobs {
     return MAX_MEDIA_BYTES
   }
 
-  /** Bytes used by finished videos and uploaded pictures in the media folder. */
+  /** Bytes used by finished videos, pictures and ffmpeg's work in progress in the media folder. */
   diskUsage(): number {
     let total = this.images.diskUsage()
     for (const name of readdirSync(this.mediaDir)) {
       if (/^[0-9a-f]{32}\.mp4$/.test(name)) total += statSync(join(this.mediaDir, name)).size
     }
+    for (const path of this.tempFiles()) total += statSync(path).size
     return total
+  }
+
+  // The temp files ffmpeg.ts names while it joins a film or lays out a sheet (tmp-<32 hex>.<ext>).
+  private tempFiles(): string[] {
+    return [this.mediaDir, join(this.mediaDir, 'inputs')].flatMap((dir) =>
+      readdirSync(dir).filter((name) => TEMP_FILE.test(name)).map((name) => join(dir, name)))
   }
 
   /** Keeps a picture for image-to-video, after checking it. */
@@ -201,6 +211,31 @@ export class VideoJobs {
   /** True when a picture with this id has been uploaded and is still kept. */
   hasImage(id: unknown): boolean {
     return this.images.find(id) !== null
+  }
+
+  findImage(id: unknown): StoredImage | null {
+    return this.images.find(id)
+  }
+
+  /** A copy of a stored picture under a new id (the film store's copy of a cast picture). */
+  copyImage(id: string): string | null {
+    return this.images.copy(id)
+  }
+
+  /** Removes a stored picture. The film store calls it only once no live row names the picture. */
+  removeImage(id: string): void {
+    this.images.remove(id)
+  }
+
+  /** Soft-deletes a deleted film's finished clips and picture jobs, and removes the clips' files. */
+  deleteFilmRows(filmId: string): void {
+    if (!ID.test(filmId)) return
+    const rows = this.db.prepare(`SELECT id, kind FROM videos WHERE film_id = ? AND deleted_at IS NULL AND status NOT IN ('queued', 'running')`).all(filmId) as Array<{ id: string; kind: string }>
+    const remove = this.db.prepare(`UPDATE videos SET deleted_at = ? WHERE id = ?`)
+    for (const row of rows) {
+      remove.run(Date.now(), row.id)
+      if (row.kind === 'video') rmSync(join(this.mediaDir, `${row.id}.mp4`), { force: true })
+    }
   }
 
   // Copies each picture the job uses into ComfyUI and swaps its id for the name ComfyUI gave it.

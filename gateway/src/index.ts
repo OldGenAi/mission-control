@@ -38,10 +38,12 @@ import { registerInstancesMethods } from './methods/instances.js'
 import { registerVideoMethods } from './methods/video.js'
 import { VideoJobs } from './video/jobs.js'
 import { VideoCast } from './video/cast.js'
+import { FilmStore } from './video/films.js'
+import { findFfmpeg } from './video/ffmpeg.js'
 import { CardShare } from './providers/card-share.js'
 import { lmStudioServer } from './providers/lmstudio-control.js'
 import { registerCardShareMethods } from './methods/card-share.js'
-import { setVideoFileResolver } from './http-app.js'
+import { setVideoFileResolver, setPictureFileResolver } from './http-app.js'
 import { fileRead, fileWrite, fileEdit, fileList } from './tools/file.js'
 import { webFetch, webSearch, setSearchApiKeySource } from './tools/web.js'
 import { execTool } from './tools/exec.js'
@@ -246,8 +248,11 @@ const videoJobs = new VideoJobs(
   cardShare,
 )
 registerCardShareMethods(cardShare)
-registerVideoMethods(videoJobs, new VideoCast(db, (id) => videoJobs.hasImage(id)), () => settingsStore.get().comfyUrl)
-setVideoFileResolver((id) => videoJobs.filePath(id))
+const films = new FilmStore(db, videoJobs)
+registerVideoMethods(videoJobs, new VideoCast(db, (id) => videoJobs.hasImage(id)), () => settingsStore.get().comfyUrl, films, findFfmpeg())
+// A Video page video, or one of a live film's shot clips (whose links only video.film.get hands out).
+setVideoFileResolver((id) => videoJobs.filePath(id) ?? films.clipPath(id))
+setPictureFileResolver((id) => films.picturePath(id))
 
 // ---------------------------------------------------------------------------
 // Watchdog

@@ -464,7 +464,7 @@ test('the video.film methods refuse with plain words, and get comes with signed 
 })
 
 test('no AI tool can reach the film modules (harness fit, storyboard spec 16)', () => {
-  const toolsDir = join(import.meta.dirname, '..', 'src', 'tools')
+  const toolsDir = join(__dirname, '..', 'src', 'tools')
   const offenders = readdirSync(toolsDir, { recursive: true, encoding: 'utf8' })
     .filter((name) => name.endsWith('.ts'))
     .filter((name) => /video\/(films|film-[a-z-]+)(\.js)?['"]/.test(readFileSync(join(toolsDir, name), 'utf8')))

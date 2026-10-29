@@ -2,9 +2,11 @@ import { registerMethod } from '../router.js'
 import { getConfig } from '../auth.js'
 import { RECIPES, nodeClasses, findRecipe } from '../video/recipes.js'
 import { ComfyClient, checkComfyUrl } from '../video/comfyui.js'
-import { issueMediaLink } from '../video/media-links.js'
+import { issueMediaLink, issuePictureLink } from '../video/media-links.js'
 import { VideoRequestError, listensBeyondThisComputer, type VideoJobs } from '../video/jobs.js'
 import type { VideoCast } from '../video/cast.js'
+import type { Film, FilmStore } from '../video/films.js'
+import type { FfmpegTools } from '../video/ffmpeg.js'
 import type { RecipeParams, ParamValues } from '../video/recipe-types.js'
 
 function invalid(message: string): never {
@@ -29,7 +31,32 @@ function defaults(params: RecipeParams): ParamValues {
   return values
 }
 
-export function registerVideoMethods(jobs: VideoJobs, cast: VideoCast, comfyUrl: () => string): void {
+// A film store refusal reaches the page as INVALID_PARAMS with its plain words.
+async function refusals<T>(work: () => T | Promise<T>): Promise<T> {
+  try {
+    return await work()
+  } catch (err) {
+    if (err instanceof VideoRequestError) invalid(err.message)
+    throw err
+  }
+}
+
+// Signed links (an hour) for every picture and clip a film shows, by id.
+function filmLinks(film: Film, secret: string): Record<string, string> {
+  const links: Record<string, string> = {}
+  const pictures = [
+    ...film.cast.flatMap((c) => [c.pictureId, c.turnaroundId, c.faceId]),
+    ...film.places.flatMap((p) => [p.masterId, p.emptyId, p.sheetId]),
+    ...film.shots.flatMap((s) => [s.startId, s.endId]),
+    ...film.pictures.map((p) => p.imageId),
+  ]
+  for (const id of pictures) if (id) links[id] = issuePictureLink(secret, id)
+  for (const { clipId } of film.shots) if (clipId) links[clipId] = issueMediaLink(secret, clipId)
+  if (film.videoId) links[film.videoId] = issueMediaLink(secret, film.videoId)
+  return links
+}
+
+export function registerVideoMethods(jobs: VideoJobs, cast: VideoCast, comfyUrl: () => string, films: FilmStore, ffmpeg: FfmpegTools | null): void {
   registerMethod('video.recipes', async () => ({
     recipes: RECIPES.map(({ id, name, description, hardware, params }) => ({ id, name, description, hardware, params })),
   }))
@@ -37,12 +64,14 @@ export function registerVideoMethods(jobs: VideoJobs, cast: VideoCast, comfyUrl:
   // Is ComfyUI there, how was it started, and does it have what each recipe needs?
   registerMethod('video.status', async () => {
     const url = comfyUrl()
+    // Found once at start (Storyboard spec 6.2): the page shows the path, and greys out Make film without it.
+    const ffmpegFound = ffmpeg ? { path: ffmpeg.ffmpeg, version: ffmpeg.version } : null
     const checked = checkComfyUrl(url)
-    if ('error' in checked) return { reachable: false, url, problem: checked.error }
+    if ('error' in checked) return { reachable: false, url, problem: checked.error, ffmpeg: ffmpegFound }
     const client = new ComfyClient(checked.url)
     let stats
     try { stats = await client.stats() } catch { stats = null }
-    if (!stats) return { reachable: false, url, problem: `ComfyUI isn't answering at ${url}. Mission Control doesn't start it: start ComfyUI on this computer (see Making videos in the README), or fix the address in Settings.` }
+    if (!stats) return { reachable: false, url, ffmpeg: ffmpegFound, problem: `ComfyUI isn't answering at ${url}. Mission Control doesn't start it: start ComfyUI on this computer (see Making videos in the README), or fix the address in Settings.` }
 
     const warnings: string[] = []
     if (listensBeyondThisComputer(stats.argv)) warnings.push('ComfyUI was started with --listen, so other devices can reach it. Start it without --listen.')
@@ -62,6 +91,7 @@ export function registerVideoMethods(jobs: VideoJobs, cast: VideoCast, comfyUrl:
       reachable: true, url, version: stats.version, warnings, recipes,
       device: stats.device ? { name: stats.device.name, vramTotalGb: stats.device.vramTotal / 1024 ** 3, vramFreeGb: stats.device.vramFree / 1024 ** 3 } : null,
       diskBytes: jobs.diskUsage(),
+      ffmpeg: ffmpegFound,
     }
   })
 
@@ -135,4 +165,40 @@ export function registerVideoMethods(jobs: VideoJobs, cast: VideoCast, comfyUrl:
     if (!jobs.filePath(id)) invalid('That video is not available.')
     return { link: issueMediaLink(getConfig().sessionSecret, id) }
   })
+
+  // The Storyboard's films (storyboard spec 8). Every field and id is checked in the film store; the page drives
+  // every step, and no AI tool calls these (spec 16).
+  registerMethod('video.film.list', async () => {
+    const secret = getConfig().sessionSecret
+    return { films: films.list().map((f) => ({ ...f, thumbLink: f.thumbId ? issuePictureLink(secret, f.thumbId) : null })) }
+  })
+
+  registerMethod('video.film.get', async (params) => {
+    const film = films.get(params['id'])
+    if (!film) invalid('That film no longer exists.')
+    return { film, links: filmLinks(film, getConfig().sessionSecret) }
+  })
+
+  registerMethod('video.film.create', async (params) => refusals(() => ({ film: films.create(params['film']) })))
+  registerMethod('video.film.update', async (params) => refusals(() => ({ film: films.update(params['id'], params['film']) })))
+  registerMethod('video.film.delete', async (params) => refusals(async () => ({ deleted: await films.delete(params['id']) })))
+
+  registerMethod('video.film.place.save', async (params) => refusals(() => ({ place: films.savePlace(params['filmId'], params['place']) })))
+  registerMethod('video.film.place.delete', async (params) => refusals(() => ({ deleted: films.deletePlace(params['filmId'], params['id']) })))
+  registerMethod('video.film.place.move', async (params) => refusals(() => {
+    films.movePlace(params['filmId'], params['id'], params['position'])
+    return { moved: true }
+  }))
+
+  registerMethod('video.film.shot.save', async (params) => refusals(() => ({ shot: films.saveShot(params['filmId'], params['shot']) })))
+  registerMethod('video.film.shot.delete', async (params) => refusals(() => ({ deleted: films.deleteShot(params['filmId'], params['id']) })))
+  registerMethod('video.film.shot.move', async (params) => refusals(() => {
+    films.moveShot(params['filmId'], params['id'], params['position'])
+    return { moved: true }
+  }))
+
+  registerMethod('video.film.pictures.choose', async (params) => refusals(() => {
+    films.choose(params['filmId'], params['pictureId'])
+    return { chosen: true }
+  }))
 }
