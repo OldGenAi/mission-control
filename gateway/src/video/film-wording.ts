@@ -1,7 +1,8 @@
 // Every prompt the Storyboard sends to ComfyUI, built from fixed sentences and a film's checked fields (storyboard
-// spec 6.3). The sentences are the ones that worked for the hand-made red door films (local-video RECIPE.md):
-// remove then add, never "move"; "exactly one" against doubled characters; the cast wording word for word; and only
-// positive words in a video prompt, because the fast video model runs at CFG 1 and reads "no tan" as "tan".
+// spec 6.3). The sentences are the ones that worked for the hand-made red door films (local-video RECIPE.md) and hand
+// tests T6, T2 and T8: remove then add, never "move"; one character added per edit, each with its own position, the
+// ones before kept and "exactly N" counting everyone so far; the cast wording word for word; and only positive words
+// in a video prompt, because the fast video model runs at CFG 1 and reads "no tan" as "tan".
 //
 // Security-sensitive. Do not modify without Claude review.
 //
@@ -11,17 +12,32 @@
 
 export type FilmLook = 'realistic' | 'cartoon'
 
-export interface FilmCast { name: string; wording: string }
+/** A character as the wording uses it; `kind` is one word for what it is ("dog", "man"), for the "exactly" counts. */
+export interface FilmCast { name: string; wording: string; kind?: string | null | undefined }
 export interface FilmPlace { name: string; description: string; keep: string; prop?: string | null | undefined }
-export interface FilmShot { action: string; startPose: string; endPose: string; closeUp: boolean }
+export interface ShotCharacter { cast: FilmCast; startPose: string; endPose: string }
+export interface FilmShot { action: string; closeUp: boolean; characters: ShotCharacter[] }
+/** A character being added to a pose picture: its kind is known (the director checks first). */
+export type PoseCast = FilmCast & { kind: string }
+/** The reference sheet's own character, and everyone in its "place with the cast" panel. */
+export interface SheetCast { cast: FilmCast; with: FilmCast[] }
 
 /** The longest prompt these templates can make from the longest fields the film methods accept. */
-export const MAX_PROMPT = 4000
+export const MAX_PROMPT = 8000
 
-const LOOK: Record<FilmLook, { picture: string; video: string }> = {
-  realistic: { picture: 'Photorealistic.', video: 'photorealistic' },
-  // Placeholder wording until the cartoon recipe test (T2) settles it.
-  cartoon: { picture: 'A hand-drawn cartoon, soft painted colours.', video: 'hand-drawn cartoon' },
+// The cartoon look from hand test T2 (local-video\jobs\t2-cartoon-2026-10-29).
+const CARTOON = 'A hand-drawn 2D animated cartoon in the style of a classic illustrated animated film, with bold ink outlines, ' +
+  'soft painted watercolour backgrounds and flat painted colours.'
+
+const LOOK: Record<FilmLook, { picture: string; opening: (framing: string) => string; closing: string }> = {
+  realistic: { picture: 'Photorealistic.', opening: (framing) => `A cinematic, photorealistic, full-frame ${framing} of`, closing: 'Calm, natural movement.' },
+  cartoon: { picture: CARTOON, opening: (framing) => `${CARTOON} A ${framing} of`, closing: 'Calm, gentle animation.' },
+}
+
+const NUMBERS = ['no', 'one', 'two', 'three']
+const IRREGULAR: Readonly<Record<string, string>> = {
+  child: 'children', person: 'people', mouse: 'mice', goose: 'geese', ox: 'oxen', wolf: 'wolves', calf: 'calves',
+  sheep: 'sheep', deer: 'deer', fish: 'fish',
 }
 
 /**
@@ -41,9 +57,25 @@ function field(text: string): string {
   return flatten(text).replace(/[.\s]+$/, '')
 }
 
-// The cast wording for "the face of ...": "a border collie with ..." reads as "a border collie".
-function kind(cast: FilmCast): string {
-  return field(cast.wording).split(/,| with /)[0]!
+function plural(kind: string): string {
+  if (IRREGULAR[kind]) return IRREGULAR[kind]
+  if (kind.endsWith('man')) return `${kind.slice(0, -3)}men`
+  if (/(s|x|z|ch|sh)$/.test(kind)) return `${kind}es`
+  if (/[^aeiou]y$/.test(kind)) return `${kind.slice(0, -1)}ies`
+  return `${kind}s`
+}
+
+// "Bess", "Bess and Nipper", "Bess, Nipper and Tom".
+function names(parts: string[]): string {
+  return parts.length < 2 ? parts.join('') : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`
+}
+
+// "There are exactly two dogs and one man in the whole picture." Kinds in the order they first appear.
+function countLine(kinds: string[]): string {
+  const counts = new Map<string, number>()
+  for (const kind of kinds) counts.set(kind, (counts.get(kind) ?? 0) + 1)
+  const groups = [...counts].map(([kind, n]) => `${NUMBERS[n]} ${n === 1 ? kind : plural(kind)}`)
+  return `There ${counts.values().next().value === 1 ? 'is' : 'are'} exactly ${names(groups)} in the whole picture.`
 }
 
 function keepLine(place: FilmPlace): string {
@@ -82,11 +114,24 @@ export function emptyMasterPrompt(place: FilmPlace): string {
   return `Remove every person and animal from picture 1. Keep everything else exactly the same: same camera, same light, ${field(place.keep)}.`
 }
 
-/** Fast edit of the empty master with the character's picture as picture 2: one start or end pose. */
-export function posePrompt(cast: FilmCast, pose: string, place: FilmPlace): string {
-  const name = field(cast.name)
-  return `Add ${name} to picture 1: ${field(cast.wording)}, ${field(pose)}. ` +
-    `Picture 2 only shows what ${name} looks like; there is exactly one ${name} in the whole picture. ${keepLine(place)}`
+/**
+ * One start or end pose, as a chain of fast edits: the first adds the first character to the empty master, each next
+ * one adds the next character to the picture before, with that character's own picture as picture 2. Every character
+ * needs its kind (the director checks first).
+ */
+export function posePrompts(characters: Array<{ cast: PoseCast; pose: string }>, place: FilmPlace, look: FilmLook): string[] {
+  const style = (name: string) => look === 'cartoon' ? ` Draw ${name} in the same hand-drawn cartoon style as picture 1.` : ''
+  return characters.map(({ cast, pose }, i) => {
+    const name = field(cast.name)
+    const kind = field(cast.kind)
+    const before = characters.slice(0, i)
+    const adding = `${before.some((c) => field(c.cast.kind) === kind) ? 'more ' : ''}${kind}`
+    const known = i === 0
+      ? `Picture 2 only shows what ${name} looks like; there is exactly one ${kind} in the whole picture.`
+      : `Picture 2 only shows what ${name} looks like. Keep ${names(before.map((c) => field(c.cast.name)))} exactly as before, ` +
+        `in the same place${i > 1 ? 's' : ''}. ${countLine(characters.slice(0, i + 1).map((c) => field(c.cast.kind)))}`
+    return `Add exactly one ${adding} to picture 1: ${name}, ${field(cast.wording)}, ${field(pose)}. ${known}${style(name)} ${keepLine(place)}`
+  })
 }
 
 /** Fine edit for a close-up's start picture (the fast editor ignores framing words). */
@@ -94,21 +139,36 @@ export function closeUpPrompt(cast: FilmCast, pose: string): string {
   return `A close-up at ${field(cast.name)}'s eye level of ${field(cast.wording)}, ${field(pose)}, the place softly out of focus behind.`
 }
 
-/** The shot's prompt for LTX with the Ingredients add-on: the reference sheet's panels, then the shot itself. */
-export function shotPrompt(place: FilmPlace, cast: FilmCast, shot: FilmShot, look: FilmLook): string {
-  const name = field(cast.name)
-  const wording = field(cast.wording)
-  const sheet = [
+/**
+ * The shot's prompt for LTX with the Ingredients add-on: the reference sheet's panels (its one character, and the
+ * characters in its last panel), then the shot itself with every character in it, the same words as its pictures.
+ */
+export function shotPrompt(place: FilmPlace, sheet: SheetCast, shot: FilmShot, look: FilmLook): string {
+  const sheetName = field(sheet.cast.name)
+  const panels = [
     '### Reference Sheet Description',
     `**Top Row Left (Setting):** ${field(place.description)}.`,
-    `**Top Row Right (Character):** ${name}, ${wording}, shown from the front, the side and the back.`,
-    `**Bottom Row Left (Character):** A front-facing close-up of the face of ${name}.`,
+    `**Top Row Right (Character):** ${sheetName}, ${field(sheet.cast.wording)}, shown from the front, the side and the back.`,
+    `**Bottom Row Left (Character):** A front-facing close-up of the face of ${sheetName}.`,
     ...(place.prop ? [`**Bottom Row Middle (Prop):** ${field(place.prop)}.`] : []),
-    `**Bottom Row Right (Setting):** The same place with ${name} in it.`,
+    `**Bottom Row Right (Setting):** The same place with ${names(sheet.with.map((c) => field(c.name)))} in it.`,
   ]
-  const framing = shot.closeUp ? 'close-up' : 'wide shot'
-  const ending = shot.closeUp || !shot.endPose ? '' : ` It ends ${field(shot.endPose)}.`
-  const target = `A cinematic, ${LOOK[look].video}, full-frame ${framing} of ${field(place.name)}, the camera still. ` +
-    `${name}, ${wording}, starts ${field(shot.startPose)}, ${field(shot.action)}.${ending} Calm, natural movement.`
-  return `${sheet.join(' ')} ### Target Description ${target}`
+  const opening = `${LOOK[look].opening(shot.closeUp ? 'close-up' : 'wide shot')} ${field(place.name)}, the camera still.`
+  const ends = !shot.closeUp && shot.characters.every((c) => c.endPose)
+  let action: string
+  if (shot.characters.length === 1) {
+    const [{ cast, startPose, endPose }] = shot.characters as [ShotCharacter]
+    action = `${field(cast.name)}, ${field(cast.wording)}, starts ${field(startPose)}, ${field(shot.action)}.${ends ? ` It ends ${field(endPose)}.` : ''}`
+  } else {
+    const who = shot.characters.map((c) => `${field(c.cast.name)}, ${field(c.cast.wording)}`).join('; ')
+    const each = (verb: string, pose: (c: ShotCharacter) => string) => names(shot.characters.map((c) => `${field(c.cast.name)} ${verb} ${field(pose(c))}`))
+    const happens = field(shot.action)
+    action = `${capitalised(NUMBERS[shot.characters.length]!)} characters together: ${who}. ${each('starts', (c) => c.startPose)}. ` +
+      `${capitalised(happens)}.${ends ? ` ${each('ends', (c) => c.endPose)}.` : ''}`
+  }
+  return `${panels.join(' ')} ### Target Description ${opening} ${action} ${LOOK[look].closing}`
+}
+
+function capitalised(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1)
 }

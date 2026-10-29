@@ -185,6 +185,10 @@ export function registerVideoMethods(jobs: VideoJobs, cast: VideoCast, comfyUrl:
   registerMethod('video.film.update', async (params) => refusals(() => ({ film: films.update(params['id'], params['film']) })))
   registerMethod('video.film.delete', async (params) => refusals(async () => ({ deleted: await films.delete(params['id']) })))
 
+  registerMethod('video.film.cast.kind', async (params) => refusals(() => {
+    films.setKind(params['filmId'], params['castId'], params['kind'])
+    return { film: films.get(params['filmId']) }
+  }))
   registerMethod('video.film.place.save', async (params) => refusals(() => ({ place: films.savePlace(params['filmId'], params['place']) })))
   registerMethod('video.film.place.delete', async (params) => refusals(() => ({ deleted: films.deletePlace(params['filmId'], params['id']) })))
   registerMethod('video.film.place.move', async (params) => refusals(() => {
@@ -222,7 +226,7 @@ export function registerFilmMakingMethods(director: FilmDirector, films: FilmSto
     const stop = new AbortController()
     planning.set(film.id, stop)
     try {
-      const asked = await helper.plan({ story: film.story, seconds: film.seconds, look: film.look, cast: film.cast.map(({ name, wording }) => ({ name, wording })) },
+      const asked = await helper.plan({ story: film.story, seconds: film.seconds, look: film.look, cast: film.cast.map(({ name, wording, kind }) => ({ name, wording, kind })) },
         { signal: stop.signal, ...(allowAddress ? { allowAddress } : {}) })
       if ('confirm' in asked) return { confirm: asked.confirm }
       films.replacePlan(film.id, asked.plan, replace)

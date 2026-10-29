@@ -355,12 +355,14 @@ export const MIGRATIONS: Migration[] = [
       );
 
       -- The name and wording are copied from the cast when the film is planned, and the film keeps its own copy of the
-      -- cast picture, so editing or deleting a character later can't change or break a film.
+      -- cast picture, so editing or deleting a character later can't change or break a film. kind is one word for
+      -- what the character is ("dog", "man"), for the pictures' "exactly two dogs and one man".
       CREATE TABLE IF NOT EXISTS film_cast (
         film_id        TEXT NOT NULL,
         cast_id        TEXT NOT NULL,
         name           TEXT NOT NULL,
         wording        TEXT NOT NULL,
+        kind           TEXT,
         picture_id     TEXT,
         turnaround_id  TEXT,
         face_id        TEXT,
@@ -381,16 +383,15 @@ export const MIGRATIONS: Migration[] = [
         deleted_at   INTEGER
       );
 
-      -- revision goes up on every edit or choice; a clip finished for an older revision is thrown away.
+      -- revision goes up on every edit or choice; a clip finished for an older revision is thrown away. characters is
+      -- a JSON list of one to three {castId, startPose, endPose} in the order they are added to the pictures.
       CREATE TABLE IF NOT EXISTS film_shots (
         id          TEXT PRIMARY KEY,
         film_id     TEXT NOT NULL,
         position    INTEGER NOT NULL,
         place_id    TEXT NOT NULL,
-        cast_id     TEXT NOT NULL,
+        characters  TEXT NOT NULL,
         action      TEXT NOT NULL,
-        start_pose  TEXT NOT NULL,
-        end_pose    TEXT,
         seconds     INTEGER NOT NULL,
         joins       TEXT NOT NULL,
         close_up    INTEGER NOT NULL DEFAULT 0,
@@ -404,7 +405,8 @@ export const MIGRATIONS: Migration[] = [
         deleted_at  INTEGER
       );
 
-      -- Candidate pictures to choose from, with the picture check's verdict (from a fixed list, never model text).
+      -- Candidate pictures to choose from, with the picture check's verdict (from a fixed list, never model text). A
+      -- pose of several characters is a chain of edits: job_id is the chain's latest job, step of steps.
       CREATE TABLE IF NOT EXISTS film_pictures (
         id           TEXT PRIMARY KEY,
         film_id      TEXT NOT NULL,
@@ -412,6 +414,8 @@ export const MIGRATIONS: Migration[] = [
         owner_id     TEXT NOT NULL,
         role         TEXT NOT NULL,
         job_id       TEXT NOT NULL,
+        steps        INTEGER NOT NULL DEFAULT 1,
+        step         INTEGER NOT NULL DEFAULT 1,
         image_id     TEXT,
         seed         INTEGER NOT NULL,
         check_state  TEXT NOT NULL DEFAULT 'none',
