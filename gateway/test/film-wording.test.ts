@@ -4,7 +4,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  closeUpPrompt, cleanupPrompt, emptyMasterPrompt, facePrompt, firstMasterPrompt, flatten, laterMasterPrompt,
+  addingOrder, closeUpPrompt, cleanupPrompt, emptyMasterPrompt, facePrompt, firstMasterPrompt, flatten, laterMasterPrompt,
   posePrompts, shotPrompt, turnaroundPrompt, MAX_PROMPT, type FilmPlace, type FilmShot, type PoseCast,
 } from '../src/video/film-wording.js'
 
@@ -82,6 +82,19 @@ test('masters, the empty master and the close-up follow the recipe', () => {
     `Remove every person and animal from picture 1. Keep everything else exactly the same: same camera, same light, ${GREEN.keep}.`)
   assert.equal(closeUpPrompt(BESS, 'lying on the grass chewing the twig'),
     `A close-up at Bess's eye level of ${BESS.wording}, lying on the grass chewing the twig, the place softly out of focus behind.`)
+})
+
+test('characters are added after anyone their pose names, so nobody is drawn in to stand for someone not there yet (live test)', () => {
+  const pose = (cast: PoseCast, words: string) => ({ cast, pose: words })
+  // Tom first, sitting "to the left of Bess" before Bess was in: the editor drew a stray animal to be her.
+  const shot = [pose(TOM, 'sitting on the grass to the left of Bess'), pose(BESS, 'lying down in the center'), pose(NIP, 'lying down to the right of Bess')]
+  assert.deepEqual(addingOrder(shot).map((c) => c.cast.name), ['Bess', 'Tom', 'Nipper'])
+  assert.deepEqual(addingOrder([shot[1]!, shot[2]!, shot[0]!]).map((c) => c.cast.name), ['Bess', 'Nipper', 'Tom'], 'nothing moves that needn\'t')
+  // A name inside another word doesn't count, and nor does any case.
+  assert.deepEqual(addingOrder([pose(TOM, 'by the Bessemer stove'), pose(BESS, 'beside tom')]).map((c) => c.cast.name), ['Tom', 'Bess'])
+  // Two who name each other keep the shot's order.
+  assert.deepEqual(addingOrder([pose(TOM, 'beside Bess'), pose(BESS, 'beside Tom')]).map((c) => c.cast.name), ['Tom', 'Bess'])
+  assert.deepEqual(addingOrder([pose({ ...TOM, name: 'Mr. T (Tom)' }, 'standing'), pose(BESS, 'beside Mr. T (Tom)')]).map((c) => c.cast.name), ['Mr. T (Tom)', 'Bess'])
 })
 
 test('the character sheet pictures', () => {
