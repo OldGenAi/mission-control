@@ -248,6 +248,11 @@ export class ComfyClient {
     return body
   }
 
+  /** Stops whatever ComfyUI is running now (a job no one is listening to any more, after a restart). */
+  async interrupt(): Promise<void> {
+    await this.tryPost('/interrupt', {})
+  }
+
   /** Asks ComfyUI to give its graphics memory back. */
   async free(): Promise<void> {
     await this.tryPost('/free', { unload_models: true, free_memory: true })

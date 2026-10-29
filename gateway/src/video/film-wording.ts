@@ -12,7 +12,7 @@
 export type FilmLook = 'realistic' | 'cartoon'
 
 export interface FilmCast { name: string; wording: string }
-export interface FilmPlace { name: string; description: string; keep: string; prop?: string | undefined }
+export interface FilmPlace { name: string; description: string; keep: string; prop?: string | null | undefined }
 export interface FilmShot { action: string; startPose: string; endPose: string; closeUp: boolean }
 
 /** The longest prompt these templates can make from the longest fields the film methods accept. */

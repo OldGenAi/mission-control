@@ -6,6 +6,7 @@ import { issueMediaLink, issuePictureLink } from '../video/media-links.js'
 import { VideoRequestError, listensBeyondThisComputer, type VideoJobs } from '../video/jobs.js'
 import type { VideoCast } from '../video/cast.js'
 import type { Film, FilmStore } from '../video/films.js'
+import type { FilmDirector } from '../video/film-director.js'
 import type { FfmpegTools } from '../video/ffmpeg.js'
 import type { RecipeParams, ParamValues } from '../video/recipe-types.js'
 
@@ -200,5 +201,35 @@ export function registerVideoMethods(jobs: VideoJobs, cast: VideoCast, comfyUrl:
   registerMethod('video.film.pictures.choose', async (params) => refusals(() => {
     films.choose(params['filmId'], params['pictureId'])
     return { chosen: true }
+  }))
+}
+
+// Making a film's pictures and the film itself, through the director: one job on the graphics card at a time.
+export function registerFilmMakingMethods(director: FilmDirector): void {
+  // { round: 'places' | 'shots' } for a picture round, or { ownerId, role } for two more pictures (Make more).
+  registerMethod('video.film.pictures.make', async (params) => refusals(async () => {
+    const request = params['request']
+    if (typeof request !== 'object' || request === null || Array.isArray(request)) invalid('Say which pictures to make.')
+    const { round, ownerId, role } = request as Record<string, unknown>
+    if (round === 'places' || round === 'shots') await director.makePictures(params['filmId'], { round })
+    else if (typeof role === 'string') await director.makePictures(params['filmId'], { ownerId, role })
+    else invalid('Say which pictures to make.')
+    return { queued: true }
+  }))
+
+  registerMethod('video.film.make', async (params) => refusals(() => {
+    director.make(params['filmId'])
+    return { started: true }
+  }))
+
+  registerMethod('video.film.stop', async (params) => refusals(async () => {
+    await director.stop(params['filmId'])
+    return { stopped: true }
+  }))
+
+  registerMethod('video.film.redo', async (params) => refusals(() => {
+    if (typeof params['newSeed'] !== 'boolean') invalid('newSeed must be true or false')
+    director.redo(params['filmId'], params['shotId'], params['newSeed'])
+    return { started: true }
   }))
 }
