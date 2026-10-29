@@ -41,7 +41,7 @@ import { VideoCast } from './video/cast.js'
 import { FilmStore } from './video/films.js'
 import { FilmDirector } from './video/film-director.js'
 import { FilmHelper } from './video/film-helper.js'
-import { FILM_EDIT_FAST, FILM_EDIT_FINE } from './video/film-recipes.js'
+import { FILM_EDIT_FAST, FILM_EDIT_FINE, FILM_SHOT } from './video/film-recipes.js'
 import { findFfmpeg, joinFilm, makeSheet } from './video/ffmpeg.js'
 import { CardShare } from './providers/card-share.js'
 import { lmStudioServer } from './providers/lmstudio-control.js'
@@ -262,8 +262,7 @@ const ffmpeg = findFfmpeg()
 filmDirector = new FilmDirector({
   films, queue: videoJobs, mediaDir: videoMediaDir,
   emit: (event) => broadcastEvent('video.film', { ...event }),
-  // The shot recipe comes once hand test T1 settles its nodes; until then Make film says it isn't ready.
-  recipes: { fast: FILM_EDIT_FAST, fine: FILM_EDIT_FINE, shot: null },
+  recipes: { fast: FILM_EDIT_FAST, fine: FILM_EDIT_FINE, shot: FILM_SHOT },
   ffmpeg: { tools: () => ffmpeg, join: joinFilm, sheet: makeSheet },
 })
 void filmDirector.start()
