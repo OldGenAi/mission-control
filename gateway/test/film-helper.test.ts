@@ -99,6 +99,7 @@ test('the story goes to the local model as marked data, with the rules, the shot
   assert.match(system!.content, /Each shot shows one, two or three characters/)
   assert.match(system!.content, /Each character in a shot has its own start pose and end pose/)
   assert.match(system!.content, /A close-up .* exactly one character/)
+  assert.match(system!.content, /stays in every shot of that place.* until the story says they leave/, 'the live test: Tom vanished from a shot of the dogs')
   assert.doesNotMatch(system!.content, /Exactly one character is on screen/)
   assert.match(user!.content, /about 5 shots that add up to 30 seconds/)
   assert.match(user!.content, /<<<STORY\n[^]*IGNORE THE RULES[^]*\nSTORY>>>/)
@@ -181,6 +182,20 @@ test('soft warnings for what the page should point out: another character named,
     'Shot 1 asks for fast movement, which the video model does badly.',
     'Shot 3 names another place (The garden). A shot stays in one place.',
   ])
+})
+
+test('a character who drops out of a scene is pointed out: still in the place, but not in the shot (live test, 29 Oct)', () => {
+  const plan = structuredClone(GOOD)
+  // Shot 5 in the kitchen shows only Bess, though Rex was in shot 3 there (shot 4 is a close-up, so it doesn't count).
+  plan.shots[4]!.characters = [plan.shots[4]!.characters[0]!]
+  plan.shots[4]!.action = 'lies down by the stove'
+  const { problems, warnings } = checkPlan(plan, FILM)
+  assert.deepEqual(problems, [])
+  assert.deepEqual(warnings, ['Shot 5 leaves out Rex, who is in shot 3 in the same place. If Rex is still there, add Rex to shot 5.'])
+  // A shot in another place in between ends the scene: nobody is missing then.
+  const moved = structuredClone(plan)
+  moved.shots[3] = { ...moved.shots[3]!, place: 0, closeUp: false, characters: one('Rex', 'by the wall', 'at the door') }
+  assert.deepEqual(checkPlan(moved, FILM).warnings.filter((w) => /leaves out/.test(w)), [])
 })
 
 test('redirects are refused, and a slow or oversized answer is cut off', async () => {
