@@ -228,6 +228,7 @@ export class FilmHelper {
           response_format: { type: 'json_schema', json_schema: { name: 'plan', strict: true, schema: SCHEMA } },
         }),
       })
+      if (response.status === 401 || response.status === 403) throw new VideoRequestError('Your model server wants an API key. Add it in Settings, Providers, Local provider.')
       if (!response.ok) throw new VideoRequestError(`Your model server at ${host} answered with an error (${response.status}). Check that LM Studio is running with a model loaded.`)
       const body = await readCapped(response)
       let content: unknown
