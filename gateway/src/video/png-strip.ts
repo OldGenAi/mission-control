@@ -59,16 +59,21 @@ export function rgbPng(width: number, height: number, rgb: Buffer): Buffer {
   return Buffer.concat([SIGNATURE, chunk('IHDR', header), chunk('IDAT', deflateSync(rows)), chunk('IEND', Buffer.alloc(0))])
 }
 
+/** What a see-through part of a picture reads as: a plain light grey. */
+export const SEE_THROUGH = [210, 210, 210] as const
+
 /**
- * The pixels of an 8-bit RGB PNG that isn't interlaced (what ffmpeg writes when asked for rgb24), or null for any other
- * kind or a damaged file. The data can't inflate past the size the header gives.
+ * The pixels (8-bit RGB) of an 8-bit RGB or RGBA PNG that isn't interlaced (what ffmpeg writes when asked for rgb24 or
+ * rgba), see-through parts laid on SEE_THROUGH; null for any other kind or a damaged file. The data can't inflate past
+ * the size the header gives.
  */
 export function readRgbPng(buf: Buffer): { width: number; height: number; rgb: Buffer } | null {
   const sound = stripPng(buf)
   if (!sound) return null
   const width = sound.readUInt32BE(16)
   const height = sound.readUInt32BE(20)
-  if (sound[24] !== 8 || sound[25] !== 2 || sound[26] !== 0 || sound[27] !== 0 || sound[28] !== 0) return null
+  const bpp = sound[25] === 2 ? 3 : sound[25] === 6 ? 4 : 0
+  if (sound[24] !== 8 || bpp === 0 || sound[26] !== 0 || sound[27] !== 0 || sound[28] !== 0) return null
   if (width < 1 || height < 1 || width > 8192 || height > 8192) return null
   const data: Buffer[] = []
   for (let at = SIGNATURE.length; at + 12 <= sound.length;) {
@@ -76,7 +81,7 @@ export function readRgbPng(buf: Buffer): { width: number; height: number; rgb: B
     if (sound.toString('latin1', at + 4, at + 8) === 'IDAT') data.push(sound.subarray(at + 8, at + 8 + length))
     at += 12 + length
   }
-  const stride = width * 3
+  const stride = width * bpp
   let rows: Buffer
   try {
     rows = inflateSync(Buffer.concat(data), { maxOutputLength: height * (1 + stride) })
@@ -84,15 +89,15 @@ export function readRgbPng(buf: Buffer): { width: number; height: number; rgb: B
     return null
   }
   if (rows.length !== height * (1 + stride)) return null
-  const rgb = Buffer.alloc(height * stride)
+  const pixels = Buffer.alloc(height * stride)
   for (let y = 0; y < height; y++) {
     const filter = rows[y * (1 + stride)]!
     const line = rows.subarray(y * (1 + stride) + 1, (y + 1) * (1 + stride))
     const out = y * stride
     for (let i = 0; i < stride; i++) {
-      const left = i >= 3 ? rgb[out + i - 3]! : 0
-      const up = y > 0 ? rgb[out - stride + i]! : 0
-      const upLeft = y > 0 && i >= 3 ? rgb[out - stride + i - 3]! : 0
+      const left = i >= bpp ? pixels[out + i - bpp]! : 0
+      const up = y > 0 ? pixels[out - stride + i]! : 0
+      const upLeft = y > 0 && i >= bpp ? pixels[out - stride + i - bpp]! : 0
       let add: number
       if (filter === 0) add = 0
       else if (filter === 1) add = left
@@ -105,8 +110,14 @@ export function readRgbPng(buf: Buffer): { width: number; height: number; rgb: B
         const pc = Math.abs(p - upLeft)
         add = pa <= pb && pa <= pc ? left : pb <= pc ? up : upLeft
       } else return null
-      rgb[out + i] = (line[i]! + add) & 0xff
+      pixels[out + i] = (line[i]! + add) & 0xff
     }
+  }
+  if (bpp === 3) return { width, height, rgb: pixels }
+  const rgb = Buffer.alloc(width * height * 3)
+  for (let p = 0; p < width * height; p++) {
+    const alpha = pixels[p * 4 + 3]!
+    for (let c = 0; c < 3; c++) rgb[p * 3 + c] = Math.round((pixels[p * 4 + c]! * alpha + SEE_THROUGH[c]! * (255 - alpha)) / 255)
   }
   return { width, height, rgb }
 }

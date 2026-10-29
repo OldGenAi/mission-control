@@ -6,7 +6,7 @@
 // Security-sensitive. Do not modify without Claude review.
 
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { extname, join } from 'node:path'
 import { stripPng } from './png-strip.js'
 
@@ -15,7 +15,7 @@ export type ImageType = 'png' | 'jpeg' | 'webp'
 export interface ImageInfo { type: ImageType; width: number; height: number }
 
 export const MAX_IMAGE_BYTES = 11 * 1024 * 1024 // base64 of this still fits the 16 MB WebSocket message cap
-const MIN_SIDE = 64
+export const MIN_SIDE = 64
 const MAX_SIDE = 8192
 
 const MIME: Record<ImageType, string> = { png: 'image/png', jpeg: 'image/jpeg', webp: 'image/webp' }
@@ -120,10 +120,20 @@ export class ImageInputs {
     const info = inspectImage(clean)
     if (typeof info === 'string') return info
     const id = givenId ?? randomBytes(16).toString('hex')
-    try {
+    if (givenId === undefined) {
       writeFileSync(join(this.dir, `${id}.png`), clean, { mode: 0o600, flag: 'wx' })
+      return { id, ...info }
+    }
+    // Whole or not at all: a given id is trusted once a file is there, so it is written under a temp name (the start-up
+    // sweep's kind) and linked into place, which also never replaces one already there.
+    const temp = join(this.dir, `tmp-${randomBytes(16).toString('hex')}.png`)
+    writeFileSync(temp, clean, { mode: 0o600, flag: 'wx' })
+    try {
+      linkSync(temp, join(this.dir, `${id}.png`))
     } catch (err) {
-      if (givenId === undefined || (err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+    } finally {
+      rmSync(temp, { force: true })
     }
     return { id, ...info }
   }

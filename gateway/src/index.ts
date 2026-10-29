@@ -264,8 +264,9 @@ filmDirector = new FilmDirector({
   emit: (event) => broadcastEvent('video.film', { ...event }),
   recipes: { fast: FILM_EDIT_FAST, fine: FILM_EDIT_FINE, shot: FILM_SHOT },
   ffmpeg: { tools: () => ffmpeg, join: joinFilm, sheet: makeSheet, stopLeftover: stopLeftoverFfmpeg },
+  // Round two needs ffmpeg too now (each character is cut out on their own), not only Make film.
   references: async (pictureId) => {
-    if (!ffmpeg) throw new FfmpegError('ffmpeg is not installed (the Video page says how to get it)')
+    if (!ffmpeg) throw new FfmpegError('ffmpeg is not installed. The Video page says how to get it.')
     return videoJobs.cutOut(ffmpeg, pictureId, { timeoutMs: 30_000 })
   },
 })
