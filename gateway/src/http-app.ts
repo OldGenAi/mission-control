@@ -13,13 +13,27 @@ import express, { type Express, type Request, type Response, type NextFunction }
 import { validateHost, isOwnOrigin, getConfig } from './auth.js'
 import { issueLaunchChallenge, issueLaunchCode, redeemLaunchCode, issueSession } from './login.js'
 import { GATEWAY_VERSION } from './version.js'
-import { checkMediaLink } from './video/media-links.js'
+import { checkMediaLink, checkPictureLink } from './video/media-links.js'
 import { supervisedBy } from './supervision.js'
 
 /** Finds a finished video's file by id; set by the gateway once the video queue exists. */
 let videoFile: (id: string) => string | null = () => null
 export function setVideoFileResolver(resolve: (id: string) => string | null): void {
   videoFile = resolve
+}
+
+/** Finds a picture a live film uses, by id; set by the gateway once the film store exists. */
+let pictureFile: (id: string) => { path: string; mime: string } | null = () => null
+export function setPictureFileResolver(resolve: (id: string) => { path: string; mime: string } | null): void {
+  pictureFile = resolve
+}
+const PICTURE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
+
+function setMediaHeaders(res: Response): void {
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('Referrer-Policy', 'no-referrer')
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin')
+  res.setHeader('Content-Disposition', 'inline')
 }
 
 function bodyField(req: Request, name: string): unknown {
@@ -112,13 +126,23 @@ export function buildHttpApp(uiDir: string | null): Express {
       res.status(404).end()
       return
     }
-    res.setHeader('X-Content-Type-Options', 'nosniff')
-    res.setHeader('Referrer-Policy', 'no-referrer')
-    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin')
-    res.setHeader('Content-Disposition', 'inline')
+    setMediaHeaders(res)
     // The path comes from the gateway (media folder + checked id), and that folder sits inside
     // ~/.missioncontrol, so the dot-folder default must not apply.
     res.sendFile(path, { headers: { 'Content-Type': 'video/mp4', 'Cache-Control': 'private, max-age=3600' }, dotfiles: 'allow' })
+  })
+
+  // One of a film's pictures, by its own kind of signed link (a video link never opens it), and only while a live
+  // film uses it. The type comes from the stored file's checked kind, never from the request.
+  app.get('/media/picture/:id', (req, res) => {
+    const { id } = req.params
+    const picture = checkPictureLink(getConfig().sessionSecret, id, req.query['e'], req.query['s']) ? pictureFile(id) : null
+    if (!picture || !PICTURE_TYPES.has(picture.mime)) {
+      res.status(404).end()
+      return
+    }
+    setMediaHeaders(res)
+    res.sendFile(picture.path, { headers: { 'Content-Type': picture.mime, 'Cache-Control': 'private, max-age=3600' }, dotfiles: 'allow' })
   })
 
   if (uiDir) {

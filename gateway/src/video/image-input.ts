@@ -6,8 +6,8 @@
 // Security-sensitive. Do not modify without Claude review.
 
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { extname, join } from 'node:path'
 import { stripPng } from './png-strip.js'
 
 export type ImageType = 'png' | 'jpeg' | 'webp'
@@ -117,6 +117,20 @@ export class ImageInputs {
     const id = randomBytes(16).toString('hex')
     writeFileSync(join(this.dir, `${id}.png`), clean, { mode: 0o600 })
     return { id, ...info }
+  }
+
+  /** A copy of a stored picture under a new id, for a picture passed to a new owner (a film's copy of a cast picture). */
+  copy(id: unknown): string | null {
+    const stored = this.find(id)
+    if (!stored) return null
+    const copy = randomBytes(16).toString('hex')
+    writeFileSync(join(this.dir, `${copy}${extname(stored.fileName)}`), readFileSync(stored.path), { mode: 0o600, flag: 'wx' })
+    return copy
+  }
+
+  remove(id: unknown): void {
+    const stored = this.find(id)
+    if (stored) rmSync(stored.path, { force: true })
   }
 
   /** The stored picture with this id, or null. The id is checked before it touches a path. */
