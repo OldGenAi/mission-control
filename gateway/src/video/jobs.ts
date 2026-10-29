@@ -466,8 +466,9 @@ export class VideoJobs {
     const values = await this.placeImages(client, recipe, JSON.parse(row.params) as ParamValues)
     if (stopped()) return this.finish(id, 'cancelled', null)
     if (typeof values === 'string') return this.finish(id, 'failed', values)
-    // A film's outputs go in a folder of their own, so they can be tidied by hand.
-    const graph = recipe.build(values, row.filmId ? `mission-control/film-${row.filmId}/${id}` : `mission-control/${id}`)
+    // A film's outputs are named after it, so they can be tidied by hand. One folder level only: ComfyUI on Windows
+    // reports a deeper folder with a backslash, which the output check (rightly) refuses.
+    const graph = recipe.build(values, row.filmId ? `mission-control/film-${row.filmId}-${id}` : `mission-control/${id}`)
     const missing = await client.missing(nodeClasses(graph), recipe.models)
     if (stopped()) return this.finish(id, 'cancelled', null)
     if (missing.length > 0) {

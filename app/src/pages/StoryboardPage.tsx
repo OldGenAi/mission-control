@@ -264,8 +264,9 @@ export const StoryboardPage: React.FC = () => {
   // ---- one film ----
   const making = film.stage === 'making'
   const picturesBeingMade = film.pictures.some((p) => p.status === 'queued' || p.status === 'running')
-  // Pictures made from older words or an older place picture are never offered.
-  const candidates = (ownerId: string, role: string) => film.pictures.filter((p) => p.ownerId === ownerId && p.role === role && !p.stale)
+  // Pictures made from older words or an older place picture are never offered; the one already chosen still shows.
+  const candidates = (ownerId: string, role: string, chosen: string | null) =>
+    film.pictures.filter((p) => p.ownerId === ownerId && p.role === role && (!p.stale || (p.imageId !== null && p.imageId === chosen)))
   const roundOneDone = film.cast.every((c) => c.turnaroundId && c.faceId) && film.places.length > 0 && film.places.every((p) => p.masterId)
   const allPicturesChosen = film.shots.length > 0 && film.shots.every((s) => s.startId && (s.closeUp || s.endId))
   const canChoose = !making && ['places', 'shots', 'stopped', 'done'].includes(film.stage)
@@ -299,14 +300,14 @@ export const StoryboardPage: React.FC = () => {
           </div>
           {film.cast.map((c) => (
             <React.Fragment key={c.castId}>
-              <Slot label={`${c.name}: front, side and back`} pictures={candidates(c.castId, 'turnaround')} chosen={c.turnaroundId} links={links}
+              <Slot label={`${c.name}: front, side and back`} pictures={candidates(c.castId, 'turnaround', c.turnaroundId)} chosen={c.turnaroundId} links={links}
                 disabled={!canChoose || busy} onChoose={(id) => void choose(id)} onMore={() => void makePictures({ ownerId: c.castId, role: 'turnaround' })} />
-              <Slot label={`${c.name}: face`} pictures={candidates(c.castId, 'face')} chosen={c.faceId} links={links}
+              <Slot label={`${c.name}: face`} pictures={candidates(c.castId, 'face', c.faceId)} chosen={c.faceId} links={links}
                 disabled={!canChoose || busy} onChoose={(id) => void choose(id)} onMore={() => void makePictures({ ownerId: c.castId, role: 'face' })} />
             </React.Fragment>
           ))}
           {film.places.map((p, i) => (
-            <Slot key={p.id} label={p.name} pictures={candidates(p.id, 'master')} chosen={p.masterId} links={links}
+            <Slot key={p.id} label={p.name} pictures={candidates(p.id, 'master', p.masterId)} chosen={p.masterId} links={links}
               note={i > 0 && !film.places[0]!.masterId ? `Made after you choose ${film.places[0]!.name}, so the light and style carry over` : undefined}
               disabled={!canChoose || busy} onChoose={(id) => void choose(id)} onMore={() => void makePictures({ ownerId: p.id, role: 'master' })} />
           ))}
@@ -329,10 +330,10 @@ export const StoryboardPage: React.FC = () => {
                 <p className="text-xs text-gray-400">Shot {i + 1}: {s.action}</p>
                 {followsOn(film.shots[i - 1], s)
                   ? <p className="text-xs text-gray-500">Starts where shot {i} ends.</p>
-                  : <Slot label={s.closeUp ? 'Close-up' : 'Start'} pictures={candidates(s.id, 'start')} chosen={s.startId} links={links}
+                  : <Slot label={s.closeUp ? 'Close-up' : 'Start'} pictures={candidates(s.id, 'start', s.startId)} chosen={s.startId} links={links}
                       disabled={!canChoose || busy} onChoose={(id) => void choose(id)} onMore={() => void makePictures({ ownerId: s.id, role: 'start' })} />}
                 {!s.closeUp && (
-                  <Slot label="End" pictures={candidates(s.id, 'end')} chosen={s.endId} links={links}
+                  <Slot label="End" pictures={candidates(s.id, 'end', s.endId)} chosen={s.endId} links={links}
                     disabled={!canChoose || busy} onChoose={(id) => void choose(id)} onMore={() => void makePictures({ ownerId: s.id, role: 'end' })} />
                 )}
               </div>
