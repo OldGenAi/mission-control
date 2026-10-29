@@ -29,7 +29,7 @@ const PNG = (() => {
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), pngChunk('IHDR', ihdr), pngChunk('IDAT', Buffer.from('pixels')), pngChunk('IEND', Buffer.alloc(0))])
 })()
 
-// The shot recipe waits for hand test T1; any recipe with its inputs stands in for it.
+// Any recipe with the shot's inputs stands in for the real one, which needs ComfyUI.
 const SHOT: Recipe = { ...FILM_EDIT_FAST, id: 'film-shot', output: 'video', params: {
   prompt: { kind: 'text', maxLength: 4000, required: true }, sheet: { kind: 'image', required: true }, start: { kind: 'image', required: true },
   end: { kind: 'image' }, frames: { kind: 'int', min: 97, max: 193, default: 97 }, seed: { kind: 'int', min: 0, max: 2 ** 48 },
