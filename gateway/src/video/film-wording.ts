@@ -136,6 +136,22 @@ export function posePrompts(characters: Array<{ cast: PoseCast; pose: string }>,
   })
 }
 
+/**
+ * The order a pose's characters are added in: each after anyone their own pose names, otherwise as in the shot. A
+ * pose that names someone not in the picture yet ("sitting to the left of Spot", Spot still to come) made the editor
+ * draw a stray animal to be Spot (live test). Two who name each other keep the shot's order.
+ */
+export function addingOrder<T extends { cast: { name: string }; pose: string }>(characters: T[]): T[] {
+  const names = (c: T, other: T) => new RegExp(`(^|[^\\p{L}\\p{N}])${other.cast.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`, 'iu').test(c.pose)
+  const left = [...characters]
+  const order: T[] = []
+  while (left.length > 0) {
+    const ready = left.findIndex((c) => left.every((other) => other === c || !names(c, other)))
+    order.push(...left.splice(ready < 0 ? 0 : ready, 1))
+  }
+  return order
+}
+
 /** Fine edit for a close-up's start picture (the fast editor ignores framing words). */
 export function closeUpPrompt(cast: FilmCast, pose: string): string {
   return `A close-up at ${field(cast.name)}'s eye level of ${field(cast.wording)}, ${field(pose)}, the place softly out of focus behind.`
