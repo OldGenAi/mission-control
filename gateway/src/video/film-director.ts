@@ -108,6 +108,10 @@ interface Run {
 
 type Outcome = { status: VideoStatus; error: string | null }
 
+// What the cutter says about a character's picture, and what a round asks for a character's picture 2.
+type CutOut = Awaited<ReturnType<DirectorOptions['references']>>
+type Alone = (member: FilmCastMember) => string
+
 const TERMINAL: ReadonlySet<string> = new Set(['done', 'failed', 'cancelled'])
 
 export class FilmDirector {
@@ -173,24 +177,20 @@ export class FilmDirector {
    * round; the user chooses. Refusals come back with plain words before anything is queued.
    */
   async makePictures(filmId: unknown, request: PictureRequest): Promise<void> {
-    const asked = this.o.films.get(filmId)
-    if (!asked) throw new VideoRequestError('That film no longer exists.')
-    // Poses need each of their characters cut out first (a moment each, once per picture): done before the film is
-    // read for the round, so nothing changes under it.
-    const poseShots = 'round' in request ? (request.round === 'shots' ? asked.shots : []) : asked.shots.filter((s) => s.id === request.ownerId)
-    const cuts = await this.cutOut(asked, poseShots)
-    const film = this.o.films.get(filmId)
-    if (!film) throw new VideoRequestError('That film no longer exists.')
-    if (film.stage === 'making') throw new VideoRequestError(STOP_FIRST)
-    const running = this.runs.get(film.id)
-    if (running?.kind === 'make') throw new VideoRequestError(STOP_FIRST)
-    const queued = running?.tasks ?? []
-    let tasks: PictureTask[]
-    if ('round' in request && request.round === 'places') tasks = this.placesRound(film, queued)
-    else if ('round' in request && request.round === 'shots') tasks = this.shotsRound(film, queued, cuts)
-    else if ('role' in request) tasks = this.makeMore(film, request.ownerId, request.role, queued, cuts)
-    else throw new VideoRequestError('Say which pictures to make.')
-    if (tasks.length === 0) throw new VideoRequestError('Everything here has pictures to choose from. Choose one, or press Make more.')
+    // Planned once without the characters' cut-outs, so every refusal comes first and only the pictures the tasks
+    // need are cut (a moment each, once per picture); then planned again on the film as it is after the wait.
+    const wanted = new Map<string, string>()
+    const first = this.plan(filmId, request, (member) => {
+      if (!member.pictureId) throw new VideoRequestError(`${member.name} needs a picture first. Add one in the cast.`)
+      wanted.set(member.pictureId, member.name)
+      return member.pictureId
+    })
+    const cuts = await this.cutOut(first.film, wanted)
+    const { film, running, tasks } = this.plan(filmId, request, (member) => {
+      const cut = member.pictureId ? cuts.get(member.pictureId) : undefined
+      if (!cut) throw new VideoRequestError('This film changed while its pictures were being got ready. Press the button again.')
+      return cut
+    })
 
     const next: FilmStage | null = 'round' in request && (film.stage === 'plan' || (film.stage === 'places' && request.round === 'shots')) ? request.round : null
     if (next) this.stage(film.id, next)
@@ -199,6 +199,23 @@ export class FilmDirector {
       return
     }
     this.schedule(film.id, 'pictures', tasks)
+  }
+
+  // A picture request's tasks, or its refusal in plain words. `alone` gives a character's picture 2.
+  private plan(filmId: unknown, request: PictureRequest, alone: Alone): { film: Film; running: Run | undefined; tasks: PictureTask[] } {
+    const film = this.o.films.get(filmId)
+    if (!film) throw new VideoRequestError('That film no longer exists.')
+    if (film.stage === 'making') throw new VideoRequestError(STOP_FIRST)
+    const running = this.runs.get(film.id)
+    if (running?.kind === 'make') throw new VideoRequestError(STOP_FIRST)
+    const queued = running?.tasks ?? []
+    let tasks: PictureTask[]
+    if ('round' in request && request.round === 'places') tasks = this.placesRound(film, queued)
+    else if ('round' in request && request.round === 'shots') tasks = this.shotsRound(film, queued, alone)
+    else if ('role' in request) tasks = this.makeMore(film, request.ownerId, request.role, queued, alone)
+    else throw new VideoRequestError('Say which pictures to make.')
+    if (tasks.length === 0) throw new VideoRequestError('Everything here has pictures to choose from. Choose one, or press Make more.')
+    return { film, running, tasks }
   }
 
   /** Make film: checks it can be made, moves it to `making` (once), and makes every shot without a current clip. */
@@ -372,18 +389,14 @@ export class FilmDirector {
     return tasks
   }
 
-  // Each character in these shots on their own, by the picture they were cut from. Refuses, naming whose, a picture
-  // the character can't be cut from (hand test T10: picture 2 the size of the scene got pasted in as well as drawn).
-  private async cutOut(film: Film, shots: FilmShot[]): Promise<Map<string, string>> {
+  // Each of these pictures (by id, with whose it is) cut down to the character on its own. Refuses, naming whose, a
+  // picture the character can't be cut from (hand test T10: picture 2 the size of the scene got pasted in as well as drawn).
+  private async cutOut(film: Film, pictures: Map<string, string>): Promise<Map<string, string>> {
     const cuts = new Map<string, string>()
-    for (const castId of new Set(shots.flatMap((s) => s.characters.map((c) => c.castId)))) {
-      const member = film.cast.find((c) => c.castId === castId)
-      // pose() says what is missing.
-      if (!member?.pictureId) continue
-      const name = member.name
-      let cut: Awaited<ReturnType<DirectorOptions['references']>>
+    for (const [pictureId, name] of pictures) {
+      let cut: CutOut
       try {
-        cut = await this.o.references(member.pictureId)
+        cut = await this.o.references(pictureId)
       } catch (err) {
         console.error('[film] could not cut out a character:', err)
         throw new VideoRequestError(`Mission Control could not get ${name}'s picture ready${err instanceof FfmpegError ? `: ${err.message}` : '.'}`)
@@ -392,12 +405,13 @@ export class FilmDirector {
       if (cut === 'busy') throw new VideoRequestError(`${name}'s picture has a busy background, and the picture editor then draws ${name} twice. ${plain}`)
       if (cut === 'empty') throw new VideoRequestError(`Mission Control can't find ${name} in ${name}'s picture. ${plain}`)
       if (cut === 'missing') throw new VideoRequestError(`${name}'s picture is missing. Add it again in the cast.`)
-      cuts.set(member.pictureId, cut.id)
+      cuts.set(pictureId, cut.id)
     }
+    if (!this.o.films.get(film.id)) throw new VideoRequestError('That film no longer exists.')
     return cuts
   }
 
-  private shotsRound(film: Film, queued: PictureTask[], cuts: Map<string, string>): PictureTask[] {
+  private shotsRound(film: Film, queued: PictureTask[], alone: Alone): PictureTask[] {
     if (film.shots.length === 0) throw new VideoRequestError('Plan the film first: add its places and shots.')
     // A chosen master means round one has been made and chosen from.
     for (const shot of film.shots) {
@@ -410,13 +424,13 @@ export class FilmDirector {
     const tasks: PictureTask[] = []
     ready.shots.forEach((shot, i) => {
       const before = ready.shots[i - 1]
-      if (!shot.startId && !followsOn(before, shot) && !has(shot.id, 'start')) tasks.push(...this.pose(ready, shot, 'start', cuts))
-      if (!shot.closeUp && !shot.endId && !has(shot.id, 'end')) tasks.push(...this.pose(ready, shot, 'end', cuts))
+      if (!shot.startId && !followsOn(before, shot) && !has(shot.id, 'start')) tasks.push(...this.pose(ready, shot, 'start', alone))
+      if (!shot.closeUp && !shot.endId && !has(shot.id, 'end')) tasks.push(...this.pose(ready, shot, 'end', alone))
     })
     return tasks
   }
 
-  private makeMore(film: Film, ownerId: unknown, role: string, queued: PictureTask[], cuts: Map<string, string>): PictureTask[] {
+  private makeMore(film: Film, ownerId: unknown, role: string, queued: PictureTask[], alone: Alone): PictureTask[] {
     if (!PICTURE_STAGES.has(film.stage)) throw new VideoRequestError('Make more is for pictures already made: start with round one.')
     // What the id names decides its kind; the role must then fit it.
     const kind: OwnerKind | undefined = film.places.some((p) => p.id === ownerId) ? 'place'
@@ -442,7 +456,7 @@ export class FilmDirector {
     const place = film.places.find((p) => p.id === shot.placeId)!
     if (!place.emptyId && !place.masterId) throw new VideoRequestError(`Choose a master picture for ${place.name} first.`)
     this.o.films.useMasterAsEmpty(film.id)
-    return this.pose(this.o.films.get(film.id)!, shot, role as 'start' | 'end', cuts)
+    return this.pose(this.o.films.get(film.id)!, shot, role as 'start' | 'end', alone)
   }
 
   // True when a slot already has candidates that are made, being made or about to be.
@@ -466,16 +480,11 @@ export class FilmDirector {
 
   // A start or end pose: the characters added into the place on its own one at a time, in the shot's order, each
   // with its own pose words and picture (hand test T6); or a close-up's start (the fine editor, one character).
-  private pose(film: Film, shot: FilmShot, role: 'start' | 'end', cuts: Map<string, string>): PictureTask[] {
+  private pose(film: Film, shot: FilmShot, role: 'start' | 'end', alone: Alone): PictureTask[] {
     const place = film.places.find((p) => p.id === shot.placeId)!
     const members = castOf(film, shot)
     const slot = { ownerKind: 'shot' as const, ownerId: shot.id, role }
-    // Picture 2 is the character on its own (cutOut), made from the picture the film has now.
-    const alone = (member: FilmCastMember) => {
-      const cut = member.pictureId ? cuts.get(member.pictureId) : undefined
-      if (!cut) throw new VideoRequestError(`${member.name}'s picture changed while the pictures were being got ready. Press the button again.`)
-      return cut
-    }
+    // Picture 2 is each character on their own (makePictures, cutOut).
     if (shot.closeUp) {
       const [member] = members as [FilmCastMember]
       return this.twice(film, this.o.recipes.fine, place.emptyId!, [{ prompt: closeUpPrompt(member, shot.characters[0]!.startPose), image2: alone(member) }], slot)

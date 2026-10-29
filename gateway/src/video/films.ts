@@ -753,7 +753,9 @@ export class FilmStore {
     const row = this.db.prepare(`SELECT picture_id AS pictureId, turnaround_id AS turnaroundId, face_id AS faceId FROM film_cast WHERE film_id = ? AND cast_id = ?`)
       .get(filmId, castId) as Record<string, string | null>
     this.db.prepare(`DELETE FROM film_cast WHERE film_id = ? AND cast_id = ?`).run(filmId, castId)
-    for (const picture of Object.values(row)) if (picture && !this.pictureInUse(picture)) this.media.removeImage(picture)
+    // With their cut-out picture (reference-cut.ts), which only jobs name.
+    const pictures = [...Object.values(row), row['pictureId'] ? referenceIdFor(row['pictureId']) : null]
+    for (const picture of pictures) if (picture && !this.pictureInUse(picture)) this.media.removeImage(picture)
   }
 
   private findPlace(filmId: string, id: unknown): FilmPlace | null {

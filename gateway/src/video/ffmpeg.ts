@@ -344,16 +344,26 @@ function tempName(folder: string, ext: string): string {
 const PICTURE_INPUT = {
   png: ['-f', 'png_pipe', '-c:v', 'png'], jpg: ['-f', 'jpeg_pipe', '-c:v', 'mjpeg'], webp: ['-f', 'webp_pipe', '-c:v', 'webp'],
 } as const
+export type PictureKind = keyof typeof PICTURE_INPUT
 const PICTURE_TIME_LIMIT_S = 20
+// A picture read for its pixels is made to fit this each way first (never larger): the picture editor works at about
+// a megapixel anyway, and the gateway then never holds more than a few MB of pixels.
+export const PICTURE_MAX_SIDE = 1536
+const MAX_PICTURE_BYTES = PICTURE_MAX_SIDE * PICTURE_MAX_SIDE * 4 + 1024 ** 2
 
-/** A picture in inputsDir by id, as an 8-bit RGB PNG whatever kind it is kept as, so its pixels can be read. */
-export async function pictureAsRgbPng(tools: FfmpegTools, inputsDir: string, id: string, ext: keyof typeof PICTURE_INPUT, maxBytes: number, options: RunOptions): Promise<Buffer> {
+/**
+ * A picture in inputsDir by id as an 8-bit RGBA PNG (see-through parts kept, for the reader to flatten), whatever kind
+ * it is kept as, made to fit PICTURE_MAX_SIDE, so its pixels can be read.
+ */
+export async function pictureAsPng(tools: FfmpegTools, inputsDir: string, id: string, ext: PictureKind, options: RunOptions): Promise<Buffer> {
   const input = ownFile(inputsDir, id, ext, 'The picture is missing.')
   const outPath = tempName(inputsDir, 'png')
+  const fit = `scale=w='min(${PICTURE_MAX_SIDE},iw)':h='min(${PICTURE_MAX_SIDE},ih)':force_original_aspect_ratio=decrease:flags=lanczos`
   try {
     await runFfmpeg(tools, ['-nostdin', '-hide_banner', '-v', 'error', '-timelimit', String(PICTURE_TIME_LIMIT_S),
-      '-protocol_whitelist', 'file', ...PICTURE_INPUT[ext], '-i', `file:${input}`, '-frames:v', '1', '-map_metadata', '-1',
-      '-fflags', '+bitexact', '-threads', String(THREADS), '-fs', String(maxBytes), '-f', 'image2', '-c:v', 'png', '-pix_fmt', 'rgb24', '-y', outPath], options)
+      '-protocol_whitelist', 'file', ...PICTURE_INPUT[ext], '-i', `file:${input}`, '-frames:v', '1', '-vf', fit, '-map_metadata', '-1',
+      '-fflags', '+bitexact', '-threads', String(THREADS), '-fs', String(MAX_PICTURE_BYTES), '-f', 'image2', '-update', '1', '-c:v', 'png',
+      '-pix_fmt', 'rgba', '-y', outPath], options)
     return readFileSync(outPath)
   } finally {
     rmSync(outPath, { force: true })

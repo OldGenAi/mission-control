@@ -8,8 +8,8 @@
 
 import { createHash } from 'node:crypto'
 import { dirname, extname } from 'node:path'
-import { pictureAsRgbPng, type FfmpegTools, type RunOptions } from './ffmpeg.js'
-import type { ImageInputs } from './image-input.js'
+import { FfmpegError, pictureAsPng, type FfmpegTools, type PictureKind, type RunOptions } from './ffmpeg.js'
+import { MIN_SIDE, type ImageInputs } from './image-input.js'
 import { readRgbPng, rgbPng } from './png-strip.js'
 
 export interface CharacterBox { x: number; y: number; width: number; height: number }
@@ -30,14 +30,20 @@ const MARGIN = 0.12
 export function findCharacter(rgb: Buffer, width: number, height: number): CharacterBox | 'busy' | 'empty' {
   const ew = Math.max(1, Math.round(width * EDGE))
   const eh = Math.max(1, Math.round(height * EDGE))
-  const edge: number[] = []
-  for (let y = 0; y < height; y++) {
-    const band = y < eh || y >= height - eh
-    for (let x = 0; x < width; x++) if (band || x < ew || x >= width - ew) edge.push((y * width + x) * 3)
+  const alongEdge = (visit: (at: number) => void) => {
+    for (let y = 0; y < height; y++) {
+      const band = y < eh || y >= height - eh
+      for (let x = 0; x < width; x++) if (band || x < ew || x >= width - ew) visit((y * width + x) * 3)
+    }
   }
-  const background = [0, 1, 2].map((c) => median(edge.map((at) => rgb[at + c]!)))
-  const near = edge.filter((at) => [0, 1, 2].every((c) => Math.abs(rgb[at + c]! - background[c]!) <= NEAR)).length
-  if (near < edge.length * PLAIN_SHARE) return 'busy'
+  // The background is the edge band's middle colour, each of the three on its own.
+  const counts = [0, 1, 2].map(() => new Array<number>(256).fill(0))
+  let edge = 0
+  alongEdge((at) => { edge++; for (let c = 0; c < 3; c++) counts[c]![rgb[at + c]!]!++ })
+  const background = counts.map((count) => middle(count, edge))
+  let near = 0
+  alongEdge((at) => { if ([0, 1, 2].every((c) => Math.abs(rgb[at + c]! - background[c]!) <= NEAR)) near++ })
+  if (near < edge * PLAIN_SHARE) return 'busy'
 
   const rows = new Array<number>(height).fill(0)
   const columns = new Array<number>(width).fill(0)
@@ -65,19 +71,15 @@ export function findCharacter(rgb: Buffer, width: number, height: number): Chara
   return { x, y, width: Math.min(width - 1, xs[1] + margin) - x + 1, height: Math.min(height - 1, ys[1] + margin) - y + 1 }
 }
 
-function median(values: number[]): number {
-  const counts = new Array<number>(256).fill(0)
-  for (const v of values) counts[v]!++
+// The middle value of `total` values counted by value.
+function middle(counts: number[], total: number): number {
   let seen = 0
   for (let v = 0; v < 256; v++) {
     seen += counts[v]!
-    if (seen * 2 >= values.length) return v
+    if (seen * 2 >= total) return v
   }
   return 255
 }
-
-// The smallest picture Mission Control keeps (image-input.ts); every kept picture is at least this big each way.
-const MIN_SIDE = 64
 
 // The box grown evenly to at least `side` each way, staying inside the picture.
 function atLeast(box: CharacterBox, side: number, width: number, height: number): CharacterBox {
@@ -105,10 +107,9 @@ export async function cutReference(tools: FfmpegTools, images: ImageInputs, pict
   if (!stored) return 'missing'
   const id = referenceIdFor(pictureId)
   if (images.find(id)) return { id }
-  const ext = extname(stored.fileName).slice(1) as 'png' | 'jpg' | 'webp'
-  const png = await pictureAsRgbPng(tools, dirname(stored.path), pictureId, ext, 8192 * 8192 * 3, options)
-  const picture = readRgbPng(png)
-  if (!picture) throw new Error('ffmpeg wrote a picture Mission Control could not read')
+  const ext = extname(stored.fileName).slice(1) as PictureKind
+  const picture = readRgbPng(await pictureAsPng(tools, dirname(stored.path), pictureId, ext, options))
+  if (!picture) throw new FfmpegError('ffmpeg made a picture Mission Control could not read.')
   const found = findCharacter(picture.rgb, picture.width, picture.height)
   if (typeof found === 'string') return found
   const box = atLeast(found, MIN_SIDE, picture.width, picture.height)
@@ -118,6 +119,6 @@ export async function cutReference(tools: FfmpegTools, images: ImageInputs, pict
     picture.rgb.copy(cut, row * box.width * 3, from, from + box.width * 3)
   }
   const saved = images.saveBuffer(rgbPng(box.width, box.height, cut), id)
-  if (typeof saved === 'string') throw new Error(`the cut-out picture could not be kept (${saved})`)
+  if (typeof saved === 'string') throw new FfmpegError(`The picture of the character on its own could not be kept (${saved}).`)
   return { id }
 }
