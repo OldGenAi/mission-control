@@ -11,7 +11,9 @@ import { openDatabase } from '../src/store/db.js'
 import { VideoCast } from '../src/video/cast.js'
 import { VideoJobs, VideoRequestError } from '../src/video/jobs.js'
 import { FilmStore, MAX_FILMS, MAX_PLACES, MAX_SHOTS, MAX_CANDIDATES } from '../src/video/films.js'
-import { registerVideoMethods } from '../src/methods/video.js'
+import { registerFilmMakingMethods, registerVideoMethods } from '../src/methods/video.js'
+import type { FilmDirector } from '../src/video/film-director.js'
+import type { FilmHelper } from '../src/video/film-helper.js'
 import { dispatch } from '../src/router.js'
 import type { ConnectedClient } from '../src/types.js'
 import type Database from 'better-sqlite3'
@@ -597,6 +599,42 @@ test('the video.film methods refuse with plain words, and get comes with signed 
   assert.deepEqual(await dispatch('video.film.delete', { id: film.id }, client), { deleted: true })
   const status = await dispatch('video.status', {}, client) as { ffmpeg: unknown }
   assert.equal(status.ffmpeg, null, 'video.status says when ffmpeg is missing')
+})
+
+test('video.film.plan: the helper sees the film\'s own cast with its kinds, and its plan replaces an old one only when asked', async () => {
+  const s = setup()
+  const asked: unknown[] = []
+  let answer: unknown = { confirm: '192.168.1.20' }
+  const helper = { plan: async (film: unknown, opts: unknown) => { asked.push({ film, opts }); return answer } } as unknown as FilmHelper
+  const director = {} as FilmDirector
+  registerFilmMakingMethods(director, s.films, helper)
+  const client = {} as ConnectedClient
+  const film = s.films.create({ ...FILM, castIds: [s.rex.id, s.tom.id] })
+  s.films.setKind(film.id, s.tom.id, 'man')
+
+  assert.deepEqual(await dispatch('video.film.plan', { filmId: film.id }, client), { confirm: '192.168.1.20' }, 'a local-network server is asked about first')
+  assert.deepEqual((asked[0] as { film: { cast: unknown } }).film.cast, [
+    { name: 'Rex', wording: 'black and white border collie, white blaze', kind: null }, { name: 'Tom', wording: 'a man in his sixties with a flat tweed cap', kind: 'man' },
+  ])
+  answer = {
+    warnings: ['a warning'],
+    plan: {
+      places: [{ name: 'The green', description: 'a village green', keep: 'the path stays dry' }],
+      shots: [{ place: 0, characters: [{ name: 'Rex', startPose: 'on the left', endPose: 'lying on the left' }, { name: 'Tom', startPose: 'on the right', endPose: 'sitting on the right' }],
+        action: 'they settle', seconds: 30, joins: 'follows', closeUp: false }],
+      kinds: [{ name: 'Rex', kind: 'dog' }, { name: 'Tom', kind: 'woman' }],
+    },
+  }
+  await assert.rejects(dispatch('video.film.plan', { filmId: film.id, allowAddress: '192.168.1.20' }, client), { code: 'INVALID_PARAMS' }, '30 seconds is too long for a shot')
+  ;(answer as { plan: { shots: Array<{ seconds: number }> } }).plan.shots[0]!.seconds = 6
+  const planned = await dispatch('video.film.plan', { filmId: film.id, allowAddress: '192.168.1.20' }, client) as { film: { shots: Array<{ characters: unknown[] }>; cast: Array<{ kind: string }> }; warnings: string[] }
+  assert.equal((asked[2] as { opts: { allowAddress: string } }).opts.allowAddress, '192.168.1.20')
+  assert.equal(planned.film.shots[0]!.characters.length, 2)
+  assert.deepEqual(planned.film.cast.map((c) => c.kind), ['dog', 'man'], 'the person\'s own kind stays')
+  assert.deepEqual(planned.warnings, ['a warning'])
+  await assert.rejects(dispatch('video.film.plan', { filmId: film.id }, client), { code: 'INVALID_PARAMS', message: 'This film already has a plan. Replace it?' })
+  await dispatch('video.film.plan', { filmId: film.id, replace: true }, client)
+  assert.equal(s.films.get(film.id)!.shots.length, 1)
 })
 
 test('no AI tool can reach the film modules (harness fit, storyboard spec 16)', () => {
