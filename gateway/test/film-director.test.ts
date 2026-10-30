@@ -623,6 +623,23 @@ test('round one checks every character in a shot can be cut out, while the cast 
   assert.ok((await s.finishAll()).length > 0)
 })
 
+test('round one checks every character, in a shot yet or not, and only while the film is early (review 8)', async () => {
+  const s = setup()
+  const { film } = planned(s)
+  // Nipper is in the film but in no shot yet: a shot added after round one could still bring them in.
+  s.films.update(film.id, { title: 'The red door', story: 'Rex goes through the red door.', seconds: 30, look: 'realistic', sound: true, castIds: [s.rex.id, s.nip.id] })
+  s.films.setKind(film.id, s.nip.id, 'dog')
+  const nipper = s.films.get(film.id)!.cast.find((c) => c.castId === s.nip.id)!.pictureId!
+  s.cutFor.set(nipper, 'busy')
+  await assert.rejects(s.director.makePictures(film.id, { round: 'places' }), /Nipper's picture has a busy background/)
+  s.cutFor.clear()
+  await s.director.makePictures(film.id, { round: 'places' })
+  await s.finishAll()
+  // Past the plan the film's pictures can't be swapped, so the check isn't made there.
+  s.cutFor.set(nipper, 'busy')
+  await assert.rejects(s.director.makePictures(film.id, { round: 'places' }), /Everything here has pictures to choose from/)
+})
+
 test('a round that needs the cut-outs says how to get ffmpeg when it is missing (audit M2)', async () => {
   const s = setup({ ffmpeg: false })
   const { film } = together(s)
