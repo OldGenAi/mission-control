@@ -904,9 +904,13 @@ test('deleting a film also removes a replaced sheet that only its old shot jobs 
 
 test('no AI tool can reach the film modules (harness fit, storyboard spec 16)', () => {
   const toolsDir = join(__dirname, '..', 'src', 'tools')
-  // Not by importing them (the film store, director, helper, wording and recipes, ffmpeg, the cut-out, the video
-  // methods), nor by calling a video method through the router (security audit S2).
-  const reaches = /video\/(films|film-[a-z-]+|ffmpeg|reference-cut|png-strip|image-input|jobs)(\.js)?['"]|methods\/video(\.js)?['"]|['"`]video\.[a-z.]+['"`]/
+  // Not by importing them (the film store, director, helper, wording and recipes, ffmpeg, the cut-out, the cast, the
+  // video methods), nor through the router at all, nor by naming a video method (security audit S2, review 8).
+  const reaches = new RegExp([
+    String.raw`video\/(films|film-[a-z-]+|ffmpeg|reference-cut|png-strip|image-input|jobs|cast)(\.js)?['"]`,
+    String.raw`methods\/video(\.js)?['"]`, String.raw`\/router(\.js)?['"]`, String.raw`\bdispatch\(`,
+    String.raw`['"\x60]video\.(film|cast|submit|cancel|delete|keep|clear|link|list|status|recipes)\b`, String.raw`['"\x60]video\.\$\{`,
+  ].join('|'))
   const offenders = readdirSync(toolsDir, { recursive: true, encoding: 'utf8' })
     .filter((name) => name.endsWith('.ts'))
     .filter((name) => reaches.test(readFileSync(join(toolsDir, name), 'utf8')))
