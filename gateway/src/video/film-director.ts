@@ -36,7 +36,7 @@ const BLANK_SIZE = { width: 1392, height: 752 }
 const MIN_FREE_BYTES = 2 * 1024 ** 3
 const RESTARTED = 'Mission Control restarted while this was being made. Press Make film to carry on.'
 // One install line per system; ffmpeg.org publishes only source code, so the Windows build is a third party's.
-const NO_FFMPEG = 'Making a film needs ffmpeg, which isn\'t installed. Install it (Ubuntu: sudo apt install ffmpeg; Mac: brew install ffmpeg; ' +
+export const NO_FFMPEG = 'Making a film needs ffmpeg, which isn\'t installed. Install it (Ubuntu: sudo apt install ffmpeg; Mac: brew install ffmpeg; ' +
   'Windows: winget install Gyan.FFmpeg, a third-party build), then restart Mission Control.'
 
 /** What the page hears about a film as it is made, built on the queue's own events. */
@@ -121,6 +121,8 @@ export class FilmDirector {
   private readonly waiters = new Map<string, (outcome: Outcome) => void>()
   // The director's own jobs, so their progress reaches the page as film events.
   private readonly owned = new Map<string, { filmId: string; shotId?: string }>()
+  // Each film's blank picture its first place is drawn from (masters).
+  private readonly blanks = new Map<string, string>()
 
   constructor(private readonly o: DirectorOptions) {}
 
@@ -177,6 +179,10 @@ export class FilmDirector {
    * round; the user chooses. Refusals come back with plain words before anything is queued.
    */
   async makePictures(filmId: unknown, request: PictureRequest): Promise<void> {
+    // Round one on a film still at its story or plan: it takes any picture added or changed in the cast since, as the
+    // refusals below send people to the cast to fix one (audit M1).
+    const early = this.o.films.get(filmId)
+    if (early && 'round' in request && request.round === 'places' && (early.stage === 'story' || early.stage === 'plan')) this.o.films.copyCastForPlan(early.id)
     // Planned once without the characters' cut-outs, so every refusal comes first and only the pictures the tasks
     // need are cut (a moment each, once per picture); then planned again on the film as it is after the wait.
     const wanted = new Map<string, string>()
@@ -185,8 +191,10 @@ export class FilmDirector {
       wanted.set(member.pictureId, member.name)
       return member.pictureId
     })
-    // Nothing to cut (round one, or Make more on a cast picture or a place): the first plan is the plan, with no wait
-    // in between (planning again would save another blank place picture for nothing).
+    // The cut-outs need ffmpeg: say how to get it, before anything is queued (audit M2).
+    if (wanted.size > 0 && !this.o.ffmpeg.tools()) throw new VideoRequestError(NO_FFMPEG)
+    // Nothing to cut (Make more on a cast picture or a place): the first plan is the plan, with no wait in between
+    // (planning again would save another blank place picture for nothing).
     const cuts = wanted.size > 0 ? await this.cutOut(first.film, wanted) : null
     const { film, running, tasks } = !cuts ? first : this.plan(filmId, request, (member) => {
       const cut = member.pictureId ? cuts.get(member.pictureId) : undefined
@@ -212,7 +220,7 @@ export class FilmDirector {
     if (running?.kind === 'make') throw new VideoRequestError(STOP_FIRST)
     const queued = running?.tasks ?? []
     let tasks: PictureTask[]
-    if ('round' in request && request.round === 'places') tasks = this.placesRound(film, queued)
+    if ('round' in request && request.round === 'places') tasks = this.placesRound(film, queued, alone)
     else if ('round' in request && request.round === 'shots') tasks = this.shotsRound(film, queued, alone)
     else if ('role' in request) tasks = this.makeMore(film, request.ownerId, request.role, queued, alone)
     else throw new VideoRequestError('Say which pictures to make.')
@@ -374,7 +382,7 @@ export class FilmDirector {
     }
   }
 
-  private placesRound(film: Film, queued: PictureTask[]): PictureTask[] {
+  private placesRound(film: Film, queued: PictureTask[], alone: Alone): PictureTask[] {
     if (film.places.length === 0 || film.shots.length === 0) throw new VideoRequestError('Plan the film first: add its places and shots.')
     const has = this.hasCandidates(film, queued)
     const tasks: PictureTask[] = []
@@ -383,6 +391,9 @@ export class FilmDirector {
       const wording = { name: member.name, wording: member.wording }
       if (!member.turnaroundId && !has(member.castId, 'turnaround')) tasks.push(...this.twice(film, this.o.recipes.fine, member.pictureId, [{ prompt: turnaroundPrompt(wording) }], { ownerKind: 'cast', ownerId: member.castId, role: 'turnaround' }))
       if (!member.faceId && !has(member.castId, 'face')) tasks.push(...this.twice(film, this.o.recipes.fine, member.pictureId, [{ prompt: facePrompt(wording) }], { ownerKind: 'cast', ownerId: member.castId, role: 'face' }))
+      // Round two cuts everyone in a shot out of their picture: a picture that can't be cut is found now, while the
+      // cast can still give the film a new one, not after round one's pictures are made from it (audit M1).
+      if (film.shots.some((s) => s.characters.some((c) => c.castId === member.castId))) alone(member)
     }
     const [first, ...later] = film.places
     if (!first!.masterId && !has(first!.id, 'master')) tasks.push(...this.masters(film, first!))
@@ -400,6 +411,8 @@ export class FilmDirector {
       try {
         cut = await this.o.references(pictureId)
       } catch (err) {
+        // A refusal already in plain words (no ffmpeg) goes to the page as it is.
+        if (err instanceof VideoRequestError) throw err
         console.error('[film] could not cut out a character:', err)
         throw new VideoRequestError(`Mission Control could not get ${name}'s picture ready${err instanceof FfmpegError ? `: ${err.message}` : '.'}`)
       }
@@ -474,7 +487,9 @@ export class FilmDirector {
     // The first place is drawn from a plain blank picture: drawn from a character's picture, the character could stay
     // in it (hand test T9, a master of Tom's picture kept Tom).
     if (place.id === first.id) {
-      const blank = this.o.queue.savePicture(plainPng(BLANK_SIZE.width, BLANK_SIZE.height, 200), BLANK_SIZE)
+      // One blank per film while the gateway runs: a press plans twice (makePictures), and Make more asks again.
+      const blank = this.blanks.get(film.id) ?? this.o.queue.savePicture(plainPng(BLANK_SIZE.width, BLANK_SIZE.height, 200), BLANK_SIZE)
+      this.blanks.set(film.id, blank)
       return this.twice(film, this.o.recipes.fast, blank, [{ prompt: firstMasterPrompt(place, film.look as FilmLook) }], slot)
     }
     return this.twice(film, this.o.recipes.fast, first.masterId!, [{ prompt: laterMasterPrompt(place) }], slot)

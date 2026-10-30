@@ -36,13 +36,13 @@ import { resolveBootProvider } from './providers/unconfigured.js'
 import { pricesWanted, refreshLocalContext, startPricingRefresh } from './providers/pricing.js'
 import { registerInstancesMethods } from './methods/instances.js'
 import { registerVideoMethods, registerFilmMakingMethods } from './methods/video.js'
-import { VideoJobs } from './video/jobs.js'
+import { VideoJobs, VideoRequestError } from './video/jobs.js'
 import { VideoCast } from './video/cast.js'
 import { FilmStore } from './video/films.js'
-import { FilmDirector } from './video/film-director.js'
+import { FilmDirector, NO_FFMPEG } from './video/film-director.js'
 import { FilmHelper } from './video/film-helper.js'
 import { FILM_EDIT_FAST, FILM_EDIT_FINE, FILM_SHOT } from './video/film-recipes.js'
-import { FfmpegError, findFfmpeg, joinFilm, makeSheet, stopLeftoverFfmpeg } from './video/ffmpeg.js'
+import { findFfmpeg, joinFilm, makeSheet, stopLeftoverFfmpeg } from './video/ffmpeg.js'
 import { CardShare } from './providers/card-share.js'
 import { lmStudioServer } from './providers/lmstudio-control.js'
 import { registerCardShareMethods } from './methods/card-share.js'
@@ -266,7 +266,7 @@ filmDirector = new FilmDirector({
   ffmpeg: { tools: () => ffmpeg, join: joinFilm, sheet: makeSheet, stopLeftover: stopLeftoverFfmpeg },
   // Round two needs ffmpeg too now (each character is cut out on their own), not only Make film.
   references: async (pictureId) => {
-    if (!ffmpeg) throw new FfmpegError('ffmpeg is not installed. The Video page says how to get it.')
+    if (!ffmpeg) throw new VideoRequestError(NO_FFMPEG)
     return videoJobs.cutOut(ffmpeg, pictureId, { timeoutMs: 30_000 })
   },
 })

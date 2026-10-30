@@ -12,6 +12,7 @@
 //   is thrown away by the director.
 
 import { randomBytes, randomInt } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import type Database from 'better-sqlite3'
 import { VideoRequestError } from './jobs.js'
 import { hasControlCharacter } from './params.js'
@@ -278,6 +279,7 @@ export class FilmStore {
     const fields = this.filmFields(input)
     const wanted = fields['castIds']
     const current = this.db.prepare(`SELECT cast_id AS castId, name FROM film_cast WHERE film_id = ? ORDER BY rowid`).all(film.id) as Array<{ castId: string; name: string }>
+    const gone: string[] = []
     this.db.transaction(() => {
       if (EARLY_STAGES.has(film.stage)) {
         const castIds = this.liveCast(wanted)
@@ -288,9 +290,9 @@ export class FilmStore {
             throw new VideoRequestError(`A shot uses ${name}: change or delete that shot first.`)
           }
         }
-        for (const { castId } of leaving) this.removeCast(film.id, castId)
+        for (const { castId } of leaving) gone.push(...this.removeCast(film.id, castId))
         for (const castId of castIds) {
-          if (current.some((c) => c.castId === castId)) this.refreshCast(film.id, castId)
+          if (current.some((c) => c.castId === castId)) gone.push(...this.refreshCast(film.id, castId))
           else this.addCast(film.id, castId)
         }
       } else {
@@ -301,6 +303,7 @@ export class FilmStore {
       this.db.prepare(`UPDATE films SET title = ?, story = ?, seconds = ?, look = ?, sound = ?, updated_at = ? WHERE id = ?`)
         .run(fields.title, fields.story, fields.seconds, fields.look, fields.sound ? 1 : 0, Date.now(), film.id)
     })()
+    this.removeUnused(gone)
     return this.get(film.id)!
   }
 
@@ -593,7 +596,9 @@ export class FilmStore {
     const film = this.editable(filmId)
     if (!EARLY_STAGES.has(film.stage)) throw new VideoRequestError('A film can be planned again only before its pictures are made. Start a new film for a new plan.')
     const cast = this.db.prepare(`SELECT cast_id AS castId FROM film_cast WHERE film_id = ?`).all(film.id) as Array<{ castId: string }>
-    this.db.transaction(() => { for (const { castId } of cast) this.refreshCast(film.id, castId) })()
+    const gone: string[] = []
+    this.db.transaction(() => { for (const { castId } of cast) gone.push(...this.refreshCast(film.id, castId)) })()
+    this.removeUnused(gone)
     return this.get(film.id)!
   }
 
@@ -626,6 +631,7 @@ export class FilmStore {
     if (!imageId) throw new VideoRequestError('That picture is not finished yet.')
     const ownerId = this.ownerOf(film.id, picture.ownerKind, picture.ownerId)
 
+    const gone: string[] = []
     this.db.transaction(() => {
       this.db.prepare(`UPDATE film_pictures SET image_id = ? WHERE id = ?`).run(imageId, id)
       const remake = this.db.prepare(`UPDATE film_shots SET revision = revision + 1 WHERE id = ?`)
@@ -636,7 +642,7 @@ export class FilmStore {
           break
         case 'empty':
           this.db.prepare(`UPDATE film_places SET empty_id = ? WHERE id = ?`).run(imageId, ownerId)
-          this.dropSheets(film.id, [ownerId])
+          gone.push(...this.dropSheets(film.id, [ownerId]))
           break
         case 'start':
           this.db.prepare(`UPDATE film_shots SET start_id = ? WHERE id = ?`).run(imageId, ownerId)
@@ -650,7 +656,7 @@ export class FilmStore {
         case 'face': {
           this.db.prepare(`UPDATE film_cast SET ${picture.role === 'face' ? 'face_id' : 'turnaround_id'} = ? WHERE film_id = ? AND cast_id = ?`).run(imageId, film.id, ownerId)
           const places = this.db.prepare(`SELECT DISTINCT place_id AS placeId FROM film_shots WHERE film_id = ? AND deleted_at IS NULL AND ${USES_CAST}`).all(film.id, ownerId) as Array<{ placeId: string }>
-          this.dropSheets(film.id, places.map((p) => p.placeId))
+          gone.push(...this.dropSheets(film.id, places.map((p) => p.placeId)))
           break
         }
       }
@@ -658,6 +664,7 @@ export class FilmStore {
       this.syncFollowsOn(film.id)
       this.touch(film.id)
     })()
+    this.removeUnused(gone)
   }
 
   /**
@@ -744,18 +751,36 @@ export class FilmStore {
     this.db.prepare(`INSERT INTO film_cast (film_id, cast_id, name, wording, picture_id) VALUES (?, ?, ?, ?, ?)`).run(filmId, castId, member.name, member.wording, pictureId)
   }
 
-  private refreshCast(filmId: string, castId: string): void {
+  // The cast member's name and wording now, and (only while the film is early, so nothing is drawn from it yet) its
+  // picture: one added or changed in the cast since gives the film a fresh copy (audit M1: the refusals send people to
+  // the cast to fix a picture). Returns the pictures to remove once the change has gone through.
+  private refreshCast(filmId: string, castId: string): string[] {
     this.db.prepare(`UPDATE film_cast SET name = (SELECT name FROM video_cast WHERE id = ?), wording = (SELECT wording FROM video_cast WHERE id = ?)
       WHERE film_id = ? AND cast_id = ?`).run(castId, castId, filmId, castId)
+    const source = (this.db.prepare(`SELECT image_id AS imageId FROM video_cast WHERE id = ?`).get(castId) as { imageId: string | null } | undefined)?.imageId ?? null
+    const copy = (this.db.prepare(`SELECT picture_id AS pictureId FROM film_cast WHERE film_id = ? AND cast_id = ?`).get(filmId, castId) as { pictureId: string | null }).pictureId
+    const from = source ? this.media.findImage(source) : null
+    const current = copy ? this.media.findImage(copy) : null
+    if (!source || !from || (current && readFileSync(current.path).equals(readFileSync(from.path)))) return []
+    const fresh = this.media.copyImage(source)
+    if (!fresh) return []
+    this.db.prepare(`UPDATE film_cast SET picture_id = ?, turnaround_id = NULL, face_id = NULL WHERE film_id = ? AND cast_id = ?`).run(fresh, filmId, castId)
+    return copy ? [copy, referenceIdFor(copy)] : []
   }
 
-  private removeCast(filmId: string, castId: string): void {
+  // Takes a character out of the film. Returns its pictures (and its cut-out, which only jobs name) to remove once the
+  // change has gone through.
+  private removeCast(filmId: string, castId: string): string[] {
     const row = this.db.prepare(`SELECT picture_id AS pictureId, turnaround_id AS turnaroundId, face_id AS faceId FROM film_cast WHERE film_id = ? AND cast_id = ?`)
       .get(filmId, castId) as Record<string, string | null>
     this.db.prepare(`DELETE FROM film_cast WHERE film_id = ? AND cast_id = ?`).run(filmId, castId)
-    // With their cut-out picture (reference-cut.ts), which only jobs name.
-    const pictures = [...Object.values(row), row['pictureId'] ? referenceIdFor(row['pictureId']) : null]
-    for (const picture of pictures) if (picture && !this.pictureInUse(picture)) this.media.removeImage(picture)
+    return [...Object.values(row), row['pictureId'] ? referenceIdFor(row['pictureId']) : null].filter((p): p is string => p !== null)
+  }
+
+  // Removes pictures nothing uses any more. Called only after the change that let them go has committed, so a change
+  // undone part way never leaves a row naming a file that is gone (security audit S1).
+  private removeUnused(pictures: string[]): void {
+    for (const picture of pictures) if (!this.pictureInUse(picture)) this.media.removeImage(picture)
   }
 
   private findPlace(filmId: string, id: unknown): FilmPlace | null {
@@ -854,15 +879,17 @@ export class FilmStore {
     throw new VideoRequestError(message)
   }
 
-  // A place's sheet shows the characters and the place, so it is made again, and every shot it guided with it. The old
-  // sheet's file goes once nothing uses it.
-  private dropSheets(filmId: string, placeIds: string[]): void {
+  // A place's sheet shows the characters and the place, so it is made again, and every shot it guided with it. Returns
+  // the old sheets, whose files go once the change has gone through and nothing uses them.
+  private dropSheets(filmId: string, placeIds: string[]): string[] {
+    const old: string[] = []
     for (const placeId of placeIds) {
-      const old = (this.db.prepare(`SELECT sheet_id AS sheetId FROM film_places WHERE id = ? AND film_id = ?`).get(placeId, filmId) as { sheetId: string | null } | undefined)?.sheetId
+      const sheet = (this.db.prepare(`SELECT sheet_id AS sheetId FROM film_places WHERE id = ? AND film_id = ?`).get(placeId, filmId) as { sheetId: string | null } | undefined)?.sheetId
       this.db.prepare(`UPDATE film_places SET sheet_id = NULL WHERE id = ? AND film_id = ?`).run(placeId, filmId)
       this.db.prepare(`UPDATE film_shots SET revision = revision + 1 WHERE place_id = ? AND film_id = ? AND deleted_at IS NULL`).run(placeId, filmId)
-      if (old && !this.pictureInUse(old)) this.media.removeImage(old)
+      if (sheet) old.push(sheet)
     }
+    return old
   }
 
   private move(table: 'film_places' | 'film_shots', rows: Array<{ id: string }>, id: string, position: unknown): void {
