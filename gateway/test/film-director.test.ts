@@ -40,7 +40,7 @@ interface Job { id: string; recipeId: string; params: Record<string, unknown>; f
 // The fake cutter's picture of a character on its own: a made-up id that is plainly that picture's.
 const cutOf = (pictureId: string) => [...pictureId].reverse().join('')
 
-function setup(opts: { shot?: Recipe | null } = {}) {
+function setup(opts: { shot?: Recipe | null; ffmpeg?: boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'mc-director-'))
   const db = openDatabase(join(dir, 'test.sqlite'))
   const mediaDir = join(dir, 'media')
@@ -106,7 +106,7 @@ function setup(opts: { shot?: Recipe | null } = {}) {
     films, queue, mediaDir, emit: (e) => events.push(e),
     recipes: { fast: FILM_EDIT_FAST, fine: FILM_EDIT_FINE, shot },
     ffmpeg: {
-      tools: () => ({ ffmpeg: '/usr/bin/ffmpeg', ffprobe: '/usr/bin/ffprobe', version: '8.0.1' }),
+      tools: () => (opts.ffmpeg === false ? null : { ffmpeg: '/usr/bin/ffmpeg', ffprobe: '/usr/bin/ffprobe', version: '8.0.1' }),
       join: async (_tools, dirOut, plan, outId, options) => { joins.push(plan); calls.pidFiles.push(options.pidFile!); writeFileSync(join(dirOut, `${outId}.mp4`), 'film'); return { frames: 1, bytes: 4 } },
       sheet: async (_tools, _inputs, pictures, options) => { sheets.push(pictures); calls.pidFiles.push(options.pidFile!); return PNG },
       stopLeftover: (pidFile) => { calls.stopLeftover.push(pidFile) },
@@ -559,10 +559,9 @@ test('a character whose picture has a busy background is refused with plain word
   const s = setup()
   const { film, green, three } = together(s)
   const nipper = s.films.get(film.id)!.cast.find((c) => c.castId === s.nip.id)!.pictureId!
-  s.cutFor.set(nipper, 'busy')
-  // Round one makes turnarounds and faces from the whole picture, so it doesn't need the cut.
   await placesChosen(s, film.id, [s.rex.id, s.nip.id, s.tom.id], green.id)
-  assert.deepEqual(s.calls.cuts, [])
+  // Round one found it could be cut; refused here only if it can't be now.
+  s.cutFor.set(nipper, 'busy')
   const count = s.submitted.length
   await assert.rejects(s.director.makePictures(film.id, { round: 'shots' }), /Nipper's picture has a busy background.*Nipper alone on a plain background/)
   await assert.rejects(s.director.makePictures(film.id, { ownerId: three.id, role: 'end' }), /Nipper's picture has a busy background/)
@@ -599,12 +598,36 @@ test('the quick refusals come before any character is cut out, and only the pict
   s.cutFor.set(nipper, 'busy')
   await assert.rejects(s.director.makePictures(film.id, { round: 'shots' }), /Choose a master picture for The green first/)
   assert.deepEqual(s.calls.cuts, [], 'nothing cut for a press that is refused anyway')
+  s.cutFor.clear()
   await placesChosen(s, film.id, [s.rex.id, s.nip.id, s.tom.id], green.id)
+  s.cutFor.set(nipper, 'busy')
+  const before = s.calls.cuts.length
   // Make more for the close-up of Rex needs only Rex cut out, so Nipper's busy picture doesn't stop it.
   await s.director.makePictures(film.id, { ownerId: closeUp.id, role: 'start' })
   assert.equal((await s.finishAll()).length, 2)
   const rex = s.films.get(film.id)!.cast.find((c) => c.castId === s.rex.id)!.pictureId!
-  assert.deepEqual(s.calls.cuts, [rex])
+  assert.deepEqual(s.calls.cuts.slice(before), [rex])
+})
+
+test('round one checks every character in a shot can be cut out, while the cast can still give them a new picture (audit M1)', async () => {
+  const s = setup()
+  const { film } = together(s)
+  const nipper = s.films.get(film.id)!.cast.find((c) => c.castId === s.nip.id)!.pictureId!
+  s.cutFor.set(nipper, 'busy')
+  await assert.rejects(s.director.makePictures(film.id, { round: 'places' }), /Nipper's picture has a busy background.*Nipper alone on a plain background/)
+  assert.equal(s.submitted.length, 0, 'nothing made before the picture is fixed')
+  // A new picture in the cast reaches the film when round one is pressed again.
+  s.cast.save({ id: s.nip.id, name: 'Nipper', wording: 'a mostly black collie with white paws', imageId: s.jobs.uploadImage(PNG.toString('base64')).id })
+  await s.director.makePictures(film.id, { round: 'places' })
+  assert.notEqual(s.films.get(film.id)!.cast.find((c) => c.castId === s.nip.id)!.pictureId, nipper)
+  assert.ok((await s.finishAll()).length > 0)
+})
+
+test('a round that needs the cut-outs says how to get ffmpeg when it is missing (audit M2)', async () => {
+  const s = setup({ ffmpeg: false })
+  const { film } = together(s)
+  await assert.rejects(s.director.makePictures(film.id, { round: 'places' }), (err: Error) => /^Making a film needs ffmpeg.*winget install Gyan\.FFmpeg/.test(err.message))
+  assert.deepEqual(s.calls.cuts, [])
 })
 
 test('Make film with three characters: the sheet holds the first one, the shot words name everyone', async () => {
