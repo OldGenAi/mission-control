@@ -23,18 +23,19 @@ const errorText = (err: unknown, fallback: string) => (err instanceof Error ? er
 /** One slot's pictures to choose from (a master, a pose, a turnaround or a face): big, and a tap chooses. */
 const Slot: React.FC<{
   label: string; pictures: FilmPicture[]; chosen: string | null; links: Record<string, string>; disabled: boolean; note?: string
-  onChoose: (pictureId: string) => void; onMore: () => Promise<boolean>
-}> = ({ label, pictures, chosen, links, disabled, note, onChoose, onMore }) => {
-  // Make more waits its turn behind the pictures being made, and its boxes show only once it starts: say so meanwhile
-  // (live test: it looked as if the press did nothing).
+  onChoose: (pictureId: string) => void; onMore: () => Promise<boolean>; working: boolean
+}> = ({ label, pictures, chosen, links, disabled, note, onChoose, onMore, working }) => {
+  // Make more (two pictures) waits its turn behind the pictures being made, and its boxes show only once it starts: say
+  // so meanwhile (live test: it looked as if the press did nothing). Once nothing is being made (finished, failed or
+  // stopped) the note goes.
   const [expected, setExpected] = useState(0)
-  const more = () => void onMore().then((queued) => { if (queued) setExpected((n) => Math.max(n, pictures.length) + 2) })
+  const more = () => void onMore().then((queued) => { if (queued) setExpected((n) => (working ? Math.max(n, pictures.length) : pictures.length) + 2) })
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-3">
         <span className="text-xs text-gray-300">{label}</span>
         {note && <span className="text-xs text-gray-500">{note}</span>}
-        {pictures.length < expected && <span className="text-xs text-gray-400">More on the way: they show here when their turn comes.</span>}
+        {working && pictures.length < expected && <span className="text-xs text-gray-400">More on the way: they show here when their turn comes.</span>}
         {pictures.length > 0 && <button onClick={more} disabled={disabled} className="text-xs ml-auto" style={linkButton(disabled ? '#4B5563' : '#67e8f9')}>Make more</button>}
       </div>
       <div className="flex flex-wrap gap-3">
@@ -315,15 +316,15 @@ export const StoryboardPage: React.FC = () => {
           {film.cast.map((c) => (
             <React.Fragment key={c.castId}>
               <Slot label={`${c.name}: front, side and back`} pictures={candidates(c.castId, 'turnaround', c.turnaroundId)} chosen={c.turnaroundId} links={links}
-                disabled={!canChoose || busy} onChoose={(id) => void choose(id)} onMore={() => makePictures({ ownerId: c.castId, role: 'turnaround' })} />
+                disabled={!canChoose || busy} onChoose={(id) => void choose(id)} working={picturesBeingMade} onMore={() => makePictures({ ownerId: c.castId, role: 'turnaround' })} />
               <Slot label={`${c.name}: face`} pictures={candidates(c.castId, 'face', c.faceId)} chosen={c.faceId} links={links}
-                disabled={!canChoose || busy} onChoose={(id) => void choose(id)} onMore={() => makePictures({ ownerId: c.castId, role: 'face' })} />
+                disabled={!canChoose || busy} onChoose={(id) => void choose(id)} working={picturesBeingMade} onMore={() => makePictures({ ownerId: c.castId, role: 'face' })} />
             </React.Fragment>
           ))}
           {film.places.map((p, i) => (
             <Slot key={p.id} label={p.name} pictures={candidates(p.id, 'master', p.masterId)} chosen={p.masterId} links={links}
               note={i > 0 && !film.places[0]!.masterId ? `Made after you choose ${film.places[0]!.name}, so the light and style carry over` : 'Choose one with nobody in it: the characters are added later'}
-              disabled={!canChoose || busy} onChoose={(id) => void choose(id)} onMore={() => makePictures({ ownerId: p.id, role: 'master' })} />
+              disabled={!canChoose || busy} onChoose={(id) => void choose(id)} working={picturesBeingMade} onMore={() => makePictures({ ownerId: p.id, role: 'master' })} />
           ))}
         </div>
       )}
@@ -345,10 +346,10 @@ export const StoryboardPage: React.FC = () => {
                 {followsOn(film.shots[i - 1], s)
                   ? <p className="text-xs text-gray-500">Starts where shot {i} ends.</p>
                   : <Slot label={s.closeUp ? 'Close-up' : 'Start'} pictures={candidates(s.id, 'start', s.startId)} chosen={s.startId} links={links}
-                      disabled={!canChoose || busy} onChoose={(id) => void choose(id)} onMore={() => makePictures({ ownerId: s.id, role: 'start' })} />}
+                      disabled={!canChoose || busy} onChoose={(id) => void choose(id)} working={picturesBeingMade} onMore={() => makePictures({ ownerId: s.id, role: 'start' })} />}
                 {!s.closeUp && (
                   <Slot label="End" pictures={candidates(s.id, 'end', s.endId)} chosen={s.endId} links={links}
-                    disabled={!canChoose || busy} onChoose={(id) => void choose(id)} onMore={() => makePictures({ ownerId: s.id, role: 'end' })} />
+                    disabled={!canChoose || busy} onChoose={(id) => void choose(id)} working={picturesBeingMade} onMore={() => makePictures({ ownerId: s.id, role: 'end' })} />
                 )}
               </div>
             )

@@ -125,8 +125,8 @@ export class ImageInputs {
       return { id, ...info }
     }
     // Whole or not at all: a given id is trusted once a file is there, so it is written under a temp name (the start-up
-    // sweep's kind) and linked into place, which also never replaces one already there. A drive without links gets a
-    // rename instead (what is kept under a given id is always the same picture).
+    // sweep's kind) and linked into place, which leaves one already there as it is. A drive without links gets a
+    // rename instead, which may replace it (what is kept under a given id is always the same picture).
     const temp = join(this.dir, `tmp-${randomBytes(16).toString('hex')}.png`)
     const final = join(this.dir, `${id}.png`)
     try {
@@ -135,7 +135,7 @@ export class ImageInputs {
         linkSync(temp, final)
       } catch (err) {
         const code = (err as NodeJS.ErrnoException).code
-        if (code === 'EPERM' || code === 'ENOTSUP' || code === 'EXDEV') renameSync(temp, final)
+        if (code === 'EPERM' || code === 'ENOTSUP' || code === 'ENOSYS' || code === 'EXDEV') renameSync(temp, final)
         else if (code !== 'EEXIST') throw err
       }
     } finally {

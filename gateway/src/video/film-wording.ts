@@ -136,8 +136,10 @@ export function posePrompts(characters: Array<{ cast: PoseCast; pose: string }>,
   })
 }
 
-// Words that place someone by another ("to the left of Spot"), as against only looking at them ("looking at Tom").
-const PLACED_BY = /(left of|right of|beside|next to|behind|in front of|near|between|close to|alongside|by|with)\b[^.,;]{0,24}$/i
+// Words right before a name that place someone by another ("to the left of Spot", "between Bess and Spot"), or right
+// after it ("on Spot's left"), as against only looking at them ("looking at Tom").
+const PLACED_BEFORE = /(?<![\p{L}\p{N}])(left of|right of|beside|next to|behind|in front of|near|between|close to|alongside|by|with)\s+(?:[\p{L}\p{M}'-]+\s+and\s+)?$/iu
+const PLACED_AFTER = /^'s\s+(left|right|side)\b/i
 
 /**
  * The order a pose's characters are added in: each after anyone their own pose names, otherwise as in the shot. A
@@ -150,10 +152,11 @@ export function addingOrder<T extends { cast: { name: string }; pose: string }>(
   // How a pose names someone: 'placed' by them, 'named' only, or not at all.
   const names = (c: T, other: T): 'placed' | 'named' | null => {
     const name = field(other.cast.name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    if (!name) return null
     const pose = field(c.pose)
     let how: 'placed' | 'named' | null = null
     for (const match of pose.matchAll(new RegExp(`(?<![\\p{L}\\p{M}\\p{N}])${name}(?![\\p{L}\\p{M}\\p{N}])`, 'gu'))) {
-      if (PLACED_BY.test(pose.slice(0, match.index))) return 'placed'
+      if (PLACED_BEFORE.test(pose.slice(0, match.index)) || PLACED_AFTER.test(pose.slice(match.index + match[0].length))) return 'placed'
       how = 'named'
     }
     return how
