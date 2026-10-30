@@ -185,8 +185,10 @@ export class FilmDirector {
       wanted.set(member.pictureId, member.name)
       return member.pictureId
     })
-    const cuts = await this.cutOut(first.film, wanted)
-    const { film, running, tasks } = this.plan(filmId, request, (member) => {
+    // Nothing to cut (round one, or Make more on a cast picture or a place): the first plan is the plan, with no wait
+    // in between (planning again would save another blank place picture for nothing).
+    const cuts = wanted.size > 0 ? await this.cutOut(first.film, wanted) : null
+    const { film, running, tasks } = !cuts ? first : this.plan(filmId, request, (member) => {
       const cut = member.pictureId ? cuts.get(member.pictureId) : undefined
       if (!cut) throw new VideoRequestError('This film changed while its pictures were being got ready. Press the button again.')
       return cut

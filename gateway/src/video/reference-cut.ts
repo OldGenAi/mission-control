@@ -95,7 +95,7 @@ function atLeast(box: CharacterBox, side: number, width: number, height: number)
 
 /** The id the cut-out of a picture is kept under: from the picture's own id, so each picture is cut once. */
 export function referenceIdFor(pictureId: string): string {
-  return createHash('sha256').update(`mission-control character cut v1:${pictureId}`).digest('hex').slice(0, 32)
+  return createHash('sha256').update(`mission-control character cut v2:${pictureId}`).digest('hex').slice(0, 32)
 }
 
 /**
