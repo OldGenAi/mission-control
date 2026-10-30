@@ -266,7 +266,8 @@ test('a running job can be stopped', async () => {
     await new Promise((r) => setTimeout(r, 20))
     assert.equal(jobs.cancel(id), true)
     assert.equal((await finished(id)).status, 'cancelled')
-    assert.ok(comfy.cancelled() > 0, 'ComfyUI was told to stop')
+    // The stop is sent without waiting, so it can reach ComfyUI a moment after the job shows as stopped (macOS CI).
+    assert.ok(await waitFor(() => comfy.cancelled() > 0), 'ComfyUI was told to stop')
     for (let i = 0; i < 50 && comfy.freed() === 0; i++) await new Promise((r) => setTimeout(r, 10))   // let the job hand memory back before the fake closes
   } finally { await comfy.close() }
 })

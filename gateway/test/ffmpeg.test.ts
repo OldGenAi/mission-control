@@ -34,7 +34,8 @@ test('ffmpeg is found only as a real program in an absolute PATH folder', { skip
     chmodSync(join(dir, name), 0o755)
   }
   const found = findFfmpeg(['relative/bin', '.', '', dir].join(delimiter))
-  assert.equal(found?.ffmpeg, join(dir, 'ffmpeg'))
+  // The real path: macOS's temp folder is a link into /private.
+  assert.equal(found?.ffmpeg, realpathSync(join(dir, 'ffmpeg')))
   assert.equal(found?.version, '8.0.1-test')
   assert.equal(findFfmpeg(['.', 'relative'].join(delimiter)), null, 'relative folders are skipped')
   assert.equal(findFfmpeg(mkdtempSync(join(tmpdir(), 'mc-ff-empty-'))), null)
@@ -47,7 +48,9 @@ test('every input is pinned to a file, a format and its decoders, and named by i
   assert.equal(inputs.length, 2)
   for (const at of inputs) {
     assert.deepEqual(args.slice(at - 8, at), ['-protocol_whitelist', 'file', '-f', 'mov', '-c:v', 'h264', '-c:a', 'aac'])
-    assert.match(args[at + 1]!, /^file:\/media\/[0-9a-f]{32}\.mp4$/)
+    // The folder's own separator: backslashes on Windows.
+    const folder = join(dir, 'x').slice(0, -1)
+    assert.match(args[at + 1]!, new RegExp(`^file:${folder.replace(/\\/g, '\\\\')}[0-9a-f]{32}\\.mp4$`))
   }
   assert.ok(args.includes('-nostdin'))
   assert.equal(args.filter((a) => a === '-f').length, 3, 'mov for each input, and mp4 out')
