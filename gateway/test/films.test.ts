@@ -108,6 +108,47 @@ test('a later edit or delete of a cast member does not change a film that uses i
   assert.ok(s.jobs.hasImage(after.cast[0]!.pictureId!))
 })
 
+test('until its pictures are made, a film\'s copy of each character\'s picture follows the cast (audit M1)', () => {
+  const s = setup()
+  // Bess has no picture yet: the refusal tells the person to add one in the cast, and that has to work.
+  const film = s.films.create({ ...FILM, castIds: [s.rex.id, s.bess.id] })
+  const copyOf = (castId: string) => s.films.get(film.id)!.cast.find((c) => c.castId === castId)!.pictureId
+  assert.equal(copyOf(s.bess.id), null)
+  const bessPicture = s.picture()
+  s.cast.save({ id: s.bess.id, name: 'Bess', wording: 'small brown terrier', imageId: bessPicture })
+  s.films.update(film.id, { ...FILM, castIds: [s.rex.id, s.bess.id] })
+  assert.ok(copyOf(s.bess.id))
+  assert.deepEqual(readFileSync(s.jobs.findImage(copyOf(s.bess.id))!.path), readFileSync(s.jobs.findImage(bessPicture)!.path))
+  // A picture changed in the cast: a fresh copy, and the old copy's file goes.
+  const oldRex = copyOf(s.rex.id)!
+  s.cast.save({ id: s.rex.id, name: 'Rex', wording: 'black and white border collie, white blaze', imageId: s.picture() })
+  s.films.copyCastForPlan(film.id)
+  assert.notEqual(copyOf(s.rex.id), oldRex)
+  assert.equal(s.jobs.hasImage(oldRex), false)
+  // The same picture again changes nothing.
+  const same = copyOf(s.rex.id)
+  s.films.update(film.id, { ...FILM, castIds: [s.rex.id, s.bess.id] })
+  assert.equal(copyOf(s.rex.id), same)
+  // Once pictures are made from it, the film keeps its own copy.
+  setStage(s.db, film.id, 'places')
+  s.cast.save({ id: s.rex.id, name: 'Rex', wording: 'black and white border collie, white blaze', imageId: s.picture() })
+  s.films.update(film.id, { ...FILM, castIds: [s.rex.id, s.bess.id] })
+  assert.equal(copyOf(s.rex.id), same)
+})
+
+test('a change refused part way leaves every picture file in place (security audit S1)', () => {
+  const s = setup()
+  const film = s.films.create({ ...FILM, castIds: [s.rex.id] })
+  const rexCopy = s.films.get(film.id)!.cast[0]!.pictureId!
+  // Taking Rex out and Tom in, where copying Tom's picture fails (a full disk): the whole change is undone, and Rex's
+  // copy must still be on disk for the film that still names it.
+  const failing = new FilmStore(s.db, { ...s.jobs, findImage: (id) => s.jobs.findImage(id), copyImage: () => { throw new Error('disk full') }, removeImage: (id) => s.jobs.removeImage(id),
+    pictureOf: (id) => s.jobs.pictureOf(id), deleteFilmRows: (id) => s.jobs.deleteFilmRows(id), filmFilePath: (id, f) => s.jobs.filmFilePath(id, f), cancelFilmJob: () => false })
+  assert.throws(() => failing.update(film.id, { ...FILM, castIds: [s.tom.id] }), /disk full/)
+  assert.deepEqual(s.films.get(film.id)!.cast.map((c) => c.pictureId), [rexCopy])
+  assert.equal(s.jobs.hasImage(rexCopy), true)
+})
+
 test('films are listed newest first, and deleted ones are gone', async () => {
   const s = setup()
   const a = s.films.create({ ...FILM, title: 'First', castIds: [s.rex.id] })
@@ -863,8 +904,11 @@ test('deleting a film also removes a replaced sheet that only its old shot jobs 
 
 test('no AI tool can reach the film modules (harness fit, storyboard spec 16)', () => {
   const toolsDir = join(__dirname, '..', 'src', 'tools')
+  // Not by importing them (the film store, director, helper, wording and recipes, ffmpeg, the cut-out, the video
+  // methods), nor by calling a video method through the router (security audit S2).
+  const reaches = /video\/(films|film-[a-z-]+|ffmpeg|reference-cut|png-strip|image-input|jobs)(\.js)?['"]|methods\/video(\.js)?['"]|['"`]video\.[a-z.]+['"`]/
   const offenders = readdirSync(toolsDir, { recursive: true, encoding: 'utf8' })
     .filter((name) => name.endsWith('.ts'))
-    .filter((name) => /video\/(films|film-[a-z-]+)(\.js)?['"]/.test(readFileSync(join(toolsDir, name), 'utf8')))
+    .filter((name) => reaches.test(readFileSync(join(toolsDir, name), 'utf8')))
   assert.deepEqual(offenders, [])
 })
