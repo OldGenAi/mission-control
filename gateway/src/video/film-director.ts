@@ -391,9 +391,10 @@ export class FilmDirector {
       const wording = { name: member.name, wording: member.wording }
       if (!member.turnaroundId && !has(member.castId, 'turnaround')) tasks.push(...this.twice(film, this.o.recipes.fine, member.pictureId, [{ prompt: turnaroundPrompt(wording) }], { ownerKind: 'cast', ownerId: member.castId, role: 'turnaround' }))
       if (!member.faceId && !has(member.castId, 'face')) tasks.push(...this.twice(film, this.o.recipes.fine, member.pictureId, [{ prompt: facePrompt(wording) }], { ownerKind: 'cast', ownerId: member.castId, role: 'face' }))
-      // Round two cuts everyone in a shot out of their picture: a picture that can't be cut is found now, while the
-      // cast can still give the film a new one, not after round one's pictures are made from it (audit M1).
-      if (film.shots.some((s) => s.characters.some((c) => c.castId === member.castId))) alone(member)
+      // Round two cuts each character out of their picture: one that can't be cut is found now, while the cast can still
+      // give the film a new picture, not after round one's pictures are made from it (audit M1). Everyone, as a shot
+      // added later can bring anyone in (review 8); past the plan the film's pictures can't change, so not then.
+      if (film.stage === 'story' || film.stage === 'plan') alone(member)
     }
     const [first, ...later] = film.places
     if (!first!.masterId && !has(first!.id, 'master')) tasks.push(...this.masters(film, first!))
