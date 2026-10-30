@@ -4,6 +4,7 @@
 // in the pose: two Toms and three dogs in the live test's end pictures.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -78,11 +79,18 @@ test('readRgbPng refuses what it wasn\'t made for: another colour type, an inter
 })
 
 // An 8-bit RGBA PNG (colour type 6) of these pixels, for see-through pictures.
+// Every other row uses the Sub filter, as ffmpeg's encoder does use filters (review 6).
 function rgbaPng(width: number, height: number, rgba: Buffer): Buffer {
   const header = Buffer.alloc(13)
   header.writeUInt32BE(width, 0); header.writeUInt32BE(height, 4); header[8] = 8; header[9] = 6
-  const rows = Buffer.alloc(height * (1 + width * 4))
-  for (let y = 0; y < height; y++) rgba.copy(rows, y * (1 + width * 4) + 1, y * width * 4, (y + 1) * width * 4)
+  const stride = width * 4
+  const rows = Buffer.alloc(height * (1 + stride))
+  for (let y = 0; y < height; y++) {
+    const at = y * (1 + stride)
+    if (y % 2 === 0) { rgba.copy(rows, at + 1, y * stride, (y + 1) * stride); continue }
+    rows[at] = 1
+    for (let i = 0; i < stride; i++) rows[at + 1 + i] = (rgba[y * stride + i]! - (i >= 4 ? rgba[y * stride + i - 4]! : 0)) & 0xff
+  }
   const chunk = (type: string, data: Buffer) => {
     const out = Buffer.alloc(12 + data.length)
     out.writeUInt32BE(data.length, 0); out.write(type, 4, 'latin1'); data.copy(out, 8)
@@ -100,12 +108,16 @@ test('a see-through picture reads as the character on light grey, whatever colou
   }
   const read = readRgbPng(rgbaPng(400, 200, rgba))!
   assert.deepEqual([...read.rgb.subarray(0, 3)], [...SEE_THROUGH])
+  const inFigure = ((101 * 400) + 260) * 3
+  assert.deepEqual([...read.rgb.subarray(inFigure, inFigure + 3)], [90, 60, 30], 'a filtered row reads back right')
   assert.deepEqual(findCharacter(read.rgb, 400, 200), { x: 234, y: 24, width: 62, height: 162 })
 })
 
 test('the cut picture\'s id comes from the picture\'s own, so each picture is cut once', () => {
   const a = 'a'.repeat(32)
   assert.match(referenceIdFor(a), /^[0-9a-f]{32}$/)
+  // Version 2: cut-outs made before pictures were made to fit and see-through parts read as grey are made again (review 6).
+  assert.equal(referenceIdFor(a), createHash('sha256').update(`mission-control character cut v2:${a}`).digest('hex').slice(0, 32))
   assert.equal(referenceIdFor(a), referenceIdFor(a))
   assert.notEqual(referenceIdFor(a), a)
   assert.notEqual(referenceIdFor(a), referenceIdFor('b'.repeat(32)))
