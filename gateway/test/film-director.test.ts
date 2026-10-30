@@ -617,7 +617,7 @@ test('round one checks every character in a shot can be cut out, while the cast 
   await assert.rejects(s.director.makePictures(film.id, { round: 'places' }), /Nipper's picture has a busy background.*Nipper alone on a plain background/)
   assert.equal(s.submitted.length, 0, 'nothing made before the picture is fixed')
   // A new picture in the cast reaches the film when round one is pressed again.
-  s.cast.save({ id: s.nip.id, name: 'Nipper', wording: 'a mostly black collie with white paws', imageId: s.jobs.uploadImage(PNG.toString('base64')).id })
+  s.cast.save({ id: s.nip.id, name: 'Nipper', wording: 'a mostly black collie with white paws', imageId: s.jobs.uploadImage(Buffer.concat([PNG.subarray(0, -12 - 18), pngChunk('IDAT', Buffer.from('a new picture')), PNG.subarray(-12)]).toString('base64')).id })
   await s.director.makePictures(film.id, { round: 'places' })
   assert.notEqual(s.films.get(film.id)!.cast.find((c) => c.castId === s.nip.id)!.pictureId, nipper)
   assert.ok((await s.finishAll()).length > 0)

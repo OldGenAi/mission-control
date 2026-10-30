@@ -121,7 +121,7 @@ test('until its pictures are made, a film\'s copy of each character\'s picture f
   assert.deepEqual(readFileSync(s.jobs.findImage(copyOf(s.bess.id))!.path), readFileSync(s.jobs.findImage(bessPicture)!.path))
   // A picture changed in the cast: a fresh copy, and the old copy's file goes.
   const oldRex = copyOf(s.rex.id)!
-  s.cast.save({ id: s.rex.id, name: 'Rex', wording: 'black and white border collie, white blaze', imageId: s.picture() })
+  s.cast.save({ id: s.rex.id, name: 'Rex', wording: 'black and white border collie, white blaze', imageId: s.jobs.uploadImage(png(128, 64).toString('base64')).id })
   s.films.copyCastForPlan(film.id)
   assert.notEqual(copyOf(s.rex.id), oldRex)
   assert.equal(s.jobs.hasImage(oldRex), false)
@@ -131,7 +131,7 @@ test('until its pictures are made, a film\'s copy of each character\'s picture f
   assert.equal(copyOf(s.rex.id), same)
   // Once pictures are made from it, the film keeps its own copy.
   setStage(s.db, film.id, 'places')
-  s.cast.save({ id: s.rex.id, name: 'Rex', wording: 'black and white border collie, white blaze', imageId: s.picture() })
+  s.cast.save({ id: s.rex.id, name: 'Rex', wording: 'black and white border collie, white blaze', imageId: s.jobs.uploadImage(png(160, 64).toString('base64')).id })
   s.films.update(film.id, { ...FILM, castIds: [s.rex.id, s.bess.id] })
   assert.equal(copyOf(s.rex.id), same)
 })

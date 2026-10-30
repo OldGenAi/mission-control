@@ -122,6 +122,7 @@ const StoryForm: React.FC<{ film: Film | null; onSaved: (id: string) => void; on
               onChange={(e) => setCastIds(e.target.checked ? [...castIds, c.id] : castIds.filter((id) => id !== c.id))} />
             {c.thumb && <img src={c.thumb} alt="" style={{ width: 32, height: 20, objectFit: 'cover', borderRadius: 4 }} />}
             {c.name}
+            {!c.thumb && castIds.includes(c.id) && cast.some((m) => m.id === c.id) && <span style={{ color: '#fcd34d' }}>needs a picture: add one on the Video page before round one</span>}
           </label>
         ))}
       </div>
@@ -297,6 +298,8 @@ export const StoryboardPage: React.FC = () => {
       </div>
       {film.problem && <p className="text-xs" style={{ color: '#f87171' }}>{film.problem}</p>}
       {comfyWarnings.map((w) => <p key={w} className="text-xs" style={{ color: '#fcd34d' }}>{w}</p>)}
+      {/* The picture rounds need ffmpeg too (each character is cut out of their picture), so say it from the start. */}
+      {ffmpeg === null && <p className="text-xs" style={{ color: '#fcd34d' }}>{NO_FFMPEG}</p>}
       {error && <p className="text-xs" style={{ color: '#f87171' }}>{error}</p>}
 
       <StoryForm key={film.id} film={film} onSaved={() => void loadFilm()} onError={setError} />
