@@ -104,6 +104,10 @@ test('characters are added after anyone their pose names, so nobody is drawn in 
   const loop = [pose(TOM, 'sitting on the grass to the left of Bess, smiling gently'), pose(BESS, 'lying down in the center, looking at Tom'),
     pose(NIP, 'lying down to the right of Bess, looking at Tom')]
   assert.deepEqual(addingOrder(loop).map((c) => c.cast.name), ['Bess', 'Tom', 'Nipper'])
+  // Position words right before a name, or "'s left" after it; not words further back or inside other words (review 7).
+  const loop2 = [pose(TOM, 'sitting on Bess\'s left, stubby pipe in hand'), pose(BESS, 'lying down with a big smile, looking at Tom')]
+  assert.deepEqual(addingOrder(loop2).map((c) => c.cast.name), ['Bess', 'Tom'])
+  assert.deepEqual(addingOrder([pose(BESS, 'by the gate, wagging at Tom'), pose(TOM, 'standing by Bess')]).map((c) => c.cast.name), ['Bess', 'Tom'])
   // Placed beside each other both ways: the shot's order.
   assert.deepEqual(addingOrder([pose(TOM, 'beside Bess'), pose(BESS, 'next to Tom')]).map((c) => c.cast.name), ['Tom', 'Bess'])
   // The words are compared as the editor reads them.
