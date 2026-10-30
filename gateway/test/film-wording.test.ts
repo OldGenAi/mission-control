@@ -88,6 +88,7 @@ test('masters, the empty master and the close-up follow the recipe', () => {
   assert.equal(closeUpPrompt(BESS, 'lying on the grass chewing the twig', { ...GREEN, description: `${GREEN.description}. ` }, 'cartoon'),
     `A close-up at Bess's eye level of ${BESS.wording}, lying on the grass chewing the twig. ${behind} Draw Bess and the place in the same hand-drawn cartoon style as picture 1.`,
     'one full stop after a description that has its own')
+  assert.match(closeUpPrompt(BESS, 'lying', { ...GREEN, description: 'a green, so green!' }, 'realistic'), /is the place in picture 1: a green, so green\. Bess is the only one there/)
 })
 
 test('characters are added after anyone their pose names, so nobody is drawn in to stand for someone not there yet (live test)', () => {
@@ -96,10 +97,17 @@ test('characters are added after anyone their pose names, so nobody is drawn in 
   const shot = [pose(TOM, 'sitting on the grass to the left of Bess'), pose(BESS, 'lying down in the center'), pose(NIP, 'lying down to the right of Bess')]
   assert.deepEqual(addingOrder(shot).map((c) => c.cast.name), ['Bess', 'Tom', 'Nipper'])
   assert.deepEqual(addingOrder([shot[1]!, shot[2]!, shot[0]!]).map((c) => c.cast.name), ['Bess', 'Nipper', 'Tom'], 'nothing moves that needn\'t')
-  // A name inside another word doesn't count, and nor does any case.
+  // A name inside another word doesn't count, and a name is matched with its capitals ("on the spot" is no Spot).
   assert.deepEqual(addingOrder([pose(TOM, 'by the Bessemer stove'), pose(BESS, 'beside tom')]).map((c) => c.cast.name), ['Tom', 'Bess'])
-  // Two who name each other keep the shot's order.
-  assert.deepEqual(addingOrder([pose(TOM, 'beside Bess'), pose(BESS, 'beside Tom')]).map((c) => c.cast.name), ['Tom', 'Bess'])
+  // Two who name each other: the one who only looks at the other goes first, before the one placed beside them
+  // (live test shot 5: Tom "to the left of Spot", Spot "looking at Tom", a stray animal again with Tom first).
+  const loop = [pose(TOM, 'sitting on the grass to the left of Bess, smiling gently'), pose(BESS, 'lying down in the center, looking at Tom'),
+    pose(NIP, 'lying down to the right of Bess, looking at Tom')]
+  assert.deepEqual(addingOrder(loop).map((c) => c.cast.name), ['Bess', 'Tom', 'Nipper'])
+  // Placed beside each other both ways: the shot's order.
+  assert.deepEqual(addingOrder([pose(TOM, 'beside Bess'), pose(BESS, 'next to Tom')]).map((c) => c.cast.name), ['Tom', 'Bess'])
+  // The words are compared as the editor reads them.
+  assert.deepEqual(addingOrder([pose(TOM, 'sitting beside  Bess.'), pose({ ...BESS, name: 'Bess ' }, 'lying')]).map((c) => c.cast.name.trim()), ['Bess', 'Tom'])
   assert.deepEqual(addingOrder([pose({ ...TOM, name: 'Mr. T (Tom)' }, 'standing'), pose(BESS, 'beside Mr. T (Tom)')]).map((c) => c.cast.name), ['Mr. T (Tom)', 'Bess'])
 })
 
