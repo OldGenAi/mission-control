@@ -23,38 +23,45 @@ const errorText = (err: unknown, fallback: string) => (err instanceof Error ? er
 /** One slot's pictures to choose from (a master, a pose, a turnaround or a face): big, and a tap chooses. */
 const Slot: React.FC<{
   label: string; pictures: FilmPicture[]; chosen: string | null; links: Record<string, string>; disabled: boolean; note?: string
-  onChoose: (pictureId: string) => void; onMore: () => void
-}> = ({ label, pictures, chosen, links, disabled, note, onChoose, onMore }) => (
-  <div className="flex flex-col gap-2">
-    <div className="flex items-center gap-3">
-      <span className="text-xs text-gray-300">{label}</span>
-      {note && <span className="text-xs text-gray-500">{note}</span>}
-      {pictures.length > 0 && <button onClick={onMore} disabled={disabled} className="text-xs ml-auto" style={linkButton(disabled ? '#4B5563' : '#67e8f9')}>Make more</button>}
+  onChoose: (pictureId: string) => void; onMore: () => Promise<boolean>
+}> = ({ label, pictures, chosen, links, disabled, note, onChoose, onMore }) => {
+  // Make more waits its turn behind the pictures being made, and its boxes show only once it starts: say so meanwhile
+  // (live test: it looked as if the press did nothing).
+  const [expected, setExpected] = useState(0)
+  const more = () => void onMore().then((queued) => { if (queued) setExpected((n) => Math.max(n, pictures.length) + 2) })
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-3">
+        <span className="text-xs text-gray-300">{label}</span>
+        {note && <span className="text-xs text-gray-500">{note}</span>}
+        {pictures.length < expected && <span className="text-xs text-gray-400">More on the way: they show here when their turn comes.</span>}
+        {pictures.length > 0 && <button onClick={more} disabled={disabled} className="text-xs ml-auto" style={linkButton(disabled ? '#4B5563' : '#67e8f9')}>Make more</button>}
+      </div>
+      <div className="flex flex-wrap gap-3">
+        {pictures.length === 0 && <span className="text-xs text-gray-600">No pictures yet.</span>}
+        {pictures.map((p) => {
+          const isChosen = p.imageId !== null && p.imageId === chosen
+          const box: React.CSSProperties = {
+            width: 240, height: 135, borderRadius: 8, overflow: 'hidden', background: 'rgba(255,255,255,0.03)',
+            border: `2px solid ${isChosen ? '#22d3ee' : 'transparent'}`, padding: 0, cursor: p.imageId && !disabled ? 'pointer' : 'default',
+          }
+          if (!p.imageId || !links[p.imageId]) {
+            const waiting = p.status === 'queued' || p.status === 'running'
+            // A pose of several characters adds them one edit at a time.
+            const making = p.steps > 1 ? `Adding character ${p.step} of ${p.steps}...` : 'Making...'
+            const text = waiting ? making : p.status === 'cancelled' ? 'Stopped before it was finished' : 'This one failed'
+            return <div key={p.id} style={box} className="text-xs text-gray-500 flex items-center justify-center">{text}</div>
+          }
+          return (
+            <button key={p.id} onClick={() => onChoose(p.id)} disabled={disabled || isChosen} style={box} aria-pressed={isChosen} title={isChosen ? 'Chosen' : 'Choose this one'}>
+              <img src={links[p.imageId]} alt={`${label}, variation ${p.seed}`} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+            </button>
+          )
+        })}
+      </div>
     </div>
-    <div className="flex flex-wrap gap-3">
-      {pictures.length === 0 && <span className="text-xs text-gray-600">No pictures yet.</span>}
-      {pictures.map((p) => {
-        const isChosen = p.imageId !== null && p.imageId === chosen
-        const box: React.CSSProperties = {
-          width: 240, height: 135, borderRadius: 8, overflow: 'hidden', background: 'rgba(255,255,255,0.03)',
-          border: `2px solid ${isChosen ? '#22d3ee' : 'transparent'}`, padding: 0, cursor: p.imageId && !disabled ? 'pointer' : 'default',
-        }
-        if (!p.imageId || !links[p.imageId]) {
-          const waiting = p.status === 'queued' || p.status === 'running'
-          // A pose of several characters adds them one edit at a time.
-          const making = p.steps > 1 ? `Adding character ${p.step} of ${p.steps}...` : 'Making...'
-          const text = waiting ? making : p.status === 'cancelled' ? 'Stopped before it was finished' : 'This one failed'
-          return <div key={p.id} style={box} className="text-xs text-gray-500 flex items-center justify-center">{text}</div>
-        }
-        return (
-          <button key={p.id} onClick={() => onChoose(p.id)} disabled={disabled || isChosen} style={box} aria-pressed={isChosen} title={isChosen ? 'Chosen' : 'Choose this one'}>
-            <img src={links[p.imageId]} alt={`${label}, variation ${p.seed}`} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-          </button>
-        )
-      })}
-    </div>
-  </div>
-)
+  )
+}
 
 /** Step 1: the story, its length and look, sound, and the cast. A new film is made from here. */
 const StoryForm: React.FC<{ film: Film | null; onSaved: (id: string) => void; onError: (m: string) => void }> = ({ film, onSaved, onError }) => {
@@ -199,14 +206,17 @@ export const StoryboardPage: React.FC = () => {
     return () => { off(); if (reloadTimer.current) window.clearTimeout(reloadTimer.current) }
   }, [])
 
-  const act = async (work: () => Promise<unknown>, fallback: string) => {
+  // True when the work was done; its refusal is shown otherwise.
+  const act = async (work: () => Promise<unknown>, fallback: string): Promise<boolean> => {
     setError('')
     setBusy(true)
     try {
       await work()
       await loadFilm()
+      return true
     } catch (err) {
       setError(errorText(err, fallback))
+      return false
     } finally {
       setBusy(false)
     }
@@ -305,15 +315,15 @@ export const StoryboardPage: React.FC = () => {
           {film.cast.map((c) => (
             <React.Fragment key={c.castId}>
               <Slot label={`${c.name}: front, side and back`} pictures={candidates(c.castId, 'turnaround', c.turnaroundId)} chosen={c.turnaroundId} links={links}
-                disabled={!canChoose || busy} onChoose={(id) => void choose(id)} onMore={() => void makePictures({ ownerId: c.castId, role: 'turnaround' })} />
+                disabled={!canChoose || busy} onChoose={(id) => void choose(id)} onMore={() => makePictures({ ownerId: c.castId, role: 'turnaround' })} />
               <Slot label={`${c.name}: face`} pictures={candidates(c.castId, 'face', c.faceId)} chosen={c.faceId} links={links}
-                disabled={!canChoose || busy} onChoose={(id) => void choose(id)} onMore={() => void makePictures({ ownerId: c.castId, role: 'face' })} />
+                disabled={!canChoose || busy} onChoose={(id) => void choose(id)} onMore={() => makePictures({ ownerId: c.castId, role: 'face' })} />
             </React.Fragment>
           ))}
           {film.places.map((p, i) => (
             <Slot key={p.id} label={p.name} pictures={candidates(p.id, 'master', p.masterId)} chosen={p.masterId} links={links}
               note={i > 0 && !film.places[0]!.masterId ? `Made after you choose ${film.places[0]!.name}, so the light and style carry over` : 'Choose one with nobody in it: the characters are added later'}
-              disabled={!canChoose || busy} onChoose={(id) => void choose(id)} onMore={() => void makePictures({ ownerId: p.id, role: 'master' })} />
+              disabled={!canChoose || busy} onChoose={(id) => void choose(id)} onMore={() => makePictures({ ownerId: p.id, role: 'master' })} />
           ))}
         </div>
       )}
@@ -335,10 +345,10 @@ export const StoryboardPage: React.FC = () => {
                 {followsOn(film.shots[i - 1], s)
                   ? <p className="text-xs text-gray-500">Starts where shot {i} ends.</p>
                   : <Slot label={s.closeUp ? 'Close-up' : 'Start'} pictures={candidates(s.id, 'start', s.startId)} chosen={s.startId} links={links}
-                      disabled={!canChoose || busy} onChoose={(id) => void choose(id)} onMore={() => void makePictures({ ownerId: s.id, role: 'start' })} />}
+                      disabled={!canChoose || busy} onChoose={(id) => void choose(id)} onMore={() => makePictures({ ownerId: s.id, role: 'start' })} />}
                 {!s.closeUp && (
                   <Slot label="End" pictures={candidates(s.id, 'end', s.endId)} chosen={s.endId} links={links}
-                    disabled={!canChoose || busy} onChoose={(id) => void choose(id)} onMore={() => void makePictures({ ownerId: s.id, role: 'end' })} />
+                    disabled={!canChoose || busy} onChoose={(id) => void choose(id)} onMore={() => makePictures({ ownerId: s.id, role: 'end' })} />
                 )}
               </div>
             )
