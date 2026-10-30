@@ -6,7 +6,7 @@
 // Security-sensitive. Do not modify without Claude review.
 
 import { randomBytes } from 'node:crypto'
-import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { extname, join } from 'node:path'
 import { stripPng } from './png-strip.js'
 
@@ -125,13 +125,19 @@ export class ImageInputs {
       return { id, ...info }
     }
     // Whole or not at all: a given id is trusted once a file is there, so it is written under a temp name (the start-up
-    // sweep's kind) and linked into place, which also never replaces one already there.
+    // sweep's kind) and linked into place, which also never replaces one already there. A drive without links gets a
+    // rename instead (what is kept under a given id is always the same picture).
     const temp = join(this.dir, `tmp-${randomBytes(16).toString('hex')}.png`)
-    writeFileSync(temp, clean, { mode: 0o600, flag: 'wx' })
+    const final = join(this.dir, `${id}.png`)
     try {
-      linkSync(temp, join(this.dir, `${id}.png`))
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+      writeFileSync(temp, clean, { mode: 0o600, flag: 'wx' })
+      try {
+        linkSync(temp, final)
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code
+        if (code === 'EPERM' || code === 'ENOTSUP' || code === 'EXDEV') renameSync(temp, final)
+        else if (code !== 'EEXIST') throw err
+      }
     } finally {
       rmSync(temp, { force: true })
     }

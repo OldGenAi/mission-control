@@ -136,18 +136,35 @@ export function posePrompts(characters: Array<{ cast: PoseCast; pose: string }>,
   })
 }
 
+// Words that place someone by another ("to the left of Spot"), as against only looking at them ("looking at Tom").
+const PLACED_BY = /(left of|right of|beside|next to|behind|in front of|near|between|close to|alongside|by|with)\b[^.,;]{0,24}$/i
+
 /**
  * The order a pose's characters are added in: each after anyone their own pose names, otherwise as in the shot. A
  * pose that names someone not in the picture yet ("sitting to the left of Spot", Spot still to come) made the editor
- * draw a stray animal to be Spot (live test). Two who name each other keep the shot's order.
+ * draw a stray animal to be Spot (live test). When two name each other, the one who is only looking at the other
+ * goes first; placed by each other both ways, the shot's order stays. Names are matched with their capitals, in the
+ * words as the editor reads them.
  */
 export function addingOrder<T extends { cast: { name: string }; pose: string }>(characters: T[]): T[] {
-  const names = (c: T, other: T) => new RegExp(`(^|[^\\p{L}\\p{N}])${other.cast.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`, 'iu').test(c.pose)
+  // How a pose names someone: 'placed' by them, 'named' only, or not at all.
+  const names = (c: T, other: T): 'placed' | 'named' | null => {
+    const name = field(other.cast.name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const pose = field(c.pose)
+    let how: 'placed' | 'named' | null = null
+    for (const match of pose.matchAll(new RegExp(`(?<![\\p{L}\\p{M}\\p{N}])${name}(?![\\p{L}\\p{M}\\p{N}])`, 'gu'))) {
+      if (PLACED_BY.test(pose.slice(0, match.index))) return 'placed'
+      how = 'named'
+    }
+    return how
+  }
   const left = [...characters]
   const order: T[] = []
+  const waitsOn = (c: T, kinds: ReadonlyArray<'placed' | 'named'>) => left.some((other) => other !== c && kinds.includes(names(c, other)!))
   while (left.length > 0) {
-    const ready = left.findIndex((c) => left.every((other) => other === c || !names(c, other)))
-    order.push(...left.splice(ready < 0 ? 0 : ready, 1))
+    let next = left.findIndex((c) => !waitsOn(c, ['placed', 'named']))
+    if (next < 0) next = left.findIndex((c) => !waitsOn(c, ['placed']))
+    order.push(...left.splice(Math.max(0, next), 1))
   }
   return order
 }
@@ -159,7 +176,7 @@ export function closeUpPrompt(cast: FilmCast, pose: string, place: FilmPlace, lo
   // of a dog on a road, then a cartoon dog on a deck with people behind (hand test T10b).
   const style = look === 'cartoon' ? ` Draw ${name} and the place in the same hand-drawn cartoon style as picture 1.` : ''
   return `A close-up at ${name}'s eye level of ${field(cast.wording)}, ${field(pose)}. ` +
-    `Behind ${name}, softly out of focus, is the place in picture 1: ${field(place.description)}. ${name} is the only one there. ` +
+    `Behind ${name}, softly out of focus, is the place in picture 1: ${field(place.description).replace(/[!?]+$/, '')}. ${name} is the only one there. ` +
     `Picture 2 only shows what ${name} looks like.${style}`
 }
 
