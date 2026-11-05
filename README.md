@@ -4,7 +4,7 @@ Your own AI command center: a self-hosted agentic OS you actually control.
 
 Mission Control is a personal AI system you run on your own computer. You chat with Dave, your always-on AI agent. He can answer questions, use tools (web search, files, an optional shell), remember what matters, and when a job is bigger than a quick chat, hand it to a pipeline: a repeatable workflow carried out by a team of specialist AI workers.
 
-It runs on your hardware with your choice of model: a free local model (LM Studio, Ollama, llama.cpp) or a paid cloud model through OpenRouter. Your data, your keys and your conversations stay on your machine.
+It runs on your hardware with your choice of model: a free local model (LM Studio, Ollama, llama.cpp) or a paid cloud model through OpenRouter. Your data, your keys and your conversations are stored on your machine. With a cloud model, what you send goes to that provider.
 
 Built by [OldGenAI](#about). Free and open source under the [MIT license](#license).
 
@@ -29,7 +29,7 @@ Built by [OldGenAI](#about). Free and open source under the [MIT license](#licen
 
 Most AI tools are a chat box on somebody else's server. Mission Control runs on your own computer instead.
 
-- You host it. Nothing goes to a server you don't control unless you pick a cloud model or use the web tools.
+- You host it. Nothing goes to a server you don't control unless you pick a cloud model, use the web tools, or use the chat mic, which relies on your browser's speech service and usually sends your voice to the browser's maker.
 - It can act, not just talk: search the web, read and write files in its own workspace, run jobs, remember things across days, and coordinate a team of sub-agents for bigger work. That's what "agentic OS" means here.
 - You pick the model. Point it at a free local model or a cloud model, and switch whenever you like.
 
@@ -45,7 +45,7 @@ Pipelines are for work you want done the same way every time, in parallel, with 
 |---|---|---|
 | Best for | one-off questions, exploring | repeatable jobs, bigger tasks |
 | How it runs | conversational | the same defined steps every time |
-| Cost and safety | bounded per chat turn | hard budgets, timeouts, approval gates |
+| Cost and safety | a time limit per chat turn | budgets checked between steps, timeouts, approval in some pipelines |
 | Teamwork | one agent | a team of workers in parallel |
 | Output | a chat transcript | structured, sourced reports (artifacts) |
 | Do you need to be there? | yes | no, it runs in the background and tells Dave when it's done |
@@ -55,8 +55,8 @@ You don't have to choose between them. Dave can launch pipelines for you.
 ## Features
 
 The agent and the team
-- Dave, your tier-1 personal agent: chat, 17 built-in tools and persistent memory.
-- Chat commands: type `/help`, `/new [title]`, `/stop` or `/context` in the chat box. They run in the page and are never sent to the model. Commands that change settings come later, behind the same safety checks as everything else.
+- Dave, your tier-1 personal agent: chat, built-in tools and persistent memory.
+- Chat commands: type `/help`, `/new [title]`, `/stop` or `/context` in the chat box. They run in the page and are never sent to the model. Commands that change settings come later, behind safety checks.
 - An orchestrator and specialist workers (researcher, coder) that pipelines use to split a job up and run the parts in parallel.
 
 Pipelines
@@ -115,7 +115,7 @@ Under the hood:
 
 Docker is not needed. If you prefer it, see [Running it with Docker instead](#running-it-with-docker-instead).
 
-Tested automatically on every change on Windows, macOS and Linux, and used every day on Windows 11 and a Mac mini.
+Tested automatically on every change on Windows, macOS and Linux. Used every day on Windows 11, through WSL.
 
 A one-line installer that sets all of this up for you is on the way. Until then, the steps below take a few minutes.
 
@@ -248,7 +248,7 @@ The model is your choice, and so is following its licence:
 
 ## Security and privacy
 
-Mission Control is built to be safe to run on your own machine:
+The protections Mission Control has today:
 
 - Your data stays local. Sessions, memory and artifacts live in a SQLite database on your computer.
 - The gateway only listens on `127.0.0.1` (this computer). To share it on your network you have to set both `GATEWAY_HOST` and `GATEWAY_ALLOWED_HOSTS`, and it won't start with only one of them. Requests that name any other host are refused, which blocks DNS-rebinding tricks. `mc doctor` also tells you if Mission Control, LM Studio, Ollama or ComfyUI can be reached from other devices.
@@ -256,10 +256,11 @@ Mission Control is built to be safe to run on your own machine:
 - The app runs under a strict Content-Security-Policy, and it loads nothing from other websites (even its font ships with it).
 - API keys are encrypted at rest, masked in the app and removed from logs. The encryption key sits next to them in `~/.missioncontrol`, so this protects a copied settings file, not someone with full access to your account.
 - The shell tool is locked. A shell command can read or change anything your user account can, so it stays locked until Mission Control can run commands in a locked room (on the roadmap). Dave can only use the tools he's been given for that chat, and the shell refuses to run even if something asks for it. Developers who accept the risk on their own machine can unlock it by starting the gateway with `MC_ALLOW_UNSANDBOXED_SHELL=1`, then switching it on in Settings.
-- Dave's instructions (his soul, how he works, who he is, and who you are) can only be changed by you, on the Agents page. Dave's own tools can't rewrite them, so a web page he reads can't talk him into changing his rules.
-- Hardened throughout: parameterised database queries; web fetch refuses private and internal addresses (also after DNS lookup and on redirects); file tools can't leave the workspace or read credential files like `.env`; and every change is automatically checked for known vulnerable dependencies.
+- Dave's instructions (his soul, how he works, who he is, and who you are) can only be changed by you, on the Agents page. Dave's own tools can't rewrite them, so a web page he reads can't talk him into changing those instructions. That doesn't cover his memory: a note saved from something he read can still reach his next chat.
+- Also: parameterised database queries; web fetch refuses private and internal addresses (also after DNS lookup and on redirects); file tools can't leave the workspace or read credential files like `.env`; and every change is automatically checked for known vulnerable dependencies.
+- What it doesn't do yet: Dave doesn't ask before he acts, and there's no undo for what he does. Inside his workspace, his file tools can overwrite a file without asking.
 
-Use a local model and leave the web tools alone, and nothing leaves your machine. (Web search sends your queries to Brave, and web fetch contacts the sites you ask for. With an OpenRouter key saved, Mission Control also fetches OpenRouter's public price list once an hour, so it can show what each call costs and stop a pipeline at its budget.)
+Use a local model and leave the web tools and the chat mic alone, and nothing leaves your machine. (Web search sends your queries to Brave, and web fetch contacts the sites you ask for. With an OpenRouter key saved, Mission Control also fetches OpenRouter's public price list once an hour, so it can show what each call costs and check a pipeline against its budget.)
 
 ## Troubleshooting
 
