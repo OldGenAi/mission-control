@@ -1,6 +1,6 @@
 {
   "name": "mission-control-gateway",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Mission Control — Node.js WebSocket gateway",
   "main": "dist/index.js",
   "scripts": {
@@ -21,7 +21,7 @@
     "js-yaml": "^5.5.0",
     "jsonrepair": "^3.15.0",
     "openai": "~7.32.0",
-    "ws": "^8.21.0"
+    "ws": "^8.23.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
